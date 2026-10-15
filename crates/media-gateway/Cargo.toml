@@ -9,8 +9,13 @@ publish.workspace = true
 axum.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "net", "rt", "sync"] }
+tokio-rustls.workspace = true
 tokio-util = { workspace = true, features = ["io", "rt"] }
 tower-http = { workspace = true, features = ["timeout"] }
 

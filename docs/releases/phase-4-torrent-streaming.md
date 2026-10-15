@@ -1,6 +1,6 @@
 # Phase 4: streaming torrent lessons through the gateway
 
-Status: streaming is complete and verified against a real 31.7 GB course. In the Learner's own window, playback still needs an H.264 decoder for WebKitGTK on this Linux machine (see the limitations). Decoded playback and seeking were confirmed with a browser that has one, against the same gateway URL.
+Status: streaming is complete and verified against a real 31.7 GB course. In-app playback on Linux needed a follow-up: WebKitGTK refused the plain-HTTP gateway on the secure app page, which is fixed by `phase-4-linux-in-app-playback.md` (ADR 0005). Decoded playback and seeking were first confirmed in a Chromium-based browser against the same gateway URL.
 
 ## Delivered
 
@@ -53,7 +53,7 @@ Status: streaming is complete and verified against a real 31.7 GB course. In the
 
 ## Current limitations
 
-- **In-app playback on Linux needs an H.264/AAC decoder for WebKitGTK,** for example the `gstreamer1.0-libav` package. It is not installed on the verification machine, so playback inside the Learner window is unverified here. Packaging must declare this dependency.
+- **Corrected after release:** the in-app failure was not only the missing decoder. WebKitGTK also refuses plain-HTTP media on the secure app page, and installing `gstreamer1.0-libav` alone still gave error 4. `phase-4-linux-in-app-playback.md` serves the gateway over HTTPS on Linux. Packaging must still declare an H.264/AAC decoder dependency.
 - **Lookahead is librqbit's fixed 32 MiB window** with 16 MiB pieces on large courses. A seek downloads about three pieces before playback resumes (7.2 s on loopback in the check above). There is no configurable lookahead or verified-range API.
 - **WebKitGTK's GStreamer player may read ahead much further than the browser does.** One lesson reached 64 % within seconds in the Learner window. Only that lesson is affected, never the rest of the course.
 - **Not yet implemented:**

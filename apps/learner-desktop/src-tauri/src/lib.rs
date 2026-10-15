@@ -59,8 +59,8 @@ pub fn run() {
                 CourseLibrary::open(&app_data.join("library.sqlite3"), ImportLimits::default())?;
             let profile = library.network_profile()?;
             let library = Arc::new(Mutex::new(library));
-            let media_gateway =
-                tauri::async_runtime::block_on(MediaGateway::start(GatewayLimits::default()))?;
+            let media_gateway = tauri::async_runtime::block_on(start_media_gateway())?;
+            trust_media_gateway(app, &media_gateway);
             let torrents = start_torrents(profile, &app_data, &library);
             if let Some(sharing) = &torrents.sharing {
                 sharing.load()?;
@@ -106,6 +106,41 @@ pub fn run() {
         }
     });
 }
+
+/// `WebKitGTK` refuses plain HTTP media on the secure `tauri://localhost`
+/// page and plays only http, https, and blob URLs, so on Linux the gateway
+/// serves HTTPS with a per-launch certificate that the webview trusts.
+#[cfg(target_os = "linux")]
+async fn start_media_gateway() -> Result<MediaGateway, media_gateway::GatewayError> {
+    MediaGateway::start_tls(GatewayLimits::default()).await
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn start_media_gateway() -> Result<MediaGateway, media_gateway::GatewayError> {
+    MediaGateway::start(GatewayLimits::default()).await
+}
+
+/// Trust exactly this launch's gateway certificate, for `127.0.0.1` only.
+#[cfg(target_os = "linux")]
+fn trust_media_gateway(app: &tauri::App, gateway: &MediaGateway) {
+    use webkit2gtk::{WebContextExt as _, WebViewExt as _};
+
+    let Some(pem) = gateway.certificate_pem().map(str::to_owned) else {
+        return;
+    };
+    for window in app.webview_windows().into_values() {
+        let pem = pem.clone();
+        let _ = window.with_webview(move |webview| {
+            let certificate = webkit2gtk::gio::TlsCertificate::from_pem(&pem);
+            if let (Ok(certificate), Some(context)) = (certificate, webview.inner().context()) {
+                context.allow_tls_certificate_for_host(&certificate, "127.0.0.1");
+            }
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn trust_media_gateway(_: &tauri::App, _: &MediaGateway) {}
 
 fn start_torrents(
     profile: NetworkProfile,

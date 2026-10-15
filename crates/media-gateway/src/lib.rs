@@ -100,6 +100,9 @@ pub enum GatewayError {
     /// The registry lock is unavailable.
     #[error("the media resource registry is unavailable")]
     RegistryUnavailable,
+    /// The loopback TLS identity could not be created.
+    #[error("cannot create the media gateway TLS certificate: {0}")]
+    Tls(String),
 }
 
 /// Resource and request limits for one gateway process.
@@ -197,6 +200,9 @@ struct GatewayState {
 #[derive(Clone)]
 pub struct MediaGateway {
     address: SocketAddr,
+    scheme: &'static str,
+    /// PEM certificate of an HTTPS gateway, generated for this process only.
+    certificate_pem: Option<Arc<str>>,
     state: GatewayState,
     shutdown: CancellationToken,
     server: Arc<JoinHandle<()>>,
@@ -210,16 +216,7 @@ impl MediaGateway {
     ///
     /// Returns an error when secure randomness or loopback binding fails.
     pub async fn start(limits: GatewayLimits) -> Result<Self, GatewayError> {
-        let secret = random_hex(32)?;
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .await
-            .map_err(GatewayError::Listen)?;
-        let address = listener.local_addr().map_err(GatewayError::Listen)?;
-        let state = GatewayState {
-            secret: Arc::from(secret),
-            resources: Arc::new(RwLock::new(HashMap::new())),
-            streams: Arc::new(Semaphore::new(limits.max_concurrent_streams.max(1))),
-        };
+        let (listener, address, state) = bind(limits).await?;
         let shutdown = CancellationToken::new();
         let router = router(state.clone(), limits.body_frame_timeout);
         let shutdown_signal = shutdown.clone();
@@ -233,11 +230,86 @@ impl MediaGateway {
         });
         Ok(Self {
             address,
+            scheme: "http",
+            certificate_pem: None,
             state,
             shutdown,
             server: Arc::new(server),
             limits,
         })
+    }
+
+    /// Like [`Self::start`], but serve HTTPS with a self-signed certificate
+    /// for `127.0.0.1` generated for this process. Webviews that refuse plain
+    /// HTTP media on a secure page (`WebKitGTK`) can trust exactly this
+    /// certificate through [`Self::certificate_pem`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when randomness, certificate generation, or loopback
+    /// binding fails.
+    pub async fn start_tls(limits: GatewayLimits) -> Result<Self, GatewayError> {
+        let identity = rcgen::generate_simple_self_signed(vec![Ipv4Addr::LOCALHOST.to_string()])
+            .map_err(|error| GatewayError::Tls(error.to_string()))?;
+        let certificate_pem: Arc<str> = Arc::from(identity.cert.pem());
+        let key = rustls::pki_types::PrivatePkcs8KeyDer::from(identity.signing_key.serialize_der());
+        let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .map_err(|error| GatewayError::Tls(error.to_string()))?
+        .with_no_client_auth()
+        .with_single_cert(vec![identity.cert.der().clone()], key.into())
+        .map_err(|error| GatewayError::Tls(error.to_string()))?;
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+
+        let (listener, address, state) = bind(limits).await?;
+        let shutdown = CancellationToken::new();
+        let router = router(state.clone(), limits.body_frame_timeout);
+        let shutdown_signal = shutdown.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let accepted = tokio::select! {
+                    () = shutdown_signal.cancelled() => break,
+                    accepted = listener.accept() => accepted,
+                };
+                let Ok((stream, _)) = accepted else { continue };
+                let acceptor = acceptor.clone();
+                let router = router.clone();
+                let shutdown = shutdown_signal.clone();
+                tokio::spawn(async move {
+                    let Ok(Ok(stream)) =
+                        tokio::time::timeout(TLS_HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await
+                    else {
+                        return;
+                    };
+                    let connection = hyper::server::conn::http1::Builder::new().serve_connection(
+                        hyper_util::rt::TokioIo::new(stream),
+                        hyper_util::service::TowerToHyperService::new(router),
+                    );
+                    tokio::select! {
+                        _ = connection => {}
+                        () = shutdown.cancelled() => {}
+                    }
+                });
+            }
+        });
+        Ok(Self {
+            address,
+            scheme: "https",
+            certificate_pem: Some(certificate_pem),
+            state,
+            shutdown,
+            server: Arc::new(server),
+            limits,
+        })
+    }
+
+    /// PEM certificate of an HTTPS gateway; `None` for plain HTTP.
+    #[must_use]
+    pub fn certificate_pem(&self) -> Option<&str> {
+        self.certificate_pem.as_deref()
     }
 
     /// Register an application-resolved file and return an opaque capability URL.
@@ -319,7 +391,8 @@ impl MediaGateway {
         resources.insert(handle.clone(), registered);
         Ok(MediaRegistration {
             url: format!(
-                "http://{}:{}/v1/media/{handle}/{}",
+                "{}://{}:{}/v1/media/{handle}/{}",
+                self.scheme,
                 self.address.ip(),
                 self.address.port(),
                 self.state.secret
@@ -347,6 +420,24 @@ impl MediaGateway {
             let _ = server.await;
         }
     }
+}
+
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+async fn bind(
+    limits: GatewayLimits,
+) -> Result<(TcpListener, SocketAddr, GatewayState), GatewayError> {
+    let secret = random_hex(32)?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .map_err(GatewayError::Listen)?;
+    let address = listener.local_addr().map_err(GatewayError::Listen)?;
+    let state = GatewayState {
+        secret: Arc::from(secret),
+        resources: Arc::new(RwLock::new(HashMap::new())),
+        streams: Arc::new(Semaphore::new(limits.max_concurrent_streams.max(1))),
+    };
+    Ok((listener, address, state))
 }
 
 fn router(state: GatewayState, timeout: Duration) -> Router {
@@ -810,5 +901,79 @@ mod tests {
         let response = ranged(&gateway, &path, "bytes=0-1").await;
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         gateway.wait_for_shutdown().await;
+    }
+
+    async fn tls_get(address: &str, path: &str, trusted: Option<&str>) -> std::io::Result<String> {
+        use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
+        use tokio::io::AsyncWriteExt;
+
+        let mut roots = rustls::RootCertStore::empty();
+        if let Some(pem) = trusted {
+            roots
+                .add(CertificateDer::from_pem_slice(pem.as_bytes()).unwrap())
+                .unwrap();
+        }
+        let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+        let tcp = tokio::net::TcpStream::connect(address).await?;
+        let name = ServerName::try_from("127.0.0.1").unwrap();
+        let mut stream = connector.connect(name, tcp).await?;
+        stream
+            .write_all(
+                format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=2-5\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await?;
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await?;
+        Ok(String::from_utf8_lossy(&response).into_owned())
+    }
+
+    #[tokio::test]
+    async fn https_gateway_serves_only_clients_that_trust_its_certificate() {
+        let test_root =
+            std::env::temp_dir().join(format!("zeron-media-tls-{}", random_hex(8).unwrap()));
+        std::fs::create_dir_all(&test_root).unwrap();
+        let media_path = test_root.join("lesson.bin");
+        std::fs::write(&media_path, b"0123456789").unwrap();
+        let gateway = MediaGateway::start_tls(GatewayLimits::default())
+            .await
+            .unwrap();
+        let pem = gateway.certificate_pem().unwrap().to_owned();
+        assert!(pem.starts_with("-----BEGIN CERTIFICATE-----"));
+        let registration = gateway
+            .register(FileResource {
+                path: media_path,
+                media_type: "video/mp4".to_owned(),
+                byte_length: 10,
+            })
+            .await
+            .unwrap();
+        let rest = registration.url.strip_prefix("https://").unwrap();
+        let (address, path) = rest.split_at(rest.find('/').unwrap());
+
+        let response = tls_get(address, path, Some(&pem)).await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 206"), "{response}");
+        assert!(
+            response.contains("content-range: bytes 2-5/10"),
+            "{response}"
+        );
+        assert!(response.ends_with("2345"), "{response}");
+        assert!(
+            tls_get(address, path, None).await.is_err(),
+            "untrusted clients are refused"
+        );
+
+        let plain = MediaGateway::start(GatewayLimits::default()).await.unwrap();
+        assert!(plain.certificate_pem().is_none());
+        plain.wait_for_shutdown().await;
+        gateway.wait_for_shutdown().await;
+        std::fs::remove_dir_all(test_root).unwrap();
     }
 }
