@@ -55,7 +55,13 @@ Local tooling note: `pnpm` is not on `PATH` in this environment; it is available
 
 ## Next slice
 
-Phase 3 (local seeding and metadata-first learner torrent import) is next. It requires integrating librqbit behind the engine-neutral port. That is a dependency and network-behaviour decision (exact version pin, DHT/peer-exchange/UPnP defaults, listening ports, whether the full HTTP API stays disabled) and is gated by the Phase 0 spike described in `docs/architecture/system-overview.md` and `docs/research/dependency-feasibility.md`. Confirm the approach with the user before adding the dependency. Groundwork already in place: deterministic v1 torrents, `inspect_torrent`/`verify_torrent`, `PublisherDrafts::verify_release` for the seeding-start check, and release directories with `package/` and `release.torrent`.
+Phase 3 (local seeding and metadata-first learner torrent import) is next. The user approved a local-only librqbit spike first; it is done. Read `docs/research/phase-0-spike-results.md` before starting. Summary:
+
+- librqbit 9.0.1 (`default-features = false`, `rust-tls`) parses Zeron's torrents with a matching info hash. It resolves metadata from a magnet plus an explicit local peer, downloads only `course.json`, reads lesson 4 mid-file before completion, keeps reads of absent data pending (bounded by the caller's timeout), exposes seed metrics, and reuses verified data after restart without peers.
+- Seeding the read-only release directories requires a custom read-only `StorageFactory`; the default storage opens files read/write. The spike's ≈80-line adapter (`spikes/librqbit-local/src/main.rs`) worked and left the release byte-identical.
+- `Session::new_with_opts` always binds a UDP tracker socket on `[::]:0`. Use `bind_device_name = "lo"` for CI and local tests on Linux, and set every network option explicitly in production.
+
+Next: create the engine-neutral torrent port and a librqbit adapter crate (pinned as above, with the read-only release storage), plus an ADR adopting it, then implement Admin local seeding of published releases (run `PublisherDrafts::verify_release` before seeding). After that come learner `.torrent`/magnet import with manifest-first validation. The uncovered spike items (WebView playback per OS, peer interruption, lookahead) are acceptance criteria for the Phase 3/4 playback slices. Confirm with the user before adding the dependency to the workspace if the scope differs from this plan.
 
 When testing UI in the browser pane, Tauri IPC can be faked by assigning `window.__TAURI_INTERNALS__ = { invoke, transformCallback }` after the page loads, then using the app (the initial list query will already have failed).
 

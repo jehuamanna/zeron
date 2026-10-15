@@ -1,0 +1,16 @@
+# Throwaway Phase 0 spike. Not a workspace member and not product code.
+[package]
+name = "librqbit-local-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+course-format = { path = "../../crates/course-format" }
+librqbit = { version = "=9.0.1", default-features = false, features = ["rust-tls"] }
+publisher-application = { path = "../../crates/publisher-application" }
+course-publisher = { path = "../../crates/course-publisher" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time", "fs"] }
