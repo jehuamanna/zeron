@@ -2,6 +2,7 @@
 
 mod sources;
 mod staging;
+mod torrents;
 
 use std::path::Path;
 
@@ -18,6 +19,8 @@ pub use publisher_storage::{DraftSummary, PublisherStorageError, StoredDraft};
 pub use sources::{ResourceMediaFindings, SourceInfo, inspect_draft_media, source_info};
 pub use staging::{StagingReceipt, discard_abandoned_staging, stage_draft};
 use thiserror::Error;
+pub use torrent_metainfo::{HashProgress, TorrentError};
+pub use torrents::{DistributionOptions, TorrentReceipt, generate_torrent, verify_staged_torrent};
 
 const MAX_LIST_ENTRIES: usize = 32;
 const MAX_TITLE_CHARS: usize = 200;
@@ -167,6 +170,12 @@ pub enum DraftServiceError {
     /// Package staging failed or was cancelled.
     #[error(transparent)]
     Packaging(PackagingError),
+    /// Torrent generation or verification failed or was cancelled.
+    #[error(transparent)]
+    Torrent(TorrentError),
+    /// A staging attempt is unknown, incomplete, or was modified.
+    #[error("{0}")]
+    InvalidAttempt(&'static str),
     /// The OS random source could not create an identifier.
     #[error("cannot generate an opaque identifier: {0}")]
     IdGeneration(#[source] getrandom::Error),

@@ -11,6 +11,7 @@ course-publisher = { path = "../course-publisher" }
 getrandom.workspace = true
 publisher-storage = { path = "../publisher-storage" }
 thiserror.workspace = true
+torrent-metainfo = { path = "../torrent-metainfo" }
 
 [dev-dependencies]
 learning-application = { path = "../learning-application" }

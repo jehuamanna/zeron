@@ -52,8 +52,14 @@ impl PackagingCancellation {
         self.0.store(true, Ordering::Release);
     }
 
+    /// Whether cancellation was requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
     fn check(&self) -> Result<(), PackagingError> {
-        if self.0.load(Ordering::Acquire) {
+        if self.is_cancelled() {
             Err(PackagingError::Cancelled)
         } else {
             Ok(())

@@ -68,8 +68,9 @@ pub fn stage_draft(
 
 /// Remove interrupted staging attempts left by a crash or forced exit.
 ///
-/// Only real directories named exactly `stage_<32 lowercase hex>.partial`
-/// directly under `staging_root` are removed. Completed attempts, symbolic
+/// Only real directories named exactly `stage_<32 lowercase hex>.partial` and
+/// regular files named `stage_<32 lowercase hex>.torrent.partial` directly
+/// under `staging_root` are removed. Completed attempts, torrents, symbolic
 /// links, and anything else are left untouched.
 ///
 /// # Errors
@@ -83,13 +84,17 @@ pub fn discard_abandoned_staging(staging_root: &Path) -> Result<usize, DraftServ
     let mut removed = 0;
     for entry in entries {
         let entry = entry.map_err(|source| io_error("listing the staging root", source))?;
-        let is_directory = entry
+        let file_type = entry
             .file_type()
-            .map_err(|source| io_error("inspecting a staging attempt", source))?
-            .is_dir();
-        if is_directory && is_partial_attempt(&entry.file_name().to_string_lossy()) {
+            .map_err(|source| io_error("inspecting a staging attempt", source))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if file_type.is_dir() && is_partial_attempt(&name) {
             fs::remove_dir_all(entry.path())
                 .map_err(|source| io_error("removing an abandoned staging attempt", source))?;
+            removed += 1;
+        } else if file_type.is_file() && is_partial_torrent(&name) {
+            fs::remove_file(entry.path())
+                .map_err(|source| io_error("removing an abandoned torrent file", source))?;
             removed += 1;
         }
     }
@@ -97,14 +102,23 @@ pub fn discard_abandoned_staging(staging_root: &Path) -> Result<usize, DraftServ
 }
 
 fn is_partial_attempt(name: &str) -> bool {
-    name.strip_prefix(ATTEMPT_PREFIX)
-        .and_then(|rest| rest.strip_suffix(PARTIAL_SUFFIX))
-        .is_some_and(|hex| {
-            hex.len() == 32
-                && hex
-                    .bytes()
-                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-        })
+    name.strip_suffix(PARTIAL_SUFFIX)
+        .is_some_and(is_completed_attempt)
+}
+
+fn is_partial_torrent(name: &str) -> bool {
+    name.strip_suffix(".torrent.partial")
+        .is_some_and(is_completed_attempt)
+}
+
+/// Whether `name` is exactly a completed attempt ID, `stage_<32 lowercase hex>`.
+pub(crate) fn is_completed_attempt(name: &str) -> bool {
+    name.strip_prefix(ATTEMPT_PREFIX).is_some_and(|hex| {
+        hex.len() == 32
+            && hex
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    })
 }
 
 fn io_error(operation: &'static str, source: io::Error) -> DraftServiceError {

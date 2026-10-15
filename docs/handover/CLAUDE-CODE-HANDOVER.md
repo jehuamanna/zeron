@@ -46,14 +46,13 @@ The last fully green baseline at `930b4d5` passed Rust formatting, Clippy with w
 - Backend-only source selection (`docs/releases/phase-2-source-selection.md`). `choose_and_attach_resource` opens the native picker in Rust; `PublisherDrafts::attach_source` canonicalizes and records the path only in the snapshot; resource DTOs expose `fileName` and `byteLength` only.
 - Deterministic package staging (`docs/releases/phase-2-package-staging.md`, ADR `docs/decisions/0001-package-staging-layout.md`). `course_publisher::stage_package` plus `publisher_application::stage_draft` / `discard_abandoned_staging`. Backend only; not yet wired into the Admin app.
 - Media inspection warnings (`docs/releases/phase-2-media-inspection.md`). `course_publisher::inspect_media` (bounded ISO-BMFF header scan), durations captured on attach, on-demand "Media checks" in `ReadinessPanel`.
+- Deterministic BitTorrent v1 metainfo (`docs/releases/phase-2-torrent-metainfo.md`, ADR `docs/decisions/0002-torrent-metainfo-writer.md`). New crate `torrent-metainfo`; `publisher_application::generate_torrent` / `verify_staged_torrent` operate on completed staging attempts. Backend only.
 
 Local tooling note: `pnpm` is not on `PATH` in this environment; it is available as `corepack pnpm` from `~/.nvm/versions/node/v22.22.2/bin`. The root scripts invoke nested `pnpm`, so put a `pnpm` shim that execs `corepack pnpm` on `PATH` before running the JS gates.
 
 ## Next slice
 
-Deterministic BitTorrent v1 metainfo generation and independent verification (item 6 below), together with the Admin publish workspace that runs staging and torrent generation as one cancellable, observable job.
-
-Before writing torrent code, read `docs/research/dependency-feasibility.md` and `docs/architecture/distribution.md`: the librqbit creator needs a deterministic, error-preserving wrapper, and AGENTS.md forbids engine capabilities without a cited API and an integration test. A small, self-contained bencode/v1 info-dictionary writer with deterministic piece-size selection may be preferable to the engine creator; record that choice in an ADR either way. Verify by reparsing the metainfo and hashing staged pieces independently.
+Admin publish workspace: run `stage_draft` → `generate_torrent` (which verifies) as one cancellable, observable backend job from the Admin app, following `docs/architecture/system-overview.md` (stable job IDs, throttled versioned events as hints, snapshot query as source of truth, cancellation). On Admin startup call `discard_abandoned_staging(app_data/staging)`. Use `PublishingWorkflow` stage transitions for job state. Show the receipt (info hash, magnet, piece length, file count, bytes). Then continue with item 7 (atomic immutable release activation and release history).
 
 When testing UI in the browser pane, Tauri IPC can be faked by assigning `window.__TAURI_INTERNALS__ = { invoke, transformCallback }` after the page loads, then using the app (the initial list query will already have failed).
 
@@ -81,7 +80,7 @@ Continue Phase 2 in small slices:
 3. ~~Backend-only source selection plus path-free resource DTOs.~~ Done.
 4. ~~Deterministic package staging and canonical `course.json` generation.~~ Done (backend).
 5. ~~Media inspection warnings without silent transcoding.~~ Done.
-6. Deterministic BitTorrent v1 metainfo generation and independent verification.
+6. ~~Deterministic BitTorrent v1 metainfo generation and independent verification.~~ Done (backend).
 7. Atomic immutable release activation and release history.
 8. Local seeding management through the shared torrent adapter.
 

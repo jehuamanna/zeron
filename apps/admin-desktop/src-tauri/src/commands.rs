@@ -531,7 +531,9 @@ fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
         DraftServiceError::SourceRejected(_) => CommandError::new("source_rejected", error),
         DraftServiceError::IdGeneration(_)
         | DraftServiceError::Storage(_)
-        | DraftServiceError::Packaging(_) => CommandError::new(code, error),
+        | DraftServiceError::Packaging(_)
+        | DraftServiceError::Torrent(_)
+        | DraftServiceError::InvalidAttempt(_) => CommandError::new(code, error),
     }
 }
 
