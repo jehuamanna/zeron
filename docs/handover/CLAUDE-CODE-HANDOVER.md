@@ -8,7 +8,7 @@ Last pushed commit before this handover: `6c9ad4b build: package the desktop app
 
 This document replaces the 2026-10-15 handover. A fresh Claude Code session on another machine should be able to continue from it alone.
 
-**Updated 2026-10-16.** Slice A (one Zeron app) is done; see `docs/releases/single-zeron-app.md`. Next is Slice B, the Zeron port mapper, in [Active plan: one Zeron app, then full port mapping](#active-plan-one-zeron-app-then-full-port-mapping-user-decisions-2026-10-16).
+**Updated 2026-10-16.** Slice A (one Zeron app, `docs/releases/single-zeron-app.md`) and Slice B (Zeron port mapper, `docs/releases/phase-3-port-mapper.md`, ADR 0013) are done. Still open from that plan: a successful mapping on a real router that answers PCP, NAT-PMP, or `UPnP`, and the "Later" items. Otherwise continue with the remaining phases below.
 
 ## Mission
 
@@ -28,7 +28,7 @@ Continue through the dependency-ordered roadmap ([docs/roadmap.md](../roadmap.md
 - a destructive action outside the approved scope;
 - an architectural blocker you can show evidence for.
 
-Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0012), and [phase-0 spike results](../research/phase-0-spike-results.md).
+Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0013), and [phase-0 spike results](../research/phase-0-spike-results.md).
 
 ## Start-of-session checklist
 
@@ -263,7 +263,9 @@ Facts gathered for the merge:
 
 Suggested order (keep every commit green): scaffold `apps/desktop` from the Learner (git mv, rename identity) → move the Publisher backend in, behind the merged state → unify the network settings and the two engines → move the Publisher frontend and navigation → data migration with its ADR → delete the old apps and update scripts and docs.
 
-### Slice B: Zeron port mapper (UPnP for TCP and UDP, NAT-PMP, PCP), as in Deluge
+### Slice B: Zeron port mapper (UPnP for TCP and UDP, NAT-PMP, PCP), as in Deluge — done
+
+Delivered; see `docs/releases/phase-3-port-mapper.md` and ADR 0013. The user approved `netdev` on 2026-10-16, and it is used for gateway discovery on every platform. The plan below is kept for reference.
 
 - **Why:** librqbit's UPnP maps TCP only (`librqbit-upnp` 9.0.1 `forward_port` hard-codes `TCP`), so uTP cannot be reached from outside. It has no NAT-PMP or PCP, and it reports nothing back. Deluge (libtorrent) has UPnP and NAT-PMP on by default.
 - **Plan:**
@@ -353,6 +355,7 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 - `learning-domain`: pure learner rules (progress now, annotations next).
 - `learning-application` / `learning-storage`: learner import, library, torrent imports, sharing, and routing.
 - `media-gateway`: authenticated loopback HTTP(S) delivery, with no dependency on Tauri or torrents.
+- `port-mapping`: PCP, NAT-PMP, and `UPnP` IGD mapping for TCP and UDP, with renewal, removal, and status (ADR 0013).
 - `data-import`: one-time, crash-safe import of the former Learner and Publisher data into `app.zeron` (ADR 0011).
 - `apps/desktop/src-tauri`: composition and path-free DTO translation only; Publish commands live in its `publish` module. Command bodies are plain functions tested against in-memory storage. Errors carry `code`, plus `field` or `currentRevision` where relevant.
 - `apps/desktop/src`: thin React; Library at `app/Library.tsx`, Publish under `publish/`, the shell in `app/App.tsx`. TanStack Query holds backend data; Zustand holds ephemeral UI state. All Builder writes go through `draftWriter`.

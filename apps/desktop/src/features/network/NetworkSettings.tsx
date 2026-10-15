@@ -4,6 +4,7 @@ import { ChevronLeft } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { asCommandError, libraryApi, type NetworkProfile } from "../../services/library";
 import { PeerReachabilityForm } from "./PeerReachabilityForm";
+import { routerStatus } from "./routerStatus";
 import { SpeedLimitsForm } from "./SpeedLimitsForm";
 import { StorageSettings } from "./StorageSettings";
 
@@ -28,7 +29,15 @@ const profiles: Array<{ value: NetworkProfile; label: string; description: strin
 
 export function NetworkSettings({ onBack }: { onBack: () => void }) {
   const queryClient = useQueryClient();
-  const settings = useQuery({ queryKey: ["network-settings"], queryFn: libraryApi.getNetworkSettings });
+  const settings = useQuery({
+    queryKey: ["network-settings"],
+    queryFn: libraryApi.getNetworkSettings,
+    // Follow the router's answer: quickly while Zeron asks, then now and then.
+    refetchInterval: (query) => {
+      const state = query.state.data?.portMapping?.state;
+      return state === "probing" ? 1000 : state ? 15_000 : false;
+    },
+  });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["network-settings"] });
   const save = useMutation({
     mutationFn: (profile: NetworkProfile) => libraryApi.setNetworkProfile(profile),
@@ -108,8 +117,8 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
               <p className="mt-4 text-xs text-slate-500">
                 Active now
                 {data.downloadPort ? ` · downloads use port ${data.downloadPort}` : ""}
-                {data.sharingPort ? ` · shared courses and releases are served on port ${data.sharingPort}` : ""}.{" "}
-                {data.activePortForwarding ? "Your router is asked to forward these ports with UPnP." : "UPnP is off."}
+                {data.sharingPort ? ` · shared courses and releases are served on port ${data.sharingPort}` : ""}.
+                {routerStatus(data) ? <span role="status" className="mt-1 block">{routerStatus(data)}</span> : null}
               </p>
             )}
             {!data.restartRequired && data.torrentEngine === "ready" && data.sharingPort === null ? (

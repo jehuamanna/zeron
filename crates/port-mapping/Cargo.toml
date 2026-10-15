@@ -1,0 +1,21 @@
+[package]
+name = "port-mapping"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+netdev.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "time", "sync", "rt", "macros"] }
+tokio-util.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "time", "sync", "rt-multi-thread", "macros", "io-util"] }
+
+[lints]
+workspace = true

@@ -8,6 +8,7 @@ mod publish;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use learning_application::TorrentEngine as _;
@@ -46,6 +47,8 @@ pub(crate) struct Torrents {
     pub(crate) sharing_port: Option<u16>,
     /// The public engine, which also seeds releases.
     pub(crate) public: Option<Arc<LibrqbitEngine>>,
+    /// Asks the router to open both engines' ports, when forwarding applies.
+    pub(crate) port_mapper: Option<port_mapping::PortMapper>,
     pub(crate) router: Option<Arc<Router>>,
     pub(crate) imports: Option<Arc<TorrentImports<Router>>>,
     pub(crate) sharing: Option<Arc<CourseSharing<LibrqbitEngine>>>,
@@ -222,6 +225,10 @@ pub fn run() {
         if matches!(event, RunEvent::Exit) {
             let state = app_handle.state::<AppState>();
             state.media_gateway.shutdown();
+            // Close the router's ports before the engines stop listening.
+            if let Some(mapper) = state.torrents.port_mapper.clone() {
+                tauri::async_runtime::block_on(mapper.shutdown(Duration::from_secs(3)));
+            }
             for engine in state.torrents.engines.clone() {
                 tauri::async_runtime::block_on(engine.shutdown());
             }
@@ -265,8 +272,9 @@ fn trust_media_gateway(app: &tauri::App, gateway: &MediaGateway) {
 fn trust_media_gateway(_: &tauri::App, _: &MediaGateway) {}
 
 /// Only the public engine serves peers, so only it takes the fixed port; the
-/// private engine always uses a new port. Both ask the router to forward
-/// their port when forwarding applies. Each engine starts on its own, so
+/// private engine always uses a new port. When forwarding applies, Zeron's
+/// own port mapper asks the router to open both ports for TCP and UDP (uTP),
+/// so librqbit's TCP-only `UPnP` stays off. Each engine starts on its own, so
 /// releases can seed even if the private engine fails, and the reverse.
 fn start_torrents(
     profile: NetworkProfile,
@@ -279,16 +287,13 @@ fn start_torrents(
         tauri::async_runtime::block_on(LibrqbitEngine::start(EngineConfig {
             profile,
             state_directory: app_data.join(directory),
-            // Both engines may ask the router to forward their port, so a
-            // seeder that cannot accept connections can still reach this
-            // learner. Only the public engine takes the fixed port.
-            reachability: if allow_uploads {
-                reachability
-            } else {
-                PeerReachability {
-                    port: None,
-                    port_forwarding: reachability.port_forwarding,
-                }
+            reachability: PeerReachability {
+                port: if allow_uploads {
+                    reachability.port
+                } else {
+                    None
+                },
+                port_forwarding: false,
             },
             allow_uploads,
         }))
@@ -302,6 +307,9 @@ fn start_torrents(
     let port = |engine: &Arc<LibrqbitEngine>| engine.listen_address().map(|address| address.port());
     let engines: Vec<_> = private.iter().chain(public.iter()).cloned().collect();
     let sharing_port = public.as_ref().and_then(port);
+    let port_mapper = reachability
+        .port_forwarding
+        .then(|| start_port_mapper(engines.iter().filter_map(port).collect()));
     let Some(private) = private else {
         return Torrents {
             profile,
@@ -310,6 +318,7 @@ fn start_torrents(
             download_port: None,
             sharing_port,
             public,
+            port_mapper,
             router: None,
             imports: None,
             sharing: None,
@@ -325,6 +334,7 @@ fn start_torrents(
         download_port: port(&private),
         sharing_port,
         public,
+        port_mapper,
         engines,
         router: Some(Arc::clone(&router)),
         cache: Some(Arc::new(CourseCache::new(
@@ -346,6 +356,13 @@ fn start_torrents(
         ))),
         sharing: Some(Arc::new(CourseSharing::new(router, Arc::clone(library)))),
     }
+}
+
+/// Keep `ports` open on the router for as long as Zeron runs.
+fn start_port_mapper(ports: Vec<u16>) -> port_mapping::PortMapper {
+    let (mapper, run) = port_mapping::PortMapper::new(port_mapping::MapperConfig::default(), ports);
+    tauri::async_runtime::spawn(run);
+    mapper
 }
 
 /// Apply speed caps to every running engine: through the router when the

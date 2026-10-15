@@ -15,12 +15,25 @@ export interface NetworkSettings {
   peerPort: number | null;
   /** Stored UPnP choice, honored under the Internet profile only. */
   portForwarding: boolean;
+  /** Whether Zeron asks the router to open its ports in this session. */
   activePortForwarding: boolean;
   restartRequired: boolean;
   /** Download cap in KiB/s; null means unlimited. */
   downloadLimitKib: number | null;
   /** Upload cap for shared courses in KiB/s; null means unlimited. */
   uploadLimitKib: number | null;
+  /** What the router said about opening Zeron's ports; null when forwarding is off. */
+  portMapping: PortMapping | null;
+}
+
+export type MappingProtocol = "pcp" | "nat_pmp" | "upnp";
+
+export interface PortMapping {
+  state: "probing" | "mapped" | "unavailable" | "stopped";
+  protocol: MappingProtocol | null;
+  ports: { internalPort: number; externalPort: number; transport: "tcp" | "udp" }[];
+  /** Each protocol tried last, in order. */
+  tried: { protocol: MappingProtocol; outcome: "mapped" | "no_answer" | "refused" | "unsupported" | "no_gateway" | "failed"; code: number | null }[];
 }
 
 export interface CourseSummary {

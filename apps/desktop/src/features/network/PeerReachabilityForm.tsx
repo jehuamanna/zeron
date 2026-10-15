@@ -70,10 +70,10 @@ export function PeerReachabilityForm({
           className="mt-1 accent-cyan-300"
         />
         <span>
-          <span className="block text-sm font-medium">Ask my router to forward Zeron's ports (UPnP)</span>
+          <span className="block text-sm font-medium">Ask my router to open Zeron's ports (UPnP, NAT-PMP, PCP)</span>
           <span className="block text-xs text-slate-400">
             {internet
-              ? "On by default, like most BitTorrent apps. It lets seeders behind their own routers reach you to deliver a course, and others download what you share or publish. While Zeron runs, it asks your router to forward the ports. Any device on your network can make the same request, and some routers have UPnP turned off."
+              ? "On by default, like most BitTorrent apps. It lets seeders behind their own routers reach you to deliver a course, and others download what you share or publish. While Zeron runs, it asks your router to open the ports for TCP and UDP, and closes them when Zeron quits. Any device on your network can make the same request, and some routers have these protocols turned off."
               : "Available with the Internet profile."}
           </span>
         </span>

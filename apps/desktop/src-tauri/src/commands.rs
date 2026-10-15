@@ -251,6 +251,85 @@ pub(crate) struct NetworkSettingsDto {
     download_limit_kib: Option<u32>,
     /// Upload cap for shared courses in KiB/s; `None` means unlimited.
     upload_limit_kib: Option<u32>,
+    /// What the router said about opening Zeron's ports; `None` when
+    /// forwarding is off for this session.
+    port_mapping: Option<PortMappingDto>,
+}
+
+/// The router's answer to Zeron's port mapper.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PortMappingDto {
+    /// `probing`, `mapped`, `unavailable`, or `stopped`.
+    state: &'static str,
+    /// `pcp`, `nat_pmp`, or `upnp`, while mapped.
+    protocol: Option<&'static str>,
+    ports: Vec<MappedPortDto>,
+    /// Each protocol tried last, in order.
+    tried: Vec<MappingAttemptDto>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct MappedPortDto {
+    internal_port: u16,
+    external_port: u16,
+    /// `tcp` or `udp`.
+    transport: &'static str,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct MappingAttemptDto {
+    protocol: &'static str,
+    /// `mapped`, `no_answer`, `refused`, `unsupported`, `no_gateway`, or `failed`.
+    outcome: &'static str,
+    /// The router's result code, when it refused.
+    code: Option<u32>,
+}
+
+pub(crate) fn port_mapping_dto(status: &port_mapping::MappingStatus) -> PortMappingDto {
+    use port_mapping::{MapError, MappingState, Transport};
+    PortMappingDto {
+        state: match status.state {
+            MappingState::Probing => "probing",
+            MappingState::Mapped => "mapped",
+            MappingState::Unavailable => "unavailable",
+            MappingState::Stopped => "stopped",
+        },
+        protocol: status.protocol.map(port_mapping::Protocol::name),
+        ports: status
+            .ports
+            .iter()
+            .map(|port| MappedPortDto {
+                internal_port: port.internal_port,
+                external_port: port.external_port,
+                transport: match port.transport {
+                    Transport::Tcp => "tcp",
+                    Transport::Udp => "udp",
+                },
+            })
+            .collect(),
+        tried: status
+            .tried
+            .iter()
+            .map(|(protocol, error)| MappingAttemptDto {
+                protocol: protocol.name(),
+                outcome: match error {
+                    None => "mapped",
+                    Some(MapError::NoAnswer) => "no_answer",
+                    Some(MapError::Refused(_)) => "refused",
+                    Some(MapError::Unsupported) => "unsupported",
+                    Some(MapError::NoGateway) => "no_gateway",
+                    Some(MapError::Malformed | MapError::Io(_)) => "failed",
+                },
+                code: match error {
+                    Some(MapError::Refused(code)) => Some(*code),
+                    _ => None,
+                },
+            })
+            .collect(),
+    }
 }
 
 /// Verified bytes of one torrent lesson on this computer.
@@ -761,6 +840,10 @@ pub(crate) async fn get_network_settings(
         torrents.download_port,
         torrents.sharing_port,
     );
+    let port_mapping = torrents
+        .port_mapper
+        .as_ref()
+        .map(|mapper| port_mapping_dto(&mapper.status()));
     let (configured, reachability, limits) = run_blocking(move || {
         let library = lock_library(&library)?;
         let failed = |error| command_error("settings_failed", error);
@@ -780,12 +863,12 @@ pub(crate) async fn get_network_settings(
         sharing_port,
         peer_port: reachability.port,
         port_forwarding: reachability.port_forwarding,
-        // Any running engine asks the router to forward its port.
-        active_port_forwarding: active.1.port_forwarding
-            && (download_port.is_some() || sharing_port.is_some()),
+        // Zeron's port mapper runs only when forwarding applies and an engine started.
+        active_port_forwarding: port_mapping.is_some(),
         restart_required: (configured, reachability.for_profile(configured)) != active,
         download_limit_kib,
         upload_limit_kib,
+        port_mapping,
     })
 }
 
@@ -2163,6 +2246,48 @@ mod tests {
         assert_eq!(failed.code, "sharing_failed");
         assert!(!failed.message.contains("/home/"));
         assert_eq!(sharing_error(SharingError::OwnRelease).code, "own_release");
+    }
+
+    #[test]
+    fn port_mapping_status_crosses_ipc_as_names_and_codes() {
+        use port_mapping::{
+            MapError, MappedPort, MappingState, MappingStatus, Protocol, Transport,
+        };
+        let dto = port_mapping_dto(&MappingStatus {
+            state: MappingState::Mapped,
+            protocol: Some(Protocol::NatPmp),
+            ports: vec![MappedPort {
+                internal_port: 51413,
+                external_port: 51413,
+                transport: Transport::Udp,
+            }],
+            tried: vec![
+                (Protocol::Pcp, Some(MapError::Refused(8))),
+                (Protocol::NatPmp, None),
+            ],
+        });
+        assert_eq!(
+            serde_json::to_value(dto).unwrap(),
+            serde_json::json!({
+                "state": "mapped",
+                "protocol": "nat_pmp",
+                "ports": [{ "internalPort": 51413, "externalPort": 51413, "transport": "udp" }],
+                "tried": [
+                    { "protocol": "pcp", "outcome": "refused", "code": 8 },
+                    { "protocol": "nat_pmp", "outcome": "mapped", "code": null }
+                ]
+            })
+        );
+        let silent = port_mapping_dto(&MappingStatus {
+            state: MappingState::Unavailable,
+            protocol: None,
+            ports: Vec::new(),
+            tried: vec![(Protocol::Upnp, Some(MapError::Io("timed out".to_owned())))],
+        });
+        assert_eq!(
+            (silent.state, silent.tried[0].outcome),
+            ("unavailable", "failed")
+        );
     }
 
     #[test]

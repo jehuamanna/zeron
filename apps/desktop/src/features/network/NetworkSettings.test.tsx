@@ -29,6 +29,7 @@ const settings = (overrides: Partial<Settings>): Settings => ({
   restartRequired: false,
   downloadLimitKib: null,
   uploadLimitKib: null,
+  portMapping: null,
   ...overrides,
 });
 
@@ -58,7 +59,7 @@ describe("network settings", () => {
     expect(radio(view.container, "internet")?.checked).toBe(false);
     expect(view.container.textContent).toContain("downloads use port 41213");
     expect(view.container.textContent).toContain("shared courses and releases are served on port 41099");
-    expect(view.container.textContent).toContain("UPnP is off.");
+    expect(view.queryByRole("status")).toBeNull();
     expect(view.container.textContent).not.toContain("Restart Zeron");
   });
 
@@ -130,14 +131,63 @@ describe("network settings", () => {
     expect(libraryApi.setPeerReachability).not.toHaveBeenCalled();
   });
 
-  it("reports active UPnP and a sharing engine that could not take its port", async () => {
+  it("reports what the router did and a sharing engine that could not take its port", async () => {
     vi.mocked(libraryApi.getNetworkSettings).mockResolvedValue(
-      settings({ configuredProfile: "internet", activeProfile: "internet", peerPort: 51413, portForwarding: true, activePortForwarding: true, sharingPort: null }),
+      settings({
+        configuredProfile: "internet",
+        activeProfile: "internet",
+        peerPort: 51413,
+        portForwarding: true,
+        activePortForwarding: true,
+        sharingPort: null,
+        portMapping: {
+          state: "unavailable",
+          protocol: null,
+          ports: [],
+          tried: [
+            { protocol: "pcp", outcome: "no_answer", code: null },
+            { protocol: "nat_pmp", outcome: "no_answer", code: null },
+            { protocol: "upnp", outcome: "no_answer", code: null },
+          ],
+        },
+      }),
     );
     const { view } = renderSettings();
 
-    await waitFor(() => expect(view.container.textContent).toContain("Your router is asked to forward these ports with UPnP."));
+    await waitFor(() =>
+      expect(view.getByRole("status").textContent).toBe("No router answered UPnP, NAT-PMP, or PCP. Forward TCP and UDP 51413 by hand for peers to reach you."),
+    );
     expect(view.container.textContent).toContain("Sharing and seeding could not start, possibly because port 51413 is in use");
+  });
+
+  it("follows the router's answer while Zeron asks", async () => {
+    const probing = settings({
+      configuredProfile: "internet",
+      activeProfile: "internet",
+      peerPort: 51413,
+      sharingPort: 51413,
+      portForwarding: true,
+      activePortForwarding: true,
+      portMapping: { state: "probing", protocol: null, ports: [], tried: [] },
+    });
+    vi.mocked(libraryApi.getNetworkSettings)
+      .mockResolvedValueOnce(probing)
+      .mockResolvedValue({
+        ...probing,
+        portMapping: {
+          state: "mapped",
+          protocol: "pcp",
+          ports: [
+            { internalPort: 51413, externalPort: 51413, transport: "tcp" },
+            { internalPort: 51413, externalPort: 51413, transport: "udp" },
+          ],
+          tried: [{ protocol: "pcp", outcome: "mapped", code: null }],
+        },
+      });
+    const { view } = renderSettings();
+
+    await waitFor(() => expect(view.getByRole("status").textContent).toBe("Asking your router to open port 51413…"));
+    await waitFor(() => expect(view.getByRole("status").textContent).toBe("Router: port 51413 open via PCP (TCP and UDP)."), { timeout: 3000 });
   });
 
   it("returns to the previous view", async () => {
