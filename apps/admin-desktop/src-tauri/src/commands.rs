@@ -3,11 +3,12 @@ use std::sync::{Arc, Mutex};
 use course_format::ResourceKind;
 use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
-    DraftServiceError, DraftSummary, FindingSeverity, MetadataEdit, PublisherDrafts, StoredDraft,
-    StructureEdit, inspect_draft_media, source_info,
+    DistributionOptions, DraftServiceError, DraftSummary, FindingSeverity, MetadataEdit,
+    PublishJobSnapshot, PublishStage, PublisherDrafts, StoredDraft, StructureEdit,
+    inspect_draft_media, source_info,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::AppState;
@@ -150,6 +151,50 @@ pub(crate) struct ValidationIssueDto {
     message: String,
 }
 
+pub(crate) const PUBLISH_JOB_EVENT: &str = "publish-job";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PublishJobDto {
+    job_id: String,
+    draft_id: String,
+    draft_revision: u64,
+    sequence: u64,
+    stage: PublishStage,
+    progress: Option<JobProgressDto>,
+    prepared: Option<PreparedReleaseDto>,
+    failure: Option<JobFailureDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobProgressDto {
+    completed_bytes: u64,
+    total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedReleaseDto {
+    attempt_id: String,
+    course_version: String,
+    resource_count: usize,
+    manifest_sha256: String,
+    info_hash: String,
+    magnet: String,
+    piece_length: u64,
+    piece_count: usize,
+    file_count: usize,
+    total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobFailureDto {
+    code: &'static str,
+    message: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CommandError {
@@ -270,6 +315,63 @@ pub(crate) async fn inspect_media(
 }
 
 #[tauri::command]
+pub(crate) async fn start_publish_preparation(
+    app: AppHandle,
+    draft_id: String,
+    state: State<'_, AppState>,
+) -> Result<PublishJobDto, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    let jobs = Arc::clone(&state.publish_jobs);
+    let (draft, started) = run_blocking(move || {
+        let draft = lock_drafts(&drafts)?
+            .draft(&draft_id)
+            .map_err(|error| service_error("draft_lookup_failed", error))?
+            .ok_or_else(|| CommandError::new("draft_not_found", "the draft was not found"))?
+            .draft;
+        let started = jobs
+            .begin(&draft)
+            .map_err(|error| service_error("publish_start_failed", error))?;
+        Ok((draft, started))
+    })
+    .await?;
+    let jobs = Arc::clone(&state.publish_jobs);
+    let job_id = started.job_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        jobs.run(
+            &job_id,
+            &draft,
+            &DistributionOptions::default(),
+            &mut |snapshot| {
+                let _ = app.emit(PUBLISH_JOB_EVENT, PublishJobDto::from(snapshot));
+            },
+        );
+    });
+    Ok(PublishJobDto::from(&started))
+}
+
+#[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri injects owned command arguments"
+)]
+pub(crate) fn get_publish_job(job_id: String, state: State<'_, AppState>) -> Option<PublishJobDto> {
+    state
+        .publish_jobs
+        .snapshot(&job_id)
+        .as_ref()
+        .map(PublishJobDto::from)
+}
+
+#[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri injects owned command arguments"
+)]
+pub(crate) fn cancel_publish_job(job_id: String, state: State<'_, AppState>) -> bool {
+    state.publish_jobs.cancel(&job_id)
+}
+
+#[tauri::command]
 pub(crate) async fn validate_draft(
     draft_id: String,
     state: State<'_, AppState>,
@@ -356,6 +458,41 @@ fn media_findings(draft: &course_publisher::DraftCourse) -> Vec<MediaFindingDto>
                 })
         })
         .collect()
+}
+
+impl From<&PublishJobSnapshot> for PublishJobDto {
+    fn from(snapshot: &PublishJobSnapshot) -> Self {
+        Self {
+            job_id: snapshot.job_id.clone(),
+            draft_id: snapshot.draft_id.clone(),
+            draft_revision: snapshot.draft_revision,
+            sequence: snapshot.sequence,
+            stage: snapshot.stage,
+            progress: snapshot.progress.map(|progress| JobProgressDto {
+                completed_bytes: progress.completed_bytes,
+                total_bytes: progress.total_bytes,
+            }),
+            prepared: snapshot
+                .prepared
+                .as_ref()
+                .map(|prepared| PreparedReleaseDto {
+                    attempt_id: prepared.staging.attempt_id.clone(),
+                    course_version: prepared.staging.course_version.clone(),
+                    resource_count: prepared.staging.resource_count,
+                    manifest_sha256: prepared.staging.manifest_sha256.clone(),
+                    info_hash: prepared.torrent.info_hash.clone(),
+                    magnet: prepared.torrent.magnet.clone(),
+                    piece_length: prepared.torrent.piece_length,
+                    piece_count: prepared.torrent.piece_count,
+                    file_count: prepared.torrent.file_count,
+                    total_bytes: prepared.torrent.total_bytes,
+                }),
+            failure: snapshot.failure.as_ref().map(|failure| JobFailureDto {
+                code: failure.code,
+                message: failure.message.clone(),
+            }),
+        }
+    }
 }
 
 impl From<DraftMetadataInput> for MetadataEdit {
@@ -534,6 +671,7 @@ fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
         | DraftServiceError::Packaging(_)
         | DraftServiceError::Torrent(_)
         | DraftServiceError::InvalidAttempt(_) => CommandError::new(code, error),
+        DraftServiceError::JobActive => CommandError::new("job_active", error),
     }
 }
 
@@ -759,6 +897,69 @@ mod tests {
             detail["modules"][0]["lessons"][0]["resources"][0]["durationSeconds"],
             42
         );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn publish_job_dto_uses_screaming_stages_and_hides_paths() {
+        let directory =
+            std::env::temp_dir().join(format!("zeron-admin-publish-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("notes.pdf");
+        std::fs::write(&source, b"%PDF-1.7 tiny").unwrap();
+        let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+        let draft_id = create(&mut drafts).unwrap().draft_id;
+        update_metadata(&mut drafts, &draft_id, 0, input("Publishable")).unwrap();
+        let edit = |value| serde_json::from_value::<StructureEditInput>(value).unwrap();
+        let module_id = edit_structure(
+            &mut drafts,
+            &draft_id,
+            1,
+            edit(serde_json::json!({ "type": "addModule", "title": "M" })),
+        )
+        .unwrap()
+        .modules[0]
+            .id
+            .clone();
+        let lesson_id = edit_structure(
+            &mut drafts,
+            &draft_id,
+            2,
+            edit(serde_json::json!({ "type": "addLesson", "moduleId": module_id, "title": "L" })),
+        )
+        .unwrap()
+        .modules[0]
+            .lessons[0]
+            .id
+            .clone();
+        drafts
+            .attach_source(&draft_id, 3, &lesson_id, &source)
+            .unwrap();
+        let draft = drafts.draft(&draft_id).unwrap().unwrap().draft;
+        let jobs = publisher_application::PublishJobs::new(&directory.join("staging"));
+        let job = jobs.begin(&draft).unwrap();
+        let mut stages = Vec::new();
+        let finished = jobs
+            .run(
+                &job.job_id,
+                &draft,
+                &DistributionOptions::default(),
+                &mut |snapshot| {
+                    stages.push(
+                        serde_json::to_value(PublishJobDto::from(snapshot)).unwrap()["stage"]
+                            .clone(),
+                    );
+                },
+            )
+            .unwrap();
+        assert_eq!(stages.first().unwrap(), "VALIDATING");
+        assert_eq!(stages.last().unwrap(), "READY_TO_PUBLISH");
+        let json = serde_json::to_value(PublishJobDto::from(&finished)).unwrap();
+        assert_eq!(json["prepared"]["infoHash"].as_str().unwrap().len(), 40);
+        assert_eq!(json["prepared"]["fileCount"], 2);
+        assert!(json["failure"].is_null());
+        assert!(!json.to_string().contains(&*directory.to_string_lossy()));
         std::fs::remove_dir_all(directory).unwrap();
     }
 

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export interface DraftSummary {
   draftId: string;
@@ -63,6 +64,46 @@ export type StructureEdit =
   | { type: "removeResource"; resourceId: string }
   | { type: "moveResource"; lessonId: string; resourceId: string; position: number };
 
+export type PublishStage =
+  | "DRAFT"
+  | "VALIDATING"
+  | "PACKAGING"
+  | "GENERATING_TORRENT"
+  | "VERIFYING"
+  | "READY_TO_PUBLISH"
+  | "PUBLISHED"
+  | "SEEDING"
+  | "FAILED"
+  | "CANCELLED"
+  | "SUPERSEDED"
+  | "ARCHIVED";
+
+export interface PreparedRelease {
+  attemptId: string;
+  courseVersion: string;
+  resourceCount: number;
+  manifestSha256: string;
+  infoHash: string;
+  magnet: string;
+  pieceLength: number;
+  pieceCount: number;
+  fileCount: number;
+  totalBytes: number;
+}
+
+export interface PublishJob {
+  jobId: string;
+  draftId: string;
+  draftRevision: number;
+  sequence: number;
+  stage: PublishStage;
+  progress: { completedBytes: number; totalBytes: number } | null;
+  prepared: PreparedRelease | null;
+  failure: { code: string; message: string } | null;
+}
+
+export const finishedPublishStages: ReadonlySet<PublishStage> = new Set(["READY_TO_PUBLISH", "FAILED", "CANCELLED"]);
+
 export interface CommandError {
   code: string;
   message: string;
@@ -89,5 +130,9 @@ export const publisherApi = {
   chooseAndAttachResource: (draftId: string, expectedRevision: number, lessonId: string) =>
     invoke<DraftDetail | null>("choose_and_attach_resource", { draftId, expectedRevision, lessonId }),
   inspectMedia: (draftId: string) => invoke<MediaFinding[]>("inspect_media", { draftId }),
+  startPublishPreparation: (draftId: string) => invoke<PublishJob>("start_publish_preparation", { draftId }),
+  getPublishJob: (jobId: string) => invoke<PublishJob | null>("get_publish_job", { jobId }),
+  cancelPublishJob: (jobId: string) => invoke<boolean>("cancel_publish_job", { jobId }),
+  onPublishJob: (handler: (job: PublishJob) => void) => listen<PublishJob>("publish-job", (event) => handler(event.payload)),
   validateDraft: (draftId: string) => invoke<ValidationIssue[]>("validate_draft", { draftId }),
 };

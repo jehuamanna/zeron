@@ -1,11 +1,13 @@
 //! Admin publisher use cases shared by Zeron composition roots.
 
+mod publish_jobs;
 mod sources;
 mod staging;
 mod torrents;
 
 use std::path::Path;
 
+pub use course_publisher::PublishStage;
 use course_publisher::{
     DraftCourse, DraftLesson, DraftMetadata, DraftModule, DraftResource, DraftValidationIssue,
     EditError,
@@ -14,13 +16,17 @@ pub use course_publisher::{FindingSeverity, MediaFinding};
 pub use course_publisher::{
     PackagingCancellation, PackagingError, PackagingLimits, StagingProgress,
 };
+pub use publish_jobs::{JobFailure, JobProgress, PreparedRelease, PublishJobSnapshot, PublishJobs};
 use publisher_storage::PublisherStorage;
 pub use publisher_storage::{DraftSummary, PublisherStorageError, StoredDraft};
 pub use sources::{ResourceMediaFindings, SourceInfo, inspect_draft_media, source_info};
 pub use staging::{StagingReceipt, discard_abandoned_staging, stage_draft};
 use thiserror::Error;
 pub use torrent_metainfo::{HashProgress, TorrentError};
-pub use torrents::{DistributionOptions, TorrentReceipt, generate_torrent, verify_staged_torrent};
+pub use torrents::{
+    DistributionOptions, TorrentPhase, TorrentReceipt, discard_attempt, generate_torrent,
+    verify_staged_torrent,
+};
 
 const MAX_LIST_ENTRIES: usize = 32;
 const MAX_TITLE_CHARS: usize = 200;
@@ -173,6 +179,9 @@ pub enum DraftServiceError {
     /// Torrent generation or verification failed or was cancelled.
     #[error(transparent)]
     Torrent(TorrentError),
+    /// Another release preparation is already running.
+    #[error("another release preparation is already running")]
+    JobActive,
     /// A staging attempt is unknown, incomplete, or was modified.
     #[error("{0}")]
     InvalidAttempt(&'static str),

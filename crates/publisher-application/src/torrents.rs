@@ -18,6 +18,15 @@ const MAX_TORRENT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_TREE_ENTRIES: usize = 100_000;
 const CREATED_BY: &str = "Zeron Publisher";
 
+/// Which pass of torrent work a progress report belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TorrentPhase {
+    /// Building metainfo by hashing package pieces.
+    Hashing,
+    /// Independently re-reading the written torrent and rehashing pieces.
+    Verifying,
+}
+
 /// Tracker tiers and web seeds chosen by the publisher.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DistributionOptions {
@@ -57,7 +66,7 @@ pub fn generate_torrent(
     attempt_id: &str,
     distribution: &DistributionOptions,
     cancellation: &PackagingCancellation,
-    progress: &mut dyn FnMut(HashProgress),
+    progress: &mut dyn FnMut(TorrentPhase, HashProgress),
 ) -> Result<TorrentReceipt, DraftServiceError> {
     let attempt = StagedAttempt::open(staging_root, attempt_id)?;
     let torrent_path = attempt.torrent_path();
@@ -80,17 +89,24 @@ pub fn generate_torrent(
         &attempt.files,
         &options,
         &cancelled,
-        progress,
+        &mut |hashed| progress(TorrentPhase::Hashing, hashed),
     )
     .map_err(DraftServiceError::Torrent)?;
     write_atomically(&torrent_path, &built.bytes)?;
     let verified = read_torrent(&torrent_path).and_then(|bytes| {
+        progress(
+            TorrentPhase::Verifying,
+            HashProgress {
+                hashed_bytes: 0,
+                total_bytes: built.total_length,
+            },
+        );
         verify_torrent(
             &bytes,
             &attempt.root,
             &attempt.files,
             &cancelled,
-            &mut |_| {},
+            &mut |hashed| progress(TorrentPhase::Verifying, hashed),
         )
         .map_err(DraftServiceError::Torrent)
     });
@@ -115,6 +131,29 @@ pub fn generate_torrent(
             Err(error)
         }
     }
+}
+
+/// Remove a completed attempt and its torrent, for example after a failed or
+/// cancelled preparation. Only exact attempt IDs are accepted.
+///
+/// # Errors
+/// Returns an error for malformed IDs or removal failures.
+pub fn discard_attempt(staging_root: &Path, attempt_id: &str) -> Result<(), DraftServiceError> {
+    if !is_completed_attempt(attempt_id) {
+        return Err(DraftServiceError::InvalidAttempt("unknown staging attempt"));
+    }
+    let io_error =
+        |operation, source| DraftServiceError::Torrent(TorrentError::Io { operation, source });
+    let root = staging_root.join(attempt_id);
+    if fs::symlink_metadata(&root).is_ok_and(|metadata| metadata.file_type().is_dir()) {
+        fs::remove_dir_all(&root)
+            .map_err(|source| io_error("removing a staging attempt", source))?;
+    }
+    let torrent = staging_root.join(format!("{attempt_id}.torrent"));
+    if fs::symlink_metadata(&torrent).is_ok_and(|metadata| metadata.file_type().is_file()) {
+        fs::remove_file(&torrent).map_err(|source| io_error("removing a torrent file", source))?;
+    }
+    Ok(())
 }
 
 /// Re-verify an existing `<attempt>.torrent` against its staged package.

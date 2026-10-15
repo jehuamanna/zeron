@@ -103,7 +103,7 @@ fn generate(
         attempt_id,
         distribution,
         &PackagingCancellation::default(),
-        &mut |_| {},
+        &mut |_, _| {},
     )
 }
 
@@ -281,7 +281,7 @@ fn cancelled_generation_leaves_no_torrent_and_partials_are_discarded() {
             &attempt.attempt_id,
             &DistributionOptions::default(),
             &cancellation,
-            &mut |_| {}
+            &mut |_, _| {}
         ),
         Err(DraftServiceError::Torrent(TorrentError::Cancelled))
     ));

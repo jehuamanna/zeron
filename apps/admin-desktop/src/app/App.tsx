@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 
 import { Builder } from "../features/builder/Builder";
 import { ReadinessPanel } from "../features/builder/ReadinessPanel";
+import { PublishPanel } from "../features/publish/PublishPanel";
 import { publisherApi, type DraftDetail } from "../services/publisher";
 import { useBuilderUi } from "../stores/builder";
 
@@ -73,7 +74,10 @@ export function App() {
                 {draft.isPending ? <p className="text-slate-400">Opening draft…</p> : draft.data ? (
                   <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
                     <Builder key={`${draft.data.draftId}:${reloadCount}`} draft={draft.data} onSaved={handleSaved} onReload={() => void reloadDraft()} />
-                    <ReadinessPanel draftId={draft.data.draftId} revision={draft.data.revision} />
+                    <div className="space-y-6">
+                      <ReadinessPanel draftId={draft.data.draftId} revision={draft.data.revision} />
+                      <PublishPanel draftId={draft.data.draftId} revision={draft.data.revision} />
+                    </div>
                   </div>
                 ) : <p role="alert" className="text-red-300">This draft could not be recovered.</p>}
               </div>

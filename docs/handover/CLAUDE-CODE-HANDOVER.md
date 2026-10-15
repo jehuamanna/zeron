@@ -46,13 +46,14 @@ The last fully green baseline at `930b4d5` passed Rust formatting, Clippy with w
 - Backend-only source selection (`docs/releases/phase-2-source-selection.md`). `choose_and_attach_resource` opens the native picker in Rust; `PublisherDrafts::attach_source` canonicalizes and records the path only in the snapshot; resource DTOs expose `fileName` and `byteLength` only.
 - Deterministic package staging (`docs/releases/phase-2-package-staging.md`, ADR `docs/decisions/0001-package-staging-layout.md`). `course_publisher::stage_package` plus `publisher_application::stage_draft` / `discard_abandoned_staging`. Backend only; not yet wired into the Admin app.
 - Media inspection warnings (`docs/releases/phase-2-media-inspection.md`). `course_publisher::inspect_media` (bounded ISO-BMFF header scan), durations captured on attach, on-demand "Media checks" in `ReadinessPanel`.
-- Deterministic BitTorrent v1 metainfo (`docs/releases/phase-2-torrent-metainfo.md`, ADR `docs/decisions/0002-torrent-metainfo-writer.md`). New crate `torrent-metainfo`; `publisher_application::generate_torrent` / `verify_staged_torrent` operate on completed staging attempts. Backend only.
+- Deterministic BitTorrent v1 metainfo (`docs/releases/phase-2-torrent-metainfo.md`, ADR `docs/decisions/0002-torrent-metainfo-writer.md`). New crate `torrent-metainfo`; `publisher_application::generate_torrent` / `verify_staged_torrent` operate on completed staging attempts.
+- Admin release preparation job (`docs/releases/phase-2-publish-preparation-job.md`). `publisher_application::PublishJobs`; Admin commands `start_publish_preparation` / `get_publish_job` / `cancel_publish_job` plus `publish-job` events; `PublishPanel` UI.
 
 Local tooling note: `pnpm` is not on `PATH` in this environment; it is available as `corepack pnpm` from `~/.nvm/versions/node/v22.22.2/bin`. The root scripts invoke nested `pnpm`, so put a `pnpm` shim that execs `corepack pnpm` on `PATH` before running the JS gates.
 
 ## Next slice
 
-Admin publish workspace: run `stage_draft` → `generate_torrent` (which verifies) as one cancellable, observable backend job from the Admin app, following `docs/architecture/system-overview.md` (stable job IDs, throttled versioned events as hints, snapshot query as source of truth, cancellation). On Admin startup call `discard_abandoned_staging(app_data/staging)`. Use `PublishingWorkflow` stage transitions for job state. Show the receipt (info hash, magnet, piece length, file count, bytes). Then continue with item 7 (atomic immutable release activation and release history).
+Atomic immutable release activation and release history (item 7 below). Add durable release records (new publisher-storage migration), move a `READY_TO_PUBLISH` attempt plus its torrent into an app-data `releases/<release id>/` directory atomically (same-filesystem rename; otherwise copy → verify → activate), forbid any later mutation, list release history in the Courses workspace, and define retention for completed-but-unactivated attempts. Activation is an explicit, confirmed user action.
 
 When testing UI in the browser pane, Tauri IPC can be faked by assigning `window.__TAURI_INTERNALS__ = { invoke, transformCallback }` after the page loads, then using the app (the initial list query will already have failed).
 
