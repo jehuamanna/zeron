@@ -150,3 +150,62 @@ fn lessons_reorder_within_their_module() {
         })
     );
 }
+
+fn resource(id: &str) -> course_publisher::DraftResource {
+    course_publisher::DraftResource {
+        id: id.to_owned(),
+        kind: course_format::ResourceKind::Video,
+        source_path: std::path::PathBuf::from("source.mp4"),
+        package_path: format!("resources/{id}/source.mp4"),
+        media_type: "video/mp4".to_owned(),
+        duration_seconds: None,
+        language: None,
+    }
+}
+
+#[test]
+fn resources_attach_reorder_and_detach_within_a_lesson() {
+    let mut course = empty();
+    course.add_module(0, module("module_a")).unwrap();
+    course
+        .add_lesson(1, "module_a", lesson("lesson_a"))
+        .unwrap();
+    assert_eq!(
+        course.add_resource(2, "lesson_a", resource("resource_1")),
+        Ok(3)
+    );
+    assert_eq!(
+        course.add_resource(3, "lesson_a", resource("resource_2")),
+        Ok(4)
+    );
+    assert_eq!(
+        course.add_resource(4, "lesson_a", resource("module_a")),
+        Err(EditError::DuplicateId {
+            id: "module_a".to_owned()
+        })
+    );
+    assert_eq!(course.move_resource(4, "lesson_a", "resource_2", 0), Ok(5));
+    let order: Vec<_> = course.modules[0].lessons[0]
+        .resources
+        .iter()
+        .map(|resource| resource.id.as_str())
+        .collect();
+    assert_eq!(order, ["resource_2", "resource_1"]);
+    assert_eq!(course.remove_resource(5, "resource_2"), Ok(6));
+    assert_eq!(course.modules[0].lessons[0].resources.len(), 1);
+    assert_eq!(
+        course.remove_resource(6, "resource_2"),
+        Err(EditError::NotFound {
+            entity: "resource",
+            id: "resource_2".to_owned()
+        })
+    );
+    assert_eq!(
+        course.add_resource(6, "lesson_missing", resource("resource_3")),
+        Err(EditError::NotFound {
+            entity: "lesson",
+            id: "lesson_missing".to_owned()
+        })
+    );
+    assert_eq!(course.revision, 6);
+}

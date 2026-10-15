@@ -13,13 +13,14 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build.workspace = true
 
 [dependencies]
+course-format = { path = "../../../crates/course-format" }
 course-publisher = { path = "../../../crates/course-publisher" }
 publisher-application = { path = "../../../crates/publisher-application" }
 serde.workspace = true
 tauri.workspace = true
+tauri-plugin-dialog.workspace = true
 
 [dev-dependencies]
-course-format = { path = "../../../crates/course-format" }
 serde_json.workspace = true
 
 [lints]

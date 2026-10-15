@@ -1,12 +1,16 @@
 //! Admin publisher use cases shared by Zeron composition roots.
 
+mod sources;
+
 use std::path::Path;
 
 use course_publisher::{
-    DraftCourse, DraftLesson, DraftMetadata, DraftModule, DraftValidationIssue, EditError,
+    DraftCourse, DraftLesson, DraftMetadata, DraftModule, DraftResource, DraftValidationIssue,
+    EditError,
 };
 use publisher_storage::PublisherStorage;
 pub use publisher_storage::{DraftSummary, PublisherStorageError, StoredDraft};
+pub use sources::{SourceInfo, source_info};
 use thiserror::Error;
 
 const MAX_LIST_ENTRIES: usize = 32;
@@ -94,6 +98,20 @@ pub enum StructureEdit {
         /// Target position.
         position: usize,
     },
+    /// Remove a resource reference; the source file is untouched.
+    RemoveResource {
+        /// Stable resource ID.
+        resource_id: String,
+    },
+    /// Move a resource to a zero-based position within its lesson.
+    MoveResource {
+        /// Parent lesson ID.
+        lesson_id: String,
+        /// Stable resource ID.
+        resource_id: String,
+        /// Target position.
+        position: usize,
+    },
 }
 
 /// Draft use-case failure.
@@ -137,6 +155,9 @@ pub enum DraftServiceError {
         /// Requested zero-based position.
         position: usize,
     },
+    /// A selected source cannot be used. The message never contains the path.
+    #[error("the selected source {0}")]
+    SourceRejected(&'static str),
     /// The OS random source could not create an identifier.
     #[error("cannot generate an opaque identifier: {0}")]
     IdGeneration(#[source] getrandom::Error),
@@ -304,8 +325,61 @@ impl PublisherDrafts {
                 lesson_id,
                 position,
             } => draft.move_lesson(expected_revision, &module_id, &lesson_id, position),
+            StructureEdit::RemoveResource { resource_id } => {
+                draft.remove_resource(expected_revision, &resource_id)
+            }
+            StructureEdit::MoveResource {
+                lesson_id,
+                resource_id,
+                position,
+            } => draft.move_resource(expected_revision, &lesson_id, &resource_id, position),
         };
         applied.map_err(edit_error)?;
+        self.save(expected_revision, draft)
+    }
+
+    /// Attach a backend-selected source file to a lesson as a new resource.
+    ///
+    /// The canonical path is recorded only in the draft snapshot. Bytes are
+    /// neither read nor copied until packaging.
+    ///
+    /// # Errors
+    /// Rejects missing or non-regular files, stale revisions, and missing lessons.
+    pub fn attach_source(
+        &mut self,
+        draft_id: &str,
+        expected_revision: u64,
+        lesson_id: &str,
+        source: &Path,
+    ) -> Result<StoredDraft, DraftServiceError> {
+        let mut draft = self.require(draft_id)?;
+        let source = std::fs::canonicalize(source)
+            .map_err(|_| DraftServiceError::SourceRejected("is unavailable"))?;
+        if !std::fs::metadata(&source).is_ok_and(|metadata| metadata.is_file()) {
+            return Err(DraftServiceError::SourceRejected("is not a regular file"));
+        }
+        let file_name = source
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (kind, media_type) = sources::classify(&source);
+        let id = opaque_id("resource")?;
+        let package_path = format!("resources/{id}/{}", sources::package_file_name(&file_name));
+        draft
+            .add_resource(
+                expected_revision,
+                lesson_id,
+                DraftResource {
+                    id,
+                    kind,
+                    source_path: source,
+                    package_path,
+                    media_type: media_type.to_owned(),
+                    duration_seconds: None,
+                    language: None,
+                },
+            )
+            .map_err(edit_error)?;
         self.save(expected_revision, draft)
     }
 

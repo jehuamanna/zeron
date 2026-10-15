@@ -75,7 +75,7 @@ export function App() {
               <div>
                 <button type="button" onClick={() => selectDraft(null)} className="mb-6 flex items-center gap-2 text-sm text-slate-400"><ArrowLeft size={16} /> Back to courses</button>
                 {draft.isPending ? <p className="text-slate-400">Opening draft…</p> : draft.data ? (
-                  <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+                  <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
                     <Builder key={`${draft.data.draftId}:${reloadCount}`} draft={draft.data} onSaved={handleSaved} onReload={() => void reloadDraft()} />
                     <aside className="h-fit rounded-3xl border border-white/10 bg-black/20 p-6">
                       <h2 className="font-semibold">Publishing readiness</h2>

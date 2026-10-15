@@ -21,8 +21,18 @@ export interface DraftMetadata {
   licenseName: string | null;
 }
 
+export type ResourceKind = "video" | "audio" | "pdf" | "markdown" | "text" | "subtitle" | "transcript" | "image" | "source_archive" | "other";
+
+export interface ResourceSummary {
+  id: string;
+  kind: ResourceKind;
+  fileName: string;
+  mediaType: string;
+  byteLength: number | null;
+}
+
 export interface DraftDetail extends DraftSummary, DraftMetadata {
-  modules: Array<{ id: string; title: string; lessons: Array<{ id: string; title: string; resourceCount: number }> }>;
+  modules: Array<{ id: string; title: string; lessons: Array<{ id: string; title: string; resources: ResourceSummary[] }> }>;
 }
 
 export interface ValidationIssue {
@@ -39,7 +49,9 @@ export type StructureEdit =
   | { type: "addLesson"; moduleId: string; title: string }
   | { type: "renameLesson"; lessonId: string; title: string }
   | { type: "removeLesson"; lessonId: string }
-  | { type: "moveLesson"; moduleId: string; lessonId: string; position: number };
+  | { type: "moveLesson"; moduleId: string; lessonId: string; position: number }
+  | { type: "removeResource"; resourceId: string }
+  | { type: "moveResource"; lessonId: string; resourceId: string; position: number };
 
 export interface CommandError {
   code: string;
@@ -64,5 +76,7 @@ export const publisherApi = {
     invoke<DraftDetail>("update_draft_metadata", { draftId, expectedRevision, metadata }),
   editDraftStructure: (draftId: string, expectedRevision: number, edit: StructureEdit) =>
     invoke<DraftDetail>("edit_draft_structure", { draftId, expectedRevision, edit }),
+  chooseAndAttachResource: (draftId: string, expectedRevision: number, lessonId: string) =>
+    invoke<DraftDetail | null>("choose_and_attach_resource", { draftId, expectedRevision, lessonId }),
   validateDraft: (draftId: string) => invoke<ValidationIssue[]>("validate_draft", { draftId }),
 };

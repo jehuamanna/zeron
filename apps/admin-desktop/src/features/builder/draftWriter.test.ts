@@ -13,7 +13,7 @@ describe("draft writer", () => {
     let releaseFirst!: () => void;
     const first = writer.submit((revision) => {
       seen.push(revision);
-      return new Promise((resolve) => (releaseFirst = () => resolve(detail(revision + 1))));
+      return new Promise<DraftDetail>((resolve) => (releaseFirst = () => resolve(detail(revision + 1))));
     });
     const second = writer.submit(async (revision) => {
       seen.push(revision);
@@ -38,6 +38,15 @@ describe("draft writer", () => {
     await expect(writer.submit(later)).rejects.toMatchObject({ code: "revision_conflict" });
     expect(later).not.toHaveBeenCalled();
     expect(onConflict).toHaveBeenCalledOnce();
+  });
+
+  it("treats a null result as no change", async () => {
+    const onSaved = vi.fn();
+    const writer = createDraftWriter(4, { onSaved, onConflict: vi.fn() });
+    await expect(writer.submit(async () => null)).resolves.toBeNull();
+    expect(writer.revision).toBe(4);
+    expect(onSaved).not.toHaveBeenCalled();
+    await expect(writer.submit(async (revision) => detail(revision + 1))).resolves.toEqual(detail(5));
   });
 
   it("keeps writing after an ordinary failure", async () => {

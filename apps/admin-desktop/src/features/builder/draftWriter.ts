@@ -2,7 +2,8 @@ import { asCommandError, type CommandError, type DraftDetail } from "../../servi
 
 export interface DraftWriter {
   readonly revision: number;
-  submit(operation: (expectedRevision: number) => Promise<DraftDetail>): Promise<DraftDetail>;
+  /** Resolves to null when the operation made no change, such as a cancelled file picker. */
+  submit<T extends DraftDetail | null>(operation: (expectedRevision: number) => Promise<T>): Promise<T>;
 }
 
 interface DraftWriterCallbacks {
@@ -30,8 +31,10 @@ export function createDraftWriter(initialRevision: number, callbacks: DraftWrite
         }
         try {
           const saved = await operation(revision);
-          revision = saved.revision;
-          callbacks.onSaved(saved);
+          if (saved) {
+            revision = saved.revision;
+            callbacks.onSaved(saved);
+          }
           return saved;
         } catch (error) {
           const command = asCommandError(error);

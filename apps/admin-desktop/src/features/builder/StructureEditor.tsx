@@ -1,7 +1,7 @@
-import { ArrowDown, ArrowUp, FilePlus2, FolderPlus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, FilePlus2, FolderPlus, Paperclip, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
-import { asCommandError, publisherApi, type DraftDetail, type StructureEdit } from "../../services/publisher";
+import { asCommandError, publisherApi, type DraftDetail, type ResourceSummary, type StructureEdit } from "../../services/publisher";
 import type { DraftWriter } from "./draftWriter";
 
 interface StructureEditorProps {
@@ -22,15 +22,14 @@ export function StructureEditor({ draft, writer, disabled }: StructureEditorProp
   const [error, setError] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
-  const apply = async (edit: StructureEdit, announce: string) => {
+  const run = async (operation: (revision: number) => Promise<DraftDetail | null>, announce: string) => {
     if (disabled) return;
     pending.current += 1;
     setBusy(true);
     setError(null);
     setConfirmingId(null);
     try {
-      await writer.submit((revision) => publisherApi.editDraftStructure(draft.draftId, revision, edit));
-      setAnnouncement(announce);
+      if (await writer.submit(operation)) setAnnouncement(announce);
     } catch (failure) {
       const command = asCommandError(failure);
       if (command?.code !== "revision_conflict") setError(command?.message ?? "The change could not be saved.");
@@ -39,6 +38,9 @@ export function StructureEditor({ draft, writer, disabled }: StructureEditorProp
       setBusy(false);
     }
   };
+
+  const apply = (edit: StructureEdit, announce: string) =>
+    run((revision) => publisherApi.editDraftStructure(draft.draftId, revision, edit), announce);
 
   const moduleCount = draft.modules.length;
 
@@ -114,29 +116,77 @@ export function StructureEditor({ draft, writer, disabled }: StructureEditorProp
                         `Moved “${title}” to position ${position + 1} of ${lessonCount}.`,
                       );
                     };
+                    const resourceCount = lesson.resources.length;
                     return (
-                      <li key={lesson.id} className="flex items-center gap-2 rounded-xl px-1 py-1 hover:bg-white/[0.03]">
-                        <span className="w-6 shrink-0 text-center text-xs text-slate-500">{lessonIndex + 1}</span>
-                        <TitleInput
-                          label={`Title of ${lessonLabel}`}
-                          title={lesson.title}
-                          disabled={disabled}
-                          className={`${titleInput} text-sm`}
-                          onCommit={(title) => void apply({ type: "renameLesson", lessonId: lesson.id, title }, `Renamed ${lessonLabel}.`)}
-                          onMove={moveLesson}
-                        />
-                        <span className="shrink-0 text-xs text-slate-500">{lesson.resourceCount} {lesson.resourceCount === 1 ? "resource" : "resources"}</span>
-                        <button type="button" aria-label={`Move ${lessonLabel} up`} disabled={disabled || lessonIndex === 0} onClick={() => moveLesson(-1)} className={iconButton}><ArrowUp size={15} /></button>
-                        <button type="button" aria-label={`Move ${lessonLabel} down`} disabled={disabled || lessonIndex === lessonCount - 1} onClick={() => moveLesson(1)} className={iconButton}><ArrowDown size={15} /></button>
-                        <RemoveControl
-                          label={lessonLabel}
-                          detail={lesson.resourceCount ? `and its ${lesson.resourceCount} resource ${lesson.resourceCount === 1 ? "reference" : "references"}` : null}
-                          confirming={confirmingId === lesson.id}
-                          disabled={disabled}
-                          onRequest={() => (lesson.resourceCount ? setConfirmingId(lesson.id) : void apply({ type: "removeLesson", lessonId: lesson.id }, `Removed ${lessonLabel}.`))}
-                          onConfirm={() => void apply({ type: "removeLesson", lessonId: lesson.id }, `Removed ${lessonLabel}.`)}
-                          onCancel={() => setConfirmingId(null)}
-                        />
+                      <li key={lesson.id} className="rounded-xl px-1 py-1 hover:bg-white/[0.03]">
+                        <div className="flex items-center gap-2">
+                          <span className="w-6 shrink-0 text-center text-xs text-slate-500">{lessonIndex + 1}</span>
+                          <TitleInput
+                            label={`Title of ${lessonLabel}`}
+                            title={lesson.title}
+                            disabled={disabled}
+                            className={`${titleInput} text-sm`}
+                            onCommit={(title) => void apply({ type: "renameLesson", lessonId: lesson.id, title }, `Renamed ${lessonLabel}.`)}
+                            onMove={moveLesson}
+                          />
+                          <button
+                            type="button"
+                            aria-label={`Attach file to ${lessonLabel}`}
+                            disabled={disabled}
+                            onClick={() =>
+                              void run(
+                                (revision) => publisherApi.chooseAndAttachResource(draft.draftId, revision, lesson.id),
+                                `Attached a file to ${lessonLabel}.`,
+                              )
+                            }
+                            className="flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-40"
+                          >
+                            <Paperclip size={14} /> Attach file
+                          </button>
+                          <button type="button" aria-label={`Move ${lessonLabel} up`} disabled={disabled || lessonIndex === 0} onClick={() => moveLesson(-1)} className={iconButton}><ArrowUp size={15} /></button>
+                          <button type="button" aria-label={`Move ${lessonLabel} down`} disabled={disabled || lessonIndex === lessonCount - 1} onClick={() => moveLesson(1)} className={iconButton}><ArrowDown size={15} /></button>
+                          <RemoveControl
+                            label={lessonLabel}
+                            detail={resourceCount ? `and its ${resourceCount} resource ${resourceCount === 1 ? "reference" : "references"}` : null}
+                            confirming={confirmingId === lesson.id}
+                            disabled={disabled}
+                            onRequest={() => (resourceCount ? setConfirmingId(lesson.id) : void apply({ type: "removeLesson", lessonId: lesson.id }, `Removed ${lessonLabel}.`))}
+                            onConfirm={() => void apply({ type: "removeLesson", lessonId: lesson.id }, `Removed ${lessonLabel}.`)}
+                            onCancel={() => setConfirmingId(null)}
+                          />
+                        </div>
+                        {resourceCount ? (
+                          <ol className="mt-1 space-y-0.5 pl-8" aria-label={`Resources of ${lessonLabel}`}>
+                            {lesson.resources.map((resource, resourceIndex) => {
+                              const resourceLabel = `resource ${resourceIndex + 1} in ${lessonLabel}`;
+                              const moveResource = (offset: number) => {
+                                const position = resourceIndex + offset;
+                                if (position < 0 || position >= resourceCount) return;
+                                void apply(
+                                  { type: "moveResource", lessonId: lesson.id, resourceId: resource.id, position },
+                                  `Moved “${resource.fileName}” to position ${position + 1} of ${resourceCount}.`,
+                                );
+                              };
+                              return (
+                                <li key={resource.id} className="flex items-center gap-2 text-xs">
+                                  <ResourceLine resource={resource} />
+                                  <button type="button" aria-label={`Move ${resourceLabel} up`} disabled={disabled || resourceIndex === 0} onClick={() => moveResource(-1)} className={iconButton}><ArrowUp size={14} /></button>
+                                  <button type="button" aria-label={`Move ${resourceLabel} down`} disabled={disabled || resourceIndex === resourceCount - 1} onClick={() => moveResource(1)} className={iconButton}><ArrowDown size={14} /></button>
+                                  <button
+                                    type="button"
+                                    aria-label={`Detach ${resourceLabel}`}
+                                    title="Detach from lesson (the file itself is kept)"
+                                    disabled={disabled}
+                                    onClick={() => void apply({ type: "removeResource", resourceId: resource.id }, `Detached “${resource.fileName}”. The file itself was not changed.`)}
+                                    className={`${iconButton} hover:text-red-300`}
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ol>
+                        ) : null}
                       </li>
                     );
                   })}
@@ -156,6 +206,45 @@ export function StructureEditor({ draft, writer, disabled }: StructureEditorProp
         </ol>
       )}
     </section>
+  );
+}
+
+const resourceKindLabels: Record<ResourceSummary["kind"], string> = {
+  video: "Video",
+  audio: "Audio",
+  pdf: "PDF",
+  markdown: "Markdown",
+  text: "Text",
+  subtitle: "Subtitles",
+  transcript: "Transcript",
+  image: "Image",
+  source_archive: "Source archive",
+  other: "File",
+};
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+function ResourceLine({ resource }: { resource: ResourceSummary }) {
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-2">
+      <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">{resourceKindLabels[resource.kind]}</span>
+      <span className="truncate text-slate-200">{resource.fileName}</span>
+      {resource.byteLength === null ? (
+        <span className="shrink-0 rounded bg-red-400/15 px-1.5 py-0.5 text-red-200">File missing</span>
+      ) : (
+        <span className="shrink-0 text-slate-500">{formatBytes(resource.byteLength)}</span>
+      )}
+    </span>
   );
 }
 

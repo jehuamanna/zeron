@@ -286,12 +286,7 @@ impl DraftCourse {
         title: String,
     ) -> Result<u64, EditError> {
         self.require_revision(expected_revision)?;
-        self.modules
-            .iter_mut()
-            .flat_map(|module| module.lessons.iter_mut())
-            .find(|lesson| lesson.id == lesson_id)
-            .ok_or_else(|| not_found("lesson", lesson_id))?
-            .title = title;
+        self.lesson_mut(lesson_id)?.title = title;
         Ok(self.advance_revision())
     }
 
@@ -319,6 +314,70 @@ impl DraftCourse {
             })
             .ok_or_else(|| not_found("lesson", lesson_id))?;
         module.lessons.remove(index);
+        Ok(self.advance_revision())
+    }
+
+    /// Append a resource reference to a lesson.
+    ///
+    /// # Errors
+    /// Rejects stale revisions, missing lessons, and IDs already in use.
+    pub fn add_resource(
+        &mut self,
+        expected_revision: u64,
+        lesson_id: &str,
+        resource: DraftResource,
+    ) -> Result<u64, EditError> {
+        self.require_revision(expected_revision)?;
+        self.require_unused(&resource.id)?;
+        self.lesson_mut(lesson_id)?.resources.push(resource);
+        Ok(self.advance_revision())
+    }
+
+    /// Remove a resource reference. The source file is never touched.
+    ///
+    /// # Errors
+    /// Rejects stale revisions and missing IDs.
+    pub fn remove_resource(
+        &mut self,
+        expected_revision: u64,
+        resource_id: &str,
+    ) -> Result<u64, EditError> {
+        self.require_revision(expected_revision)?;
+        let (lesson, index) = self
+            .modules
+            .iter_mut()
+            .flat_map(|module| module.lessons.iter_mut())
+            .find_map(|lesson| {
+                let index = lesson
+                    .resources
+                    .iter()
+                    .position(|resource| resource.id == resource_id)?;
+                Some((lesson, index))
+            })
+            .ok_or_else(|| not_found("resource", resource_id))?;
+        lesson.resources.remove(index);
+        Ok(self.advance_revision())
+    }
+
+    /// Move a resource within its lesson without changing stable IDs.
+    ///
+    /// # Errors
+    /// Rejects stale revisions, missing IDs, and out-of-range positions.
+    pub fn move_resource(
+        &mut self,
+        expected_revision: u64,
+        lesson_id: &str,
+        resource_id: &str,
+        target_position: usize,
+    ) -> Result<u64, EditError> {
+        self.require_revision(expected_revision)?;
+        move_by_id(
+            &mut self.lesson_mut(lesson_id)?.resources,
+            resource_id,
+            target_position,
+            "resource",
+            |item| &item.id,
+        )?;
         Ok(self.advance_revision())
     }
 
@@ -431,6 +490,14 @@ impl DraftCourse {
             .iter_mut()
             .find(|module| module.id == module_id)
             .ok_or_else(|| not_found("module", module_id))
+    }
+
+    fn lesson_mut(&mut self, lesson_id: &str) -> Result<&mut DraftLesson, EditError> {
+        self.modules
+            .iter_mut()
+            .flat_map(|module| module.lessons.iter_mut())
+            .find(|lesson| lesson.id == lesson_id)
+            .ok_or_else(|| not_found("lesson", lesson_id))
     }
 
     fn require_unused(&self, id: &str) -> Result<(), EditError> {

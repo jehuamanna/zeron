@@ -1,11 +1,14 @@
 use std::sync::{Arc, Mutex};
 
-use course_publisher::DraftValidationIssue;
+use course_format::ResourceKind;
+use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
     DraftServiceError, DraftSummary, MetadataEdit, PublisherDrafts, StoredDraft, StructureEdit,
+    source_info,
 };
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::AppState;
 
@@ -52,7 +55,17 @@ struct ModuleDto {
 struct LessonDto {
     id: String,
     title: String,
-    resource_count: usize,
+    resources: Vec<ResourceDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceDto {
+    id: String,
+    kind: ResourceKind,
+    file_name: String,
+    media_type: String,
+    byte_length: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +118,14 @@ pub(crate) enum StructureEditInput {
     MoveLesson {
         module_id: String,
         lesson_id: String,
+        position: usize,
+    },
+    RemoveResource {
+        resource_id: String,
+    },
+    MoveResource {
+        lesson_id: String,
+        resource_id: String,
         position: usize,
     },
 }
@@ -187,6 +208,34 @@ pub(crate) async fn edit_draft_structure(
             expected_revision,
             edit,
         )
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn choose_and_attach_resource(
+    app: AppHandle,
+    draft_id: String,
+    expected_revision: u64,
+    lesson_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<DraftDetailDto>, CommandError> {
+    let selected = run_blocking(move || Ok(app.dialog().file().blocking_pick_file())).await?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let source = selected.into_path().map_err(|_| {
+        CommandError::new(
+            "unsupported_file_location",
+            "the selected file location is not supported",
+        )
+    })?;
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || {
+        lock_drafts(&drafts)?
+            .attach_source(&draft_id, expected_revision, &lesson_id, &source)
+            .map(|stored| Some(DraftDetailDto::from(stored)))
+            .map_err(|error| service_error("draft_save_failed", error))
     })
     .await
 }
@@ -305,6 +354,18 @@ impl From<StructureEditInput> for StructureEdit {
                 lesson_id,
                 position,
             },
+            StructureEditInput::RemoveResource { resource_id } => {
+                Self::RemoveResource { resource_id }
+            }
+            StructureEditInput::MoveResource {
+                lesson_id,
+                resource_id,
+                position,
+            } => Self::MoveResource {
+                lesson_id,
+                resource_id,
+                position,
+            },
         }
     }
 }
@@ -361,11 +422,24 @@ impl From<StoredDraft> for DraftDetailDto {
                         .map(|lesson| LessonDto {
                             id: lesson.id,
                             title: lesson.title,
-                            resource_count: lesson.resources.len(),
+                            resources: lesson.resources.iter().map(ResourceDto::from).collect(),
                         })
                         .collect(),
                 })
                 .collect(),
+        }
+    }
+}
+
+impl From<&DraftResource> for ResourceDto {
+    fn from(resource: &DraftResource) -> Self {
+        let source = source_info(resource);
+        Self {
+            id: resource.id.clone(),
+            kind: resource.kind,
+            file_name: source.file_name,
+            media_type: resource.media_type.clone(),
+            byte_length: source.byte_length,
         }
     }
 }
@@ -402,6 +476,7 @@ fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
             field: Some(field.clone()),
             ..CommandError::new("invalid_input", error)
         },
+        DraftServiceError::SourceRejected(_) => CommandError::new("source_rejected", error),
         DraftServiceError::IdGeneration(_) | DraftServiceError::Storage(_) => {
             CommandError::new(code, error)
         }
@@ -539,6 +614,59 @@ mod tests {
     }
 
     #[test]
+    fn attached_source_detail_reports_size_without_its_directory() {
+        let directory =
+            std::env::temp_dir().join(format!("zeron-admin-attach-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("intro.webm");
+        std::fs::write(&source, b"12345").unwrap();
+        let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+        let draft_id = create(&mut drafts).unwrap().draft_id;
+        let edit = |value| serde_json::from_value::<StructureEditInput>(value).unwrap();
+        let module_id = edit_structure(
+            &mut drafts,
+            &draft_id,
+            0,
+            edit(serde_json::json!({ "type": "addModule", "title": "M" })),
+        )
+        .unwrap()
+        .modules[0]
+            .id
+            .clone();
+        let lesson_id = edit_structure(
+            &mut drafts,
+            &draft_id,
+            1,
+            edit(serde_json::json!({ "type": "addLesson", "moduleId": module_id, "title": "L" })),
+        )
+        .unwrap()
+        .modules[0]
+            .lessons[0]
+            .id
+            .clone();
+        drafts
+            .attach_source(&draft_id, 2, &lesson_id, &source)
+            .unwrap();
+        let json = serde_json::to_value(detail(&drafts, &draft_id).unwrap().unwrap()).unwrap();
+        let resource = &json["modules"][0]["lessons"][0]["resources"][0];
+        assert_eq!(resource["fileName"], "intro.webm");
+        assert_eq!(resource["byteLength"], 5);
+        assert_eq!(resource["kind"], "video");
+        assert!(!json.to_string().contains(&*directory.to_string_lossy()));
+        let resource_id = resource["id"].as_str().unwrap().to_owned();
+        let removed = edit_structure(
+            &mut drafts,
+            &draft_id,
+            3,
+            edit(serde_json::json!({ "type": "removeResource", "resourceId": resource_id })),
+        )
+        .unwrap();
+        assert!(removed.modules[0].lessons[0].resources.is_empty());
+        assert!(source.is_file());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn validation_issues_are_path_free() {
         let mut drafts = PublisherDrafts::open_in_memory().unwrap();
         let draft_id = create(&mut drafts).unwrap().draft_id;
@@ -549,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn detail_dto_counts_resources_without_exposing_source_paths() {
+    fn detail_dto_summarizes_resources_without_exposing_source_paths() {
         let mut drafts = PublisherDrafts::open_in_memory().unwrap();
         let mut stored = drafts.create().unwrap();
         stored.updated_at_unix_seconds = 7;
@@ -572,10 +700,16 @@ mod tests {
             }],
         });
         let json = serde_json::to_value(DraftDetailDto::from(stored)).unwrap();
-        assert_eq!(json["modules"][0]["lessons"][0]["resourceCount"], 1);
+        let resource = &json["modules"][0]["lessons"][0]["resources"][0];
+        assert_eq!(resource["id"], "video_one");
+        assert_eq!(resource["kind"], "video");
+        assert_eq!(resource["fileName"], "video.mp4");
+        assert_eq!(resource["mediaType"], "video/mp4");
+        assert!(resource["byteLength"].is_null());
         assert_eq!(json["updatedAtUnixSeconds"], 7);
         let text = json.to_string();
         assert!(!text.contains("/home/"));
+        assert!(!text.contains("secret"));
         assert!(!text.contains("sourcePath"));
         assert!(!text.contains("packagePath"));
     }

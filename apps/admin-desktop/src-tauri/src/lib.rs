@@ -20,6 +20,7 @@ pub(crate) struct AppState {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data)?;
@@ -35,6 +36,7 @@ pub fn run() {
             commands::get_draft,
             commands::update_draft_metadata,
             commands::edit_draft_structure,
+            commands::choose_and_attach_resource,
             commands::validate_draft,
         ])
         .run(tauri::generate_context!())

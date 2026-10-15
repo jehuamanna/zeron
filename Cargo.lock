@@ -2556,6 +2556,7 @@ dependencies = [
 name = "publisher-application"
 version = "0.1.0"
 dependencies = [
+ "course-format",
  "course-publisher",
  "getrandom 0.4.3",
  "publisher-storage",
@@ -4777,6 +4778,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-dialog",
 ]
 
 [[package]]

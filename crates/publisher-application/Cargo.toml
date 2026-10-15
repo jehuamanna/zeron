@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+course-format = { path = "../course-format" }
 course-publisher = { path = "../course-publisher" }
 getrandom.workspace = true
 publisher-storage = { path = "../publisher-storage" }
