@@ -480,7 +480,10 @@ name = "course-publisher"
 version = "0.1.0"
 dependencies = [
  "course-format",
+ "learning-application",
  "serde",
+ "serde_json",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
 ]
 
@@ -2559,6 +2562,7 @@ dependencies = [
  "course-format",
  "course-publisher",
  "getrandom 0.4.3",
+ "learning-application",
  "publisher-storage",
  "thiserror 2.0.21",
 ]

@@ -12,5 +12,8 @@ getrandom.workspace = true
 publisher-storage = { path = "../publisher-storage" }
 thiserror.workspace = true
 
+[dev-dependencies]
+learning-application = { path = "../learning-application" }
+
 [lints]
 workspace = true

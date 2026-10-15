@@ -1,6 +1,7 @@
 //! Admin publisher use cases shared by Zeron composition roots.
 
 mod sources;
+mod staging;
 
 use std::path::Path;
 
@@ -8,9 +9,13 @@ use course_publisher::{
     DraftCourse, DraftLesson, DraftMetadata, DraftModule, DraftResource, DraftValidationIssue,
     EditError,
 };
+pub use course_publisher::{
+    PackagingCancellation, PackagingError, PackagingLimits, StagingProgress,
+};
 use publisher_storage::PublisherStorage;
 pub use publisher_storage::{DraftSummary, PublisherStorageError, StoredDraft};
 pub use sources::{SourceInfo, source_info};
+pub use staging::{StagingReceipt, discard_abandoned_staging, stage_draft};
 use thiserror::Error;
 
 const MAX_LIST_ENTRIES: usize = 32;
@@ -158,6 +163,9 @@ pub enum DraftServiceError {
     /// A selected source cannot be used. The message never contains the path.
     #[error("the selected source {0}")]
     SourceRejected(&'static str),
+    /// Package staging failed or was cancelled.
+    #[error(transparent)]
+    Packaging(PackagingError),
     /// The OS random source could not create an identifier.
     #[error("cannot generate an opaque identifier: {0}")]
     IdGeneration(#[source] getrandom::Error),
@@ -508,7 +516,7 @@ fn edit_error(error: EditError) -> DraftServiceError {
     }
 }
 
-fn opaque_id(prefix: &str) -> Result<String, DraftServiceError> {
+pub(crate) fn opaque_id(prefix: &str) -> Result<String, DraftServiceError> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).map_err(DraftServiceError::IdGeneration)?;
     let mut id = String::with_capacity(prefix.len() + 1 + bytes.len() * 2);

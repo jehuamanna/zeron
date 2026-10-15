@@ -477,9 +477,9 @@ fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
             ..CommandError::new("invalid_input", error)
         },
         DraftServiceError::SourceRejected(_) => CommandError::new("source_rejected", error),
-        DraftServiceError::IdGeneration(_) | DraftServiceError::Storage(_) => {
-            CommandError::new(code, error)
-        }
+        DraftServiceError::IdGeneration(_)
+        | DraftServiceError::Storage(_)
+        | DraftServiceError::Packaging(_) => CommandError::new(code, error),
     }
 }
 

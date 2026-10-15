@@ -44,12 +44,15 @@ The last fully green baseline at `930b4d5` passed Rust formatting, Clippy with w
 - Draft application service and metadata autosave (`docs/releases/phase-2-draft-application-service.md`). `publisher-application::PublisherDrafts` owns draft use cases; `apps/admin-desktop/src-tauri` composes it against app-data `publisher.sqlite3`. Command bodies are Tauri-independent functions tested against in-memory storage. Command errors carry `code`, plus `currentRevision` for conflicts and `field` for invalid input.
 - Module and lesson structure editing (`docs/releases/phase-2-structure-editing.md`). All Builder writes go through one serialized `draftWriter` per editing session (`apps/admin-desktop/src/features/builder/draftWriter.ts`); new editors must submit through it so they share the revision sequence and the conflict banner.
 - Backend-only source selection (`docs/releases/phase-2-source-selection.md`). `choose_and_attach_resource` opens the native picker in Rust; `PublisherDrafts::attach_source` canonicalizes and records the path only in the snapshot; resource DTOs expose `fileName` and `byteLength` only.
+- Deterministic package staging (`docs/releases/phase-2-package-staging.md`, ADR `docs/decisions/0001-package-staging-layout.md`). `course_publisher::stage_package` plus `publisher_application::stage_draft` / `discard_abandoned_staging`. Backend only; not yet wired into the Admin app.
 
 Local tooling note: `pnpm` is not on `PATH` in this environment; it is available as `corepack pnpm` from `~/.nvm/versions/node/v22.22.2/bin`. The root scripts invoke nested `pnpm`, so put a `pnpm` shim that execs `corepack pnpm` on `PATH` before running the JS gates.
 
 ## Next slice
 
-Deterministic package staging and canonical `course.json` generation (item 4 below). Media inspection (item 5) can follow or be folded in when staging needs probed durations. Staging must run as a cancellable, bounded backend job in a fresh staging directory, copy (never move) sources, hash with SHA-256, emit a `course.json` that passes `course-format` validation, and never touch draft sources or existing releases. Decide the staging root location in Rust (app data), not from React.
+Deterministic BitTorrent v1 metainfo generation and independent verification (item 6 below), together with the Admin publish workspace that runs staging and torrent generation as one cancellable, observable job. Media inspection (item 5) may be done first or alongside.
+
+Before writing torrent code, read `docs/research/dependency-feasibility.md` and `docs/architecture/distribution.md`: the librqbit creator needs a deterministic, error-preserving wrapper, and AGENTS.md forbids engine capabilities without a cited API and an integration test. A small, self-contained bencode/v1 info-dictionary writer with deterministic piece-size selection may be preferable to the engine creator; record that choice in an ADR either way. Verify by reparsing the metainfo and hashing staged pieces independently.
 
 When testing UI in the browser pane, Tauri IPC can be faked by assigning `window.__TAURI_INTERNALS__ = { invoke, transformCallback }` after the page loads, then using the app (the initial list query will already have failed).
 
@@ -75,7 +78,7 @@ Continue Phase 2 in small slices:
 1. ~~Admin draft application service and autosave edits with conflict reporting.~~ Done.
 2. ~~Module/lesson CRUD and accessible reordering.~~ Done; resource CRUD moves to item 3.
 3. ~~Backend-only source selection plus path-free resource DTOs.~~ Done.
-4. Deterministic package staging and canonical `course.json` generation.
+4. ~~Deterministic package staging and canonical `course.json` generation.~~ Done (backend).
 5. Media inspection warnings without silent transcoding.
 6. Deterministic BitTorrent v1 metainfo generation and independent verification.
 7. Atomic immutable release activation and release history.
