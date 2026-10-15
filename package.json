@@ -1,0 +1,10 @@
+{
+  "name": "zeron",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "build": "pnpm --filter @zeron/learner-desktop build",
+    "test": "pnpm --filter @zeron/learner-desktop test",
+    "typecheck": "pnpm --filter @zeron/learner-desktop typecheck"
+  }
+}

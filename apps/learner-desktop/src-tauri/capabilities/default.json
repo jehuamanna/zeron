@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "learner-main",
+  "description": "Minimum capability set for the learner main window.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
