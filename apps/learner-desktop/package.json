@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b && vite build",
+    "build:appimage": "tauri build --bundles appimage",
     "dev": "vite",
     "tauri": "tauri",
     "test": "vitest run",

@@ -4,6 +4,7 @@
   "packageManager": "pnpm@11.25.0",
   "scripts": {
     "build": "pnpm --filter './apps/*' build",
+    "build:appimage": "pnpm --filter './apps/*' build:appimage",
     "test": "pnpm --filter './apps/*' test",
     "typecheck": "pnpm --filter './apps/*' typecheck"
   }

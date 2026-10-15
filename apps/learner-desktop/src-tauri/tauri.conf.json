@@ -28,6 +28,13 @@
   "bundle": {
     "active": true,
     "icon": ["icons/icon.png"],
-    "targets": "all"
+    "targets": ["appimage"],
+    "category": "Education",
+    "shortDescription": "Offline-first course player",
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    }
   }
 }
