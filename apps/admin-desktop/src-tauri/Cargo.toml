@@ -1,0 +1,27 @@
+[package]
+name = "zeron-admin-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "zeron_admin_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+course-publisher = { path = "../../../crates/course-publisher" }
+publisher-storage = { path = "../../../crates/publisher-storage" }
+getrandom.workspace = true
+serde.workspace = true
+tauri.workspace = true
+
+[dev-dependencies]
+course-format = { path = "../../../crates/course-format" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -4757,6 +4757,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeron-admin-desktop"
+version = "0.1.0"
+dependencies = [
+ "course-format",
+ "course-publisher",
+ "getrandom 0.4.3",
+ "publisher-storage",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "zeron-learner-desktop"
 version = "0.1.0"
 dependencies = [

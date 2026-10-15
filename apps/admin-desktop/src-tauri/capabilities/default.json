@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "publisher-main",
+  "description": "Minimum capability set for the publisher main window.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

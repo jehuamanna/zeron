@@ -6,7 +6,7 @@ Repository: `git@github.com:jehuamanna/zeron.git`
 
 Branch: `main`
 
-Last completed implementation commit: `930b4d5 feat: persist publisher drafts`
+Last completed implementation slice: Admin Desktop foundation (after `930b4d5 feat: persist publisher drafts`)
 
 The Claude handover itself was added in commit `64293de`.
 
@@ -38,29 +38,15 @@ The last fully green baseline at `930b4d5` passed Rust formatting, Clippy with w
 
 `AGENTS.md` is modified by the user. Preserve it and exclude it from implementation commits. Its added instruction is to keep implementing and testing all phases continuously.
 
-## Active incomplete slice: Admin Desktop foundation
+## Completed after handover: Admin Desktop foundation
 
-Work began after `930b4d5` and is intentionally uncommitted. Inspect it before editing:
+The Admin Desktop foundation slice is committed (see `docs/releases/phase-2-admin-desktop-foundation.md`). `apps/admin-desktop/src-tauri` composes `publisher-storage` against app-data `publisher.sqlite3` and exposes thin `list_drafts`, `create_draft`, and `get_draft` commands with path-free DTOs. Command bodies are Tauri-independent functions tested against in-memory storage.
 
-- `Cargo.toml` adds `apps/admin-desktop/src-tauri` as a workspace member.
-- Root `package.json` changes build/test/typecheck scripts to target every app.
-- `apps/admin-desktop/` contains the initial React/Vite package, publisher API types, Courses/Builder UI, and two Vitest tests.
-- The Admin Tauri backend does not exist yet. Because the workspace references it, current Cargo commands will fail until it is created or the partial member is temporarily removed.
-- `pnpm-lock.yaml` has not yet been refreshed for the new workspace package.
-- No Admin release note has been written and none of this partial slice has been committed.
+Local tooling note: `pnpm` is not on `PATH` in this environment; it is available as `corepack pnpm` from `~/.nvm/versions/node/v22.22.2/bin`. The root scripts invoke nested `pnpm`, so put a `pnpm` shim that execs `corepack pnpm` on `PATH` before running the JS gates.
 
-Do not discard the partial UI. Complete the vertical slice:
+## Next slice
 
-1. Add `apps/admin-desktop/src-tauri/Cargo.toml`, `build.rs`, `src/main.rs`, `src/lib.rs`, `src/commands.rs`, `tauri.conf.json`, and the minimal capability file.
-2. Compose `publisher-storage::PublisherStorage` in Tauri setup using an app-data `publisher.sqlite3` file behind `Arc<Mutex<_>>`.
-3. Implement thin `list_drafts`, `create_draft`, and `get_draft` commands.
-4. Generate secure opaque draft/course IDs in Rust. A new draft starts at revision zero with `0.1.0`, “Untitled course”, “Local publisher”, `en`, and no modules.
-5. Return path-free DTOs. `get_draft` may expose course metadata and module/lesson/resource counts, but never `DraftResource.source_path`.
-6. Use a distinct Tauri identifier (`app.zeron.publisher`), development port `1421`, strict CSP, and independently packaged product name such as “Zeron Publisher”. The existing Learner icon may be referenced or copied only if packaging accepts it.
-7. Refresh the pnpm lockfile, run both app test/type/build gates and all Rust gates, then add a Phase 2 release note.
-8. Commit and push the completed slice while excluding `AGENTS.md`.
-
-Likely Rust dependencies for Admin Tauri are `course-publisher`, `publisher-storage`, `getrandom`, `serde`, `tauri`, and `tauri-build`. Keep exact versions through workspace pins.
+Admin draft application service and autosave edits with conflict reporting (item 1 below).
 
 ## Important module boundaries
 
@@ -78,7 +64,7 @@ Published package bytes are immutable. Drafts and releases must never share writ
 
 Phase 1 is functionally established, including complete local-file playback. Phase 2 is active.
 
-After completing the Admin Desktop foundation, continue Phase 2 in small slices:
+Continue Phase 2 in small slices:
 
 1. Admin draft application service and autosave edits with conflict reporting.
 2. Module/lesson/resource CRUD and accessible reordering.
@@ -108,8 +94,8 @@ Before the first edit, run:
 
 ```bash
 git status --short
-git diff -- Cargo.toml package.json apps/admin-desktop
+git diff
 git log --oneline -12
 ```
 
-Completion of the active slice means the partial Admin files compile, every repository gate is green, the release note is accurate, a focused commit is pushed, and `git status --short` shows only the user-owned `AGENTS.md` modification.
+Completion of any slice means every repository gate is green, the release note is accurate, a focused commit is pushed, and `git status --short` shows only the user-owned `AGENTS.md` modification.
