@@ -1,6 +1,7 @@
 //! Thin Tauri composition root for Zeron Admin Desktop.
 
 mod commands;
+mod drops;
 
 use std::{
     path::PathBuf,
@@ -8,9 +9,9 @@ use std::{
 };
 
 use publisher_application::{
-    NetworkProfile, PeerReachability, PublishJobs, PublisherDrafts, SeedingService,
+    DropInbox, NetworkProfile, PeerReachability, PublishJobs, PublisherDrafts, SeedingService,
 };
-use tauri::{Manager, RunEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 use torrent_librqbit::{EngineConfig, LibrqbitEngine};
 
 pub(crate) struct AppState {
@@ -18,6 +19,8 @@ pub(crate) struct AppState {
     pub(crate) publish_jobs: Arc<PublishJobs>,
     pub(crate) releases_root: PathBuf,
     pub(crate) distribution: Distribution,
+    /// Scanned drops waiting for the publisher to apply them.
+    pub(crate) drops: Arc<DropInbox>,
 }
 
 /// Seeding is optional at runtime: authoring keeps working if the engine cannot start.
@@ -73,8 +76,14 @@ pub fn run() {
                 publish_jobs: Arc::new(publish_jobs),
                 releases_root,
                 distribution,
+                drops: Arc::new(DropInbox::default()),
             });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::DragDrop(drag) = event {
+                drops::handle_drag_drop(window, drag);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_drafts,
@@ -92,6 +101,8 @@ pub fn run() {
             commands::list_releases,
             commands::archive_release,
             commands::delete_release_files,
+            drops::apply_drop,
+            drops::discard_drop,
             commands::get_release_details,
             commands::export_release_torrent,
             commands::validate_draft,

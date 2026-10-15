@@ -1165,7 +1165,7 @@ impl From<&DraftResource> for ResourceDto {
     }
 }
 
-async fn run_blocking<T: Send + 'static>(
+pub(crate) async fn run_blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, CommandError> + Send + 'static,
 ) -> Result<T, CommandError> {
     tauri::async_runtime::spawn_blocking(work)
@@ -1173,7 +1173,7 @@ async fn run_blocking<T: Send + 'static>(
         .map_err(|error| CommandError::new("worker_failed", error))?
 }
 
-fn lock_drafts(
+pub(crate) fn lock_drafts(
     drafts: &Arc<Mutex<PublisherDrafts>>,
 ) -> Result<std::sync::MutexGuard<'_, PublisherDrafts>, CommandError> {
     drafts.lock().map_err(|_| {
@@ -1184,7 +1184,7 @@ fn lock_drafts(
     })
 }
 
-fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
+pub(crate) fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
     match error {
         DraftServiceError::RevisionConflict { actual, .. } => CommandError {
             current_revision: Some(actual),
@@ -1215,7 +1215,12 @@ fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
 }
 
 impl CommandError {
-    fn new(code: &'static str, message: impl std::fmt::Display) -> Self {
+    #[cfg(test)]
+    pub(crate) fn code(&self) -> &'static str {
+        self.code
+    }
+
+    pub(crate) fn new(code: &'static str, message: impl std::fmt::Display) -> Self {
         Self {
             code,
             message: message.to_string(),

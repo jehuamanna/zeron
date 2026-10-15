@@ -131,6 +131,47 @@ export interface ReleaseDetails {
   files: ReleaseFile[];
 }
 
+export type SkipReason =
+  | "hidden"
+  | "symbolic_link"
+  | "nested_folder"
+  | "unsupported_type"
+  | "unreadable"
+  | "no_lessons"
+  | "limit_reached"
+  | "no_target_lesson";
+
+export interface SkippedEntry {
+  /** Relative to what was dropped, for example `Course/notes.txt`; never a filesystem path. */
+  name: string;
+  reason: SkipReason;
+}
+
+export interface DropFile {
+  title: string;
+  fileName: string;
+  kind: ResourceKind;
+}
+
+/** A scanned drop. Paths stay in the backend; `token` refers to the scan. */
+export interface DropSummary {
+  token: string;
+  /** Drop point in CSS pixels of the window. */
+  x: number;
+  y: number;
+  modules: Array<{ title: string; lessons: DropFile[] }>;
+  looseFiles: DropFile[];
+  skipped: SkippedEntry[];
+}
+
+export interface DropOutcome {
+  draft: DraftDetail;
+  modulesAdded: number;
+  lessonsAdded: number;
+  filesAttached: number;
+  skipped: SkippedEntry[];
+}
+
 export const finishedPublishStages: ReadonlySet<PublishStage> = new Set(["READY_TO_PUBLISH", "PUBLISHED", "FAILED", "CANCELLED"]);
 
 export type NetworkProfile = "loopback" | "local_network" | "internet";
@@ -211,5 +252,11 @@ export const publisherApi = {
   setNetworkProfile: (profile: NetworkProfile) => invoke<void>("set_network_profile", { profile }),
   setPeerReachability: (peerPort: number | null, portForwarding: boolean) =>
     invoke<void>("set_peer_reachability", { peerPort, portForwarding }),
+  onDrag: (handler: (active: boolean) => void) => listen<{ active: boolean }>("builder-drag", (event) => handler(event.payload.active)),
+  onDrop: (handler: (summary: DropSummary) => void) => listen<DropSummary>("builder-drop", (event) => handler(event.payload)),
+  /** Folders become new modules; loose files attach to `lessonId` when given. */
+  applyDrop: (draftId: string, expectedRevision: number, token: string, lessonId: string | null) =>
+    invoke<DropOutcome>("apply_drop", { draftId, expectedRevision, token, target: { lessonId } }),
+  discardDrop: (token: string) => invoke<void>("discard_drop", { token }),
   validateDraft: (draftId: string) => invoke<ValidationIssue[]>("validate_draft", { draftId }),
 };

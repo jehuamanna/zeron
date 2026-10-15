@@ -119,7 +119,7 @@ export function StructureEditor({ draft, writer, disabled }: StructureEditorProp
                     };
                     const resourceCount = lesson.resources.length;
                     return (
-                      <li key={lesson.id} className="rounded-xl px-1 py-1 hover:bg-white/[0.03]">
+                      <li key={lesson.id} data-lesson-id={lesson.id} className="rounded-xl px-1 py-1 hover:bg-white/[0.03]">
                         <div className="flex items-center gap-2">
                           <span className="w-6 shrink-0 text-center text-xs text-slate-500">{lessonIndex + 1}</span>
                           <TitleInput

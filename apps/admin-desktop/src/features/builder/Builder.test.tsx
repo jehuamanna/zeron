@@ -1,13 +1,13 @@
-import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { publisherApi, type DraftDetail, type ResourceSummary, type StructureEdit } from "../../services/publisher";
+import { publisherApi, type DraftDetail, type DropSummary, type ResourceSummary, type StructureEdit } from "../../services/publisher";
 import { Builder } from "./Builder";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { updateDraftMetadata: vi.fn(), editDraftStructure: vi.fn(), chooseAndAttachResource: vi.fn() },
+  publisherApi: { updateDraftMetadata: vi.fn(), editDraftStructure: vi.fn(), chooseAndAttachResource: vi.fn(), onDrag: vi.fn(), onDrop: vi.fn(), applyDrop: vi.fn(), discardDrop: vi.fn() },
 }));
 
 const initial: DraftDetail = {
@@ -81,9 +81,21 @@ function Harness({ onReload }: { onReload: () => void }) {
 const titles = (view: ReturnType<typeof render>, pattern: RegExp) =>
   view.getAllByLabelText(pattern).map((input) => (input as HTMLInputElement).value);
 
+let dragHandler: (active: boolean) => void = () => undefined;
+let dropHandler: (summary: DropSummary) => void = () => undefined;
+
 beforeEach(() => {
   server = initial;
   nextId = 0;
+  vi.mocked(publisherApi.onDrag).mockImplementation(async (handler) => {
+    dragHandler = handler;
+    return () => undefined;
+  });
+  vi.mocked(publisherApi.onDrop).mockImplementation(async (handler) => {
+    dropHandler = handler;
+    return () => undefined;
+  });
+  vi.mocked(publisherApi.discardDrop).mockResolvedValue(undefined);
   vi.mocked(publisherApi.editDraftStructure).mockImplementation(async (_id, revision, edit) => commit(revision, (draft) => apply(draft, edit)));
   vi.mocked(publisherApi.updateDraftMetadata).mockImplementation(async (_id, revision, metadata) => commit(revision, (draft) => ({ ...draft, ...metadata })));
 });
@@ -223,5 +235,112 @@ describe("course structure builder", () => {
     fireEvent.click(view.getByRole("button", { name: /load latest/i }));
     expect(onReload).toHaveBeenCalledOnce();
     expect(server.modules).toHaveLength(0);
+  });
+});
+
+const video = (title: string, fileName: string) => ({ title, fileName, kind: "video" as const });
+
+function dropSummary(overrides: Partial<DropSummary> = {}): DropSummary {
+  return {
+    token: "drop_one",
+    x: 40,
+    y: 60,
+    modules: [{ title: "algoexpert-sdfshortcourse", lessons: [video("lesson1", "lesson1.mp4"), video("lesson2", "lesson2.mp4"), video("lesson10", "lesson10.mp4")] }],
+    looseFiles: [{ title: "handout", fileName: "handout.pdf", kind: "pdf" }],
+    skipped: [{ name: "algoexpert-sdfshortcourse/Design Fundamentals.txt", reason: "unsupported_type" }],
+    ...overrides,
+  };
+}
+
+async function builderWithLesson() {
+  const view = render(<Harness onReload={vi.fn()} />);
+  fireEvent.click(view.getByRole("button", { name: "Add module" }));
+  await waitFor(() => expect(view.getAllByLabelText(/^Title of module/)).toHaveLength(1));
+  fireEvent.click(view.getByRole("button", { name: "Add lesson to module 1" }));
+  await waitFor(() => expect(view.getAllByLabelText(/^Title of lesson/)).toHaveLength(1));
+  await waitFor(() => expect(publisherApi.onDrop).toHaveBeenCalled());
+  return view;
+}
+
+describe("drag-and-drop import", () => {
+  afterEach(() => {
+    Reflect.deleteProperty(document, "elementFromPoint");
+  });
+
+  it("highlights while dragging and adds folders and files dropped onto a lesson as one revision", async () => {
+    const view = await builderWithLesson();
+    const lessonId = server.modules[0]!.lessons[0]!.id;
+    vi.mocked(publisherApi.applyDrop).mockImplementation(async (_draft, revision, _token, target) =>
+      ({
+        draft: commit(revision, (draft) => {
+          const attached = attach(draft, target!, { id: "res_handout", kind: "pdf", fileName: "handout.pdf", mediaType: "application/pdf", byteLength: 10, durationSeconds: null });
+          return { ...attached, modules: [...attached.modules, { id: "module_drop", title: "algoexpert-sdfshortcourse", lessons: [1, 2, 10].map((n) => ({ id: `lesson_drop_${n}`, title: `lesson${n}`, resources: [] })) }] };
+        }),
+        modulesAdded: 1,
+        lessonsAdded: 3,
+        filesAttached: 1,
+        skipped: [{ name: "algoexpert-sdfshortcourse/Design Fundamentals.txt", reason: "unsupported_type" }],
+      }));
+
+    act(() => dragHandler(true));
+    expect(view.getByText(/Drop folders to add them as modules/).getAttribute("role")).toBe("status");
+    act(() => dragHandler(false));
+    expect(view.queryByText(/Drop folders to add them/)).toBeNull();
+
+    const lessonRow = view.container.querySelector(`[data-lesson-id="${lessonId}"]`)!;
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: vi.fn(() => lessonRow.firstElementChild) });
+    act(() => dropHandler(dropSummary()));
+    const dialog = view.getByRole("dialog", { name: "Add dropped files" });
+    expect(document.elementFromPoint).toHaveBeenCalledWith(40, 60);
+    expect(dialog.textContent).toContain("1 folder become 1 new module with 3 lessons");
+    expect(within(dialog).getByRole("list", { name: "Modules to add" }).textContent).toContain("lesson10 (lesson10.mp4)");
+    expect((within(dialog).getByLabelText(/Attach 1 file \(handout.pdf\) to/) as HTMLSelectElement).value).toBe(lessonId);
+    expect(within(dialog).getByRole("list", { name: "Left out" }).textContent).toContain("Design Fundamentals.txt — not video, audio, or PDF");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add to course" }));
+    await waitFor(() => expect(view.queryByRole("dialog")).toBeNull());
+    expect(publisherApi.applyDrop).toHaveBeenCalledWith("draft_one", 2, "drop_one", lessonId);
+    expect(view.getByText(/Added 1 module with 3 lessons/).textContent).toContain("Added 1 module with 3 lessons and attached 1 file. 1 item left out.");
+    await waitFor(() => expect(titles(view, /^Title of module/)).toEqual(["Untitled module", "algoexpert-sdfshortcourse"]));
+    expect(view.container.textContent).toContain("Draft revision r3");
+  });
+
+  it("needs a lesson for loose files and discards dismissed or replaced drops", async () => {
+    const view = await builderWithLesson();
+    act(() => dropHandler(dropSummary({ token: "drop_first", modules: [], skipped: [] })));
+    const dialog = view.getByRole("dialog", { name: "Add dropped files" });
+    const add = within(dialog).getByRole("button", { name: "Add to course" });
+    expect(add.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText(/Attach 1 file/), { target: { value: server.modules[0]!.lessons[0]!.id } });
+    expect(add.hasAttribute("disabled")).toBe(false);
+
+    act(() => dropHandler(dropSummary({ token: "drop_second" })));
+    expect(publisherApi.discardDrop).toHaveBeenCalledWith("drop_first");
+    fireEvent.click(within(view.getByRole("dialog")).getByRole("button", { name: "Dismiss" }));
+    expect(publisherApi.discardDrop).toHaveBeenCalledWith("drop_second");
+    expect(view.queryByRole("dialog")).toBeNull();
+    expect(publisherApi.applyDrop).not.toHaveBeenCalled();
+  });
+
+  it("explains expired drops and pauses on conflicts like any other edit", async () => {
+    const view = await builderWithLesson();
+    vi.mocked(publisherApi.applyDrop)
+      .mockRejectedValueOnce({ code: "drop_expired", message: "this drop expired; drop the files again" })
+      .mockRejectedValueOnce({ code: "revision_conflict", message: "conflict", currentRevision: 9 });
+    act(() => dropHandler(dropSummary({ looseFiles: [] })));
+    fireEvent.click(view.getByRole("button", { name: "Add to course" }));
+    await waitFor(() => expect(within(view.getByRole("dialog")).getByRole("alert").textContent).toContain("drop the files again"));
+    fireEvent.click(view.getByRole("button", { name: "Add to course" }));
+    await waitFor(() => expect(view.container.textContent).toContain("This draft was changed elsewhere (now r9)"));
+    expect(view.getByRole("button", { name: "Add to course" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("says when nothing in a drop can be added", async () => {
+    const view = await builderWithLesson();
+    act(() => dropHandler(dropSummary({ modules: [], looseFiles: [], skipped: [{ name: "link.mp4", reason: "symbolic_link" }] })));
+    const dialog = view.getByRole("dialog");
+    expect(dialog.textContent).toContain("Nothing in this drop can be added.");
+    expect(dialog.textContent).toContain("link, not followed");
+    expect(within(dialog).getByRole("button", { name: "Add to course" }).hasAttribute("disabled")).toBe(true);
   });
 });

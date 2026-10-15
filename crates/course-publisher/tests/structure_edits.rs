@@ -209,3 +209,61 @@ fn resources_attach_reorder_and_detach_within_a_lesson() {
     );
     assert_eq!(course.revision, 6);
 }
+
+#[test]
+fn an_import_adds_modules_and_resources_in_one_revision_or_not_at_all() {
+    let mut draft = empty();
+    draft.add_module(0, module("module_a")).unwrap();
+    draft.add_lesson(1, "module_a", lesson("lesson_a")).unwrap();
+    let mut imported = module("module_b");
+    imported.lessons = vec![lesson("lesson_b1"), lesson("lesson_b2")];
+    imported.lessons[0].resources.push(resource("res_b1"));
+    let before = draft.clone();
+
+    let mut duplicate = module("module_c");
+    duplicate.lessons = vec![lesson("lesson_a")];
+    assert!(matches!(
+        draft.import(2, vec![duplicate], None),
+        Err(EditError::DuplicateId { .. })
+    ));
+    assert!(matches!(
+        draft.import(
+            2,
+            vec![imported.clone()],
+            Some(("lesson_a", vec![resource("res_b1")]))
+        ),
+        Err(EditError::DuplicateId { .. })
+    ));
+    assert!(matches!(
+        draft.import(
+            2,
+            vec![imported.clone()],
+            Some(("lesson_missing", vec![resource("res_x")]))
+        ),
+        Err(EditError::NotFound { .. })
+    ));
+    assert!(matches!(
+        draft.import(1, vec![imported.clone()], None),
+        Err(EditError::RevisionConflict { .. })
+    ));
+    assert_eq!(draft, before);
+
+    assert_eq!(
+        draft
+            .import(
+                2,
+                vec![imported],
+                Some(("lesson_a", vec![resource("res_a1"), resource("res_a2")]))
+            )
+            .unwrap(),
+        3
+    );
+    assert_eq!(draft.modules.len(), 2);
+    assert_eq!(draft.modules[1].lessons.len(), 2);
+    let attached: Vec<_> = draft.modules[0].lessons[0]
+        .resources
+        .iter()
+        .map(|resource| resource.id.as_str())
+        .collect();
+    assert_eq!(attached, ["res_a1", "res_a2"]);
+}

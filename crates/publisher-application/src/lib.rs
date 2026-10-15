@@ -1,5 +1,6 @@
 //! Admin publisher use cases shared by Zeron composition roots.
 
+mod drops;
 mod publish_jobs;
 mod releases;
 mod seeding;
@@ -17,6 +18,10 @@ use course_publisher::{
 pub use course_publisher::{FindingSeverity, MediaFinding};
 pub use course_publisher::{
     PackagingCancellation, PackagingError, PackagingLimits, StagingProgress,
+};
+pub use drops::{
+    DropInbox, DropLimits, DropOutcome, DropPlan, PlannedFile, PlannedModule, SkipReason,
+    SkippedEntry, clean_title, natural_cmp, plan_drop,
 };
 pub use publish_jobs::{JobFailure, JobProgress, PreparedRelease, PublishJobSnapshot, PublishJobs};
 use publisher_storage::PublisherStorage;

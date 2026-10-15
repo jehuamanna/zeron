@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 
 import type { DraftDetail } from "../../services/publisher";
 import { createDraftWriter } from "./draftWriter";
+import { DropImport } from "./DropImport";
 import { MetadataForm } from "./MetadataForm";
 import { StructureEditor } from "./StructureEditor";
 
@@ -45,6 +46,7 @@ export function Builder({ draft, onSaved, onReload, autosaveDelayMs }: BuilderPr
       <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7">
         <MetadataForm draft={draft} writer={writer} disabled={locked} {...(autosaveDelayMs === undefined ? {} : { autosaveDelayMs })} />
       </div>
+      <DropImport draft={draft} writer={writer} disabled={locked} />
       <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7">
         <StructureEditor draft={draft} writer={writer} disabled={locked} />
       </div>

@@ -8,7 +8,7 @@ import { App } from "./App";
 
 vi.mock("../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/publisher")>()),
-  publisherApi: { listDrafts: vi.fn(), createDraft: vi.fn(), getDraft: vi.fn(), updateDraftMetadata: vi.fn(), validateDraft: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn() },
+  publisherApi: { listDrafts: vi.fn(), createDraft: vi.fn(), getDraft: vi.fn(), updateDraftMetadata: vi.fn(), validateDraft: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), onDrag: vi.fn(async () => () => undefined), onDrop: vi.fn(async () => () => undefined) },
 }));
 
 const created: DraftDetail = {

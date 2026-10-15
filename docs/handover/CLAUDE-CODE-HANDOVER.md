@@ -24,7 +24,7 @@ Continue through the dependency-ordered roadmap ([docs/roadmap.md](../roadmap.md
 - a destructive action outside the approved scope;
 - an architectural blocker you can show evidence for.
 
-Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0006), and [phase-0 spike results](../research/phase-0-spike-results.md).
+Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0007), and [phase-0 spike results](../research/phase-0-spike-results.md).
 
 ## Start-of-session checklist
 
@@ -151,7 +151,7 @@ The user reported these Publisher gaps:
 - files and folders cannot be added by drag and drop;
 - courses and releases cannot be edited, removed, or deleted.
 
-Sub-slices 1–3 are done; see `docs/releases/phase-7-course-management.md`, `phase-7-draft-deletion-and-release-archive.md`, and `phase-7-release-file-deletion.md` (ADR 0006). Continue with sub-slice 4.
+All four sub-slices are done; see `docs/releases/phase-7-course-management.md`, `phase-7-draft-deletion-and-release-archive.md`, `phase-7-release-file-deletion.md` (ADR 0006), and `phase-7-builder-drag-and-drop.md` (ADR 0007). The native drag gesture still needs one manual check (listed in that note).
 
 ### What exists today
 

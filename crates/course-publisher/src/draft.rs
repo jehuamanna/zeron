@@ -317,6 +317,42 @@ impl DraftCourse {
         Ok(self.advance_revision())
     }
 
+    /// Append whole modules and attach resources to one existing lesson as a
+    /// single edit with one revision step. Every new ID must be unused and
+    /// unique; on any error the draft is unchanged.
+    ///
+    /// # Errors
+    /// Rejects stale revisions, a missing target lesson, and duplicate IDs.
+    pub fn import(
+        &mut self,
+        expected_revision: u64,
+        modules: Vec<DraftModule>,
+        lesson_resources: Option<(&str, Vec<DraftResource>)>,
+    ) -> Result<u64, EditError> {
+        self.require_revision(expected_revision)?;
+        let mut new_ids = std::collections::HashSet::new();
+        let module_ids = modules.iter().flat_map(|module| {
+            std::iter::once(&module.id).chain(module.lessons.iter().flat_map(|lesson| {
+                std::iter::once(&lesson.id)
+                    .chain(lesson.resources.iter().map(|resource| &resource.id))
+            }))
+        });
+        let resource_ids = lesson_resources
+            .iter()
+            .flat_map(|(_, resources)| resources.iter().map(|resource| &resource.id));
+        for id in module_ids.chain(resource_ids) {
+            self.require_unused(id)?;
+            if !new_ids.insert(id.clone()) {
+                return Err(EditError::DuplicateId { id: id.clone() });
+            }
+        }
+        if let Some((lesson_id, resources)) = lesson_resources {
+            self.lesson_mut(lesson_id)?.resources.extend(resources);
+        }
+        self.modules.extend(modules);
+        Ok(self.advance_revision())
+    }
+
     /// Append a resource reference to a lesson.
     ///
     /// # Errors
