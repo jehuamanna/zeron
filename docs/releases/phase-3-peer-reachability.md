@@ -23,10 +23,17 @@ Status: complete. Publishers and learners can choose a fixed peer port and opt i
 - **Persistence tests:** the Admin and Learner settings default to ephemeral without forwarding, persist across reopen, and can be reset.
 - **Engine test** (`a_fixed_peer_port_is_bound_under_the_local_network_profile`, `--ignored` because it listens on every interface): the engine reports the chosen port and holds it. Passed locally.
 - **Vitest:** port parsing, saving, validation errors, the restart notice, and the forwarding note, in both apps.
+- **Real windows** (release builds, isolated app data, no course loaded, Internet profile):
+  - **Admin:** after port 51413 and UPnP were saved, the page asked for a restart. After the restart it read "peers connect on port 51413. Your router is asked to forward this port with UPnP." The process listened on `*:51413` and opened one extra IPv4 UDP socket for UPnP discovery. After quitting, the port was closed.
+  - **Learner:** port 51414 and UPnP were saved and persisted. After the restart, shared courses were served on 51414 and downloads used an ephemeral port. Only the sharing engine opened the UPnP discovery socket.
+  - **Port in use:** with another process holding 51414, the Learner said "Sharing could not start, possibly because port 51414 is in use. Downloads still work." It no longer claims UPnP forwarding when sharing did not start; this was fixed after the check.
+  - **Router:** the LAN router (192.168.1.1) sent no SSDP replies or announcements in 60 s, and no local firewall is enabled, so UPnP appears to be turned off on that router. No mapping was created. Accepting a real mapping is therefore unverified.
 - All repository gates pass.
 
 ## Current limitations
 
 - A change needs a restart; the engines are not restarted live.
 - Whether the router accepted the UPnP mapping is not reported back. librqbit only logs it.
-- Reaching a seeder from outside the local network was not tested, because tests must not depend on public networks or a real router.
+- Reaching a seeder from outside the local network was not tested. The verification router does not offer UPnP, and no outside host was available.
+- Without UPnP, a manual router forward of the fixed port is needed. Carrier-grade NAT blocks inbound connections entirely; uTP and hole punching are not used.
+- See ADR 0004 decision 8.

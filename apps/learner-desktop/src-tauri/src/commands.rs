@@ -495,7 +495,8 @@ pub(crate) async fn get_network_settings(
         sharing_port,
         peer_port: reachability.port,
         port_forwarding: reachability.port_forwarding,
-        active_port_forwarding: active.1.port_forwarding,
+        // Only a running sharing engine asks the router to forward its port.
+        active_port_forwarding: active.1.port_forwarding && sharing_port.is_some(),
         restart_required: (configured, reachability.for_profile(configured)) != active,
     })
 }

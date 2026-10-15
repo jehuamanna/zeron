@@ -18,7 +18,7 @@ AGENTS.md requires engine types to stay behind a capability port and every engin
 1. **`torrent-port`** defines the application-facing contract: `InfoHash`, `NetworkProfile`, `SeedRequest`, `TransferState`, `TransferStats`, `EngineError` (including `UnsupportedCapability`), and the `TorrentEngine` trait. It has no engine dependency. Capabilities are added to it one slice at a time, each with an integration test. The first capability is seeding (`seed`, `stop`, `transfer`, `transfers`, `listen_address`).
 2. **`torrent-librqbit`** is the only crate that depends on librqbit, pinned `=9.0.1` with `default-features = false, features = ["rust-tls"]`: no HTTP API, no HTTP API client, no native TLS.
    - API references: [`Session::new_with_opts`](https://docs.rs/librqbit/9.0.1/librqbit/struct.Session.html), `Session::add_torrent` with `AddTorrentOptions::storage_factory`, `Session::delete(_, false)`, `ManagedTorrent::stats`, and the `storage::{StorageFactory, TorrentStorage}` traits.
-3. **Explicit network profiles.** The adapter sets every relevant `SessionOptions` field; librqbit defaults (DHT on) are never relied on. UPnP, persistence, and fast-resume are off in all profiles, and the listener is TCP-only.
+3. **Explicit network profiles.** The adapter sets every relevant `SessionOptions` field; librqbit defaults (DHT on) are never relied on. Persistence and fast-resume are off in all profiles, and the listener is TCP-only. UPnP is off unless the user opts in under `Internet` (decision 8).
 
    | Profile | Listener | DHT | Trackers | Local discovery |
    |---|---|---|---|---|
@@ -40,9 +40,22 @@ AGENTS.md requires engine types to stay behind a capability port and every engin
 
 7. **Streaming wraps `FileStream` and bounds it.** `open_file` returns librqbit's verified-piece `FileStream` behind the port's `VerifiedFile`, without a parallel piece scheduler. The adapter limits readers to 4 per engine, because each stream holds one of the session's 8 blocking permits that piece I/O also needs. While a read waits, it re-requests peer reconnection every 3 s by opening and dropping a short-lived stream, which works around librqbit 9.0.1 missing a peer whose disconnect was in progress when the stream opened.
 
+8. **Peer reachability is an explicit, opt-in user choice** (amended 2026-10-16). `EngineConfig::reachability` carries `torrent_port::PeerReachability`: a fixed port of 1024–65535, or a new ephemeral port on each start, plus a UPnP choice. `PeerReachability::for_profile` decides what applies, so a stored choice can never widen a narrower profile:
+
+   | Profile | Fixed port | UPnP forwarding |
+   |---|---|---|
+   | `Loopback` | ignored | never |
+   | `LocalNetwork` | applies | never |
+   | `Internet` | applies | when chosen |
+
+   Forwarding uses librqbit's own `enable_upnp_port_forwarding`, which maps the TCP listen port with a 60 s lease that it renews while the session runs. The mapping therefore lapses within about a minute of shutdown, and no stale router state outlives the app. Both are off by default. The Learner applies them to its sharing engine only, because the private engine never serves peers.
+
+   This supersedes the earlier "UPnP off in all profiles" rule. Reaching seeders across the internet behind home routers requires an inbound port, and the user chose an opt-in toggle over manual forwarding alone. The risk is that any LAN device can make the same UPnP request, and the router opens a port to the internet. That is why it is opt-in, scoped to `Internet`, and explained in both apps.
+
 ## Consequences
 
 - Release immutability (ADR 0003) holds while seeding, at the cost of a small adapter-owned storage implementation (Unix `read_exact_at`, Windows `seek_read`).
 - librqbit's DHT, UPnP, LSD, and uTP code is compiled in even when disabled; the dependency adds about 130 crates.
 - Outside Linux, `Loopback` relies on the loopback listener alone, so the idle UDP tracker socket stays bound to all interfaces until upstream skips it when trackers are disabled.
 - Engine upgrades are confined to `torrent-librqbit` and must keep its integration tests green.
+- librqbit reports UPnP results only in its logs, so the apps show that forwarding was requested, not whether the router accepted it. Routers with UPnP turned off, and carrier-grade NAT, still prevent inbound connections; uTP and hole punching are not used.
