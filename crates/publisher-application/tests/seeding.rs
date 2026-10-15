@@ -435,7 +435,7 @@ fn make_writable(path: &std::path::Path) {
 #[test]
 fn trackers_are_validated_stored_in_order_and_become_one_tier_each() {
     let mut drafts = PublisherDrafts::open_in_memory().unwrap();
-    assert!(drafts.trackers().unwrap().is_empty());
+    assert_eq!(drafts.trackers().unwrap().len(), 0);
     assert_eq!(
         drafts.distribution_options().unwrap(),
         DistributionOptions::default()
@@ -483,5 +483,5 @@ fn trackers_are_validated_stored_in_order_and_become_one_tier_each() {
     );
 
     drafts.set_trackers(&[]).unwrap();
-    assert!(drafts.trackers().unwrap().is_empty());
+    assert_eq!(drafts.trackers().unwrap().len(), 0);
 }
