@@ -20,6 +20,7 @@ export function App() {
   const { selectedCourseId, selectCourse, networkOpen, showNetwork } = useLibraryUi();
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [playing, setPlaying] = useState<string | null>(null);
+  const [startAt, setStartAt] = useState<number | null>(null);
   const readiness = useQuery({ queryKey: ["readiness"], queryFn: libraryApi.readiness });
   const courses = useQuery({
     queryKey: ["courses"],
@@ -38,12 +39,22 @@ export function App() {
     enabled: selectedCourseId !== null,
   });
   const openMedia = useMutation({
-    mutationFn: (resourceId: string) => libraryApi.registerMedia(selectedCourseId!, resourceId),
-    onSuccess: (registration, resourceId) => {
+    mutationFn: async (resourceId: string) => {
+      const [registration, position] = await Promise.all([
+        libraryApi.registerMedia(selectedCourseId!, resourceId),
+        libraryApi.playbackPosition(selectedCourseId!, resourceId).catch(() => null),
+      ]);
+      return { registration, position };
+    },
+    onSuccess: ({ registration, position }, resourceId) => {
+      setStartAt(position);
       setMediaUrl(registration.url);
       setPlaying(resourceId);
     },
   });
+  const savePosition = (courseId: string, resourceId: string) => (positionSeconds: number, durationSeconds: number) => {
+    void libraryApi.savePlaybackPosition(courseId, resourceId, positionSeconds, durationSeconds).catch(() => undefined);
+  };
 
   const torrentCourse = detail.data?.source === "torrent";
   const importError = importCourse.isError
@@ -135,6 +146,8 @@ export function App() {
                           torrent={torrentCourse}
                           verifiedPercent={torrentCourse ? (downloaded.get(playing) ?? 0) : null}
                           onRetry={() => openMedia.mutate(playing)}
+                          startAt={startAt}
+                          onPosition={savePosition(detail.data.courseId, playing)}
                         />
                       ) : (
                         <div className="grid aspect-video place-items-center rounded-2xl bg-[#03080d] text-slate-500">

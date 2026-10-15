@@ -172,3 +172,72 @@ fn failed_import_never_becomes_visible() {
     ));
     assert_eq!(library.courses().unwrap().len(), 0);
 }
+
+#[test]
+fn playback_positions_persist_across_restarts_and_reset_when_finished() {
+    let root = TempRoot::new();
+    let course_root = create_course(root.path());
+    let database = root.path().join("library.sqlite3");
+    {
+        let mut library = CourseLibrary::open(&database, ImportLimits::default()).unwrap();
+        library
+            .import_local_folder(&course_root, &CancellationFlag::default())
+            .unwrap();
+        assert_eq!(
+            library
+                .playback_position("course_recovery", "resource_video")
+                .unwrap(),
+            None
+        );
+        assert!(
+            library
+                .save_playback_position("course_recovery", "resource_video", 125.4, 600.0)
+                .unwrap()
+        );
+        assert!(
+            !library
+                .save_playback_position("course_recovery", "missing_resource", 1.0, 600.0)
+                .unwrap()
+        );
+        assert!(
+            !library
+                .save_playback_position("course_missing", "resource_video", 1.0, 600.0)
+                .unwrap()
+        );
+        for (position, duration) in [
+            (f64::NAN, 600.0),
+            (-1.0, 600.0),
+            (f64::INFINITY, 600.0),
+            (700.0, 600.0),
+            (1.0, 0.0),
+            (1.0, f64::INFINITY),
+            (1.0, 49.0 * 3600.0),
+        ] {
+            assert!(matches!(
+                library.save_playback_position(
+                    "course_recovery",
+                    "resource_video",
+                    position,
+                    duration
+                ),
+                Err(LibraryError::InvalidPlaybackTime(_))
+            ));
+        }
+    }
+    let mut library = CourseLibrary::open(&database, ImportLimits::default()).unwrap();
+    assert_eq!(
+        library
+            .playback_position("course_recovery", "resource_video")
+            .unwrap(),
+        Some(125.4)
+    );
+    library
+        .save_playback_position("course_recovery", "resource_video", 595.0, 600.0)
+        .unwrap();
+    assert_eq!(
+        library
+            .playback_position("course_recovery", "resource_video")
+            .unwrap(),
+        Some(0.0)
+    );
+}

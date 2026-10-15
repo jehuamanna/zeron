@@ -145,6 +145,12 @@ export const libraryApi = {
   setNetworkProfile: (profile: NetworkProfile) => invoke<void>("set_network_profile", { profile }),
   setPeerReachability: (peerPort: number | null, portForwarding: boolean) =>
     invoke<void>("set_peer_reachability", { peerPort, portForwarding }),
+  /** Where the learner stopped in a lesson, in seconds, if recorded. */
+  playbackPosition: (courseId: string, resourceId: string) =>
+    invoke<number | null>("get_playback_position", { courseId, resourceId }),
+  /** A position in the last seconds of a lesson is stored as its start. */
+  savePlaybackPosition: (courseId: string, resourceId: string, positionSeconds: number, durationSeconds: number) =>
+    invoke<boolean>("save_playback_position", { courseId, resourceId, positionSeconds, durationSeconds }),
   availability: (courseId: string) => invoke<ResourceAvailability[]>("get_course_availability", { courseId }),
   getCourseSharing: (courseId: string) => invoke<CourseSharing | null>("get_course_sharing", { courseId }),
   setCourseSharing: (courseId: string, sharing: boolean) =>

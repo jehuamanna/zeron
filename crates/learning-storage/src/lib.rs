@@ -13,8 +13,17 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 4;
+const CURRENT_SCHEMA_VERSION: i64 = 5;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
+
+/// Where a learner stopped in one lesson resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlaybackPosition {
+    /// Position in milliseconds.
+    pub position_ms: u64,
+    /// Media duration in milliseconds when the position was recorded.
+    pub duration_ms: u64,
+}
 
 /// Durable course metadata returned to application use cases.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,6 +264,69 @@ impl Storage {
             rusqlite::params![course_id, sharing],
         )?;
         Ok(changed == 1)
+    }
+
+    /// Remember where the learner stopped in a lesson resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock or `SQLite` failures, including an
+    /// unknown course.
+    pub fn set_playback_position(
+        &mut self,
+        course_id: &str,
+        resource_id: &str,
+        position: PlaybackPosition,
+    ) -> Result<(), StorageError> {
+        let updated_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| StorageError::InvalidSystemClock)?
+            .as_secs();
+        self.connection.execute(
+            "INSERT INTO playback_positions (course_id, resource_id, position_ms, duration_ms, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(course_id, resource_id) DO UPDATE SET
+               position_ms = excluded.position_ms,
+               duration_ms = excluded.duration_ms,
+               updated_at = excluded.updated_at",
+            params![
+                course_id,
+                resource_id,
+                sqlite_integer(position.position_ms, "playback position")?,
+                sqlite_integer(position.duration_ms, "playback duration")?,
+                sqlite_integer(updated_at, "playback timestamp")?,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Where the learner stopped in a lesson resource, if recorded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures or corrupt values.
+    pub fn playback_position(
+        &self,
+        course_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<PlaybackPosition>, StorageError> {
+        let row: Option<(i64, i64)> = self
+            .connection
+            .query_row(
+                "SELECT position_ms, duration_ms FROM playback_positions WHERE course_id = ?1 AND resource_id = ?2",
+                [course_id, resource_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        row.map(|(position_ms, duration_ms)| {
+            Ok(PlaybackPosition {
+                position_ms: u64::try_from(position_ms)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, position_ms))?,
+                duration_ms: u64::try_from(duration_ms)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(1, duration_ms))?,
+            })
+        })
+        .transpose()
     }
 
     /// Read a learner setting.
@@ -562,7 +634,30 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
              PRAGMA user_version = 4;",
         )?;
         tx.commit()?;
+        found = 4;
     }
+    if found == 4 {
+        add_playback_positions(connection)?;
+    }
+    Ok(())
+}
+
+/// Schema 5. Keyed by course only, so positions survive a re-import that
+/// rewrites `course_resources`; callers check the resource exists.
+fn add_playback_positions(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE playback_positions (
+           course_id TEXT NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+           resource_id TEXT NOT NULL,
+           position_ms INTEGER NOT NULL CHECK(position_ms >= 0),
+           duration_ms INTEGER NOT NULL CHECK(duration_ms >= 0),
+           updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+           PRIMARY KEY(course_id, resource_id)
+         ) STRICT;
+         PRAGMA user_version = 5;",
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -802,6 +897,84 @@ mod tests {
             storage.setting("network_profile").unwrap().as_deref(),
             Some("internet")
         );
+    }
+
+    #[test]
+    fn playback_positions_are_upserted_and_survive_a_reimport() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Rust", "systems");
+        let course_id = course.course_id.clone();
+        let position = |position_ms, duration_ms| PlaybackPosition {
+            position_ms,
+            duration_ms,
+        };
+        assert!(
+            storage
+                .set_playback_position(&course_id, "res", position(1, 2))
+                .is_err()
+        );
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/rust"))
+            .unwrap();
+        assert_eq!(storage.playback_position(&course_id, "res").unwrap(), None);
+        storage
+            .set_playback_position(&course_id, "res", position(61_500, 600_000))
+            .unwrap();
+        storage
+            .set_playback_position(&course_id, "res", position(90_000, 600_000))
+            .unwrap();
+        storage
+            .set_playback_position(&course_id, "other", position(5_000, 10_000))
+            .unwrap();
+        assert_eq!(
+            storage.playback_position(&course_id, "res").unwrap(),
+            Some(position(90_000, 600_000))
+        );
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/rust"))
+            .unwrap();
+        assert_eq!(
+            storage.playback_position(&course_id, "res").unwrap(),
+            Some(position(90_000, 600_000))
+        );
+        assert!(
+            storage
+                .set_playback_position(&course_id, "res", position(u64::MAX, 1))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn version_four_databases_gain_playback_positions() {
+        let path =
+            std::env::temp_dir().join(format!("zeron-learning-v4-{}.sqlite3", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let course = manifest("Rust", "systems");
+        {
+            let mut storage = Storage::open(&path).unwrap();
+            storage
+                .save_imported_course(&course, 10, Path::new("/courses/rust"))
+                .unwrap();
+            storage
+                .connection
+                .execute_batch("DROP TABLE playback_positions; PRAGMA user_version = 4;")
+                .unwrap();
+        }
+        let mut storage = Storage::open(&path).unwrap();
+        assert_eq!(storage.list_courses().unwrap().len(), 1);
+        let position = PlaybackPosition {
+            position_ms: 1_000,
+            duration_ms: 2_000,
+        };
+        storage
+            .set_playback_position(&course.course_id, "res", position)
+            .unwrap();
+        assert_eq!(
+            storage.playback_position(&course.course_id, "res").unwrap(),
+            Some(position)
+        );
+        drop(storage);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

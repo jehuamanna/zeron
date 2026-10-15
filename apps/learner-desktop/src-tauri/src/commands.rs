@@ -291,6 +291,7 @@ fn local_import_error(error: LibraryError) -> CommandError {
         // Remaining import failures name only manifest-relative paths, which
         // `course.json` validation keeps relative.
         LibraryError::Import(_) => command_error("course_import_failed", error),
+        LibraryError::InvalidPlaybackTime(_) => command_error("invalid_input", error),
     }
 }
 
@@ -634,6 +635,64 @@ pub(crate) async fn register_media(
     })
 }
 
+/// Remember where the learner stopped in a lesson. Returns `false` for an
+/// unknown course or resource.
+#[tauri::command]
+pub(crate) async fn save_playback_position(
+    course_id: String,
+    resource_id: String,
+    position_seconds: f64,
+    duration_seconds: f64,
+    state: State<'_, AppState>,
+) -> Result<bool, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        save_position(
+            &mut *lock_library(&library)?,
+            &course_id,
+            &resource_id,
+            position_seconds,
+            duration_seconds,
+        )
+    })
+    .await
+}
+
+/// Where the learner stopped in a lesson, in seconds.
+#[tauri::command]
+pub(crate) async fn get_playback_position(
+    course_id: String,
+    resource_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<f64>, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .playback_position(&course_id, &resource_id)
+            .map_err(|error| command_error("library_query_failed", error))
+    })
+    .await
+}
+
+fn save_position(
+    library: &mut CourseLibrary,
+    course_id: &str,
+    resource_id: &str,
+    position_seconds: f64,
+    duration_seconds: f64,
+) -> Result<bool, CommandError> {
+    library
+        .save_playback_position(course_id, resource_id, position_seconds, duration_seconds)
+        .map_err(|error| match error {
+            LibraryError::InvalidPlaybackTime(_) => command_error("invalid_input", error),
+            // Storage errors can name the database location; keep them in Rust.
+            _ => CommandError {
+                code: "library_write_failed",
+                message: "the playback position could not be saved".to_owned(),
+            },
+        })
+}
+
 /// How much of each torrent lesson this computer has verified. Empty for local
 /// courses, whose resources are verified at import.
 #[tauri::command]
@@ -851,6 +910,16 @@ mod tests {
     use learning_application::TorrentImportFailure;
 
     use super::*;
+
+    #[test]
+    fn playback_positions_validate_input_and_ignore_unknown_lessons() {
+        let mut library =
+            CourseLibrary::open_in_memory(learning_application::ImportLimits::default()).unwrap();
+        let invalid =
+            save_position(&mut library, "course", "resource", f64::NAN, 10.0).unwrap_err();
+        assert_eq!(invalid.code, "invalid_input");
+        assert!(!save_position(&mut library, "course", "resource", 1.0, 10.0).unwrap());
+    }
 
     #[test]
     fn reachability_input_is_validated() {

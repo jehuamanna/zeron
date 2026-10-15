@@ -24,6 +24,8 @@ vi.mock("../services/library", async (importOriginal) => ({
     availability: vi.fn(() => Promise.resolve([])),
     setNetworkProfile: vi.fn(),
     setCourseSharing: vi.fn(),
+    playbackPosition: vi.fn(() => Promise.resolve(null)),
+    savePlaybackPosition: vi.fn(() => Promise.resolve(true)),
   },
 }));
 
@@ -162,6 +164,7 @@ describe("learner library", () => {
     fireEvent.click(play);
     await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("/v1/media/opaque/secret"));
     expect(libraryApi.registerMedia).toHaveBeenCalledWith("course_one", "video");
+    expect(libraryApi.playbackPosition).toHaveBeenCalledWith("course_one", "video");
   });
 
   it("streams torrent lessons and shows how much of each is downloaded", async () => {

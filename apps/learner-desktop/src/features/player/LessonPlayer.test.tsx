@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LessonPlayer } from "./LessonPlayer";
 
-function setMedia(video: HTMLVideoElement, values: { currentTime?: number; paused?: boolean; error?: { code: number } | null; ranges?: Array<[number, number]> }) {
-  if (values.currentTime !== undefined) Object.defineProperty(video, "currentTime", { configurable: true, value: values.currentTime });
+function setMedia(video: HTMLVideoElement, values: { currentTime?: number; paused?: boolean; duration?: number; error?: { code: number } | null; ranges?: Array<[number, number]> }) {
+  if (values.currentTime !== undefined) Object.defineProperty(video, "currentTime", { configurable: true, writable: true, value: values.currentTime });
+  if (values.duration !== undefined) Object.defineProperty(video, "duration", { configurable: true, value: values.duration });
   if (values.paused !== undefined) Object.defineProperty(video, "paused", { configurable: true, value: values.paused });
   if (values.error !== undefined) Object.defineProperty(video, "error", { configurable: true, value: values.error });
   if (values.ranges) {
@@ -62,5 +63,54 @@ describe("lesson player", () => {
     const view = render(<LessonPlayer url="https://127.0.0.1:1/v1/media/a/b" torrent={false} verifiedPercent={null} onRetry={vi.fn()} />);
     expect(view.container.textContent).not.toContain("Verified on this computer");
     expect(view.getByLabelText("Playback status").textContent).toBe("Loading…");
+  });
+
+  it("resumes from a saved position and can start over", () => {
+    const view = render(<LessonPlayer url="https://127.0.0.1:1/v1/media/a/b" torrent verifiedPercent={10} onRetry={vi.fn()} startAt={125.4} />);
+    const video = view.container.querySelector("video")!;
+    setMedia(video, { currentTime: 0, duration: 600 });
+    fireEvent.loadedMetadata(video);
+    expect(video.currentTime).toBe(125.4);
+    expect(view.container.textContent).toContain("Resumed where you left off (2:05).");
+    fireEvent.click(view.getByRole("button", { name: "Start over" }));
+    expect(video.currentTime).toBe(0);
+    expect(view.container.textContent).not.toContain("Resumed where you left off");
+  });
+
+  it("does not resume from the first seconds or the last seconds", () => {
+    for (const startAt of [3, 595]) {
+      const view = render(<LessonPlayer url={`https://127.0.0.1:1/v1/media/${startAt}/b`} torrent={false} verifiedPercent={null} onRetry={vi.fn()} startAt={startAt} />);
+      const video = view.container.querySelector("video")!;
+      setMedia(video, { currentTime: 0, duration: 600 });
+      fireEvent.loadedMetadata(video);
+      expect(video.currentTime).toBe(0);
+      view.unmount();
+    }
+  });
+
+  it("saves the position while playing at most every few seconds, on pause, at the end, and when closed", () => {
+    const onPosition = vi.fn();
+    const view = render(<LessonPlayer url="https://127.0.0.1:1/v1/media/a/b" torrent verifiedPercent={10} onRetry={vi.fn()} onPosition={onPosition} />);
+    const video = view.container.querySelector("video")!;
+    setMedia(video, { currentTime: 10, duration: 600, paused: false, ranges: [[0, 60]] });
+    fireEvent.timeUpdate(video);
+    expect(onPosition).toHaveBeenLastCalledWith(10, 600);
+    setMedia(video, { currentTime: 11 });
+    fireEvent.timeUpdate(video);
+    expect(onPosition).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(5000);
+    setMedia(video, { currentTime: 16 });
+    fireEvent.timeUpdate(video);
+    expect(onPosition).toHaveBeenCalledTimes(2);
+    setMedia(video, { currentTime: 17, paused: true });
+    fireEvent.pause(video);
+    expect(onPosition).toHaveBeenLastCalledWith(17, 600);
+    setMedia(video, { currentTime: 600 });
+    fireEvent.ended(video);
+    expect(onPosition).toHaveBeenLastCalledWith(600, 600);
+    const calls = onPosition.mock.calls.length;
+    view.unmount();
+    expect(onPosition).toHaveBeenCalledTimes(calls + 1);
+    expect(onPosition).toHaveBeenLastCalledWith(600, 600);
   });
 });

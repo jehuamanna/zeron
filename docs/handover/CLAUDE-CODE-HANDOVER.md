@@ -139,7 +139,7 @@ Schemas, trust boundaries, crate graph, a local-only librqbit 9.0.1 spike, and a
 Still open in Phase 4. These also finish the "first milestone" in the roadmap:
 
 1. ~~Playback state machine: loading, buffering, playing, stalled, error.~~ Done (`phase-4-player-states.md`).
-2. Persisted playback position, restored on reopen and after restart.
+2. ~~Persisted playback position, restored on reopen and after restart.~~ Done (`phase-4-playback-position.md`, learner schema v5).
 3. ~~Separate "buffered" and "verified" range labels in the player.~~ Done (`phase-4-player-states.md`).
 4. Controlled-swarm automated evidence for the milestone: lesson four plays before completion, a seek into absent data resumes after buffering, and a restart reuses verified bytes.
 5. Peer interruption and lookahead or priority behavior, which the spike left uncovered.

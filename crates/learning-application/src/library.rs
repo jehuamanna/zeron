@@ -1,7 +1,12 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use course_format::CourseManifest;
-use learning_storage::{Storage, StorageError, StoredCourseSummary, TorrentCourseSource};
+use learning_storage::{
+    PlaybackPosition, Storage, StorageError, StoredCourseSummary, TorrentCourseSource,
+};
 use thiserror::Error;
 use torrent_port::{NetworkProfile, PeerReachability};
 
@@ -64,7 +69,15 @@ pub enum LibraryError {
     /// The selected package root cannot be resolved for durable recovery.
     #[error("cannot resolve the local course package root: {0}")]
     PackageLocation(#[source] std::io::Error),
+    /// A playback position or duration is not a usable number of seconds.
+    #[error("{0} must be a finite number of seconds within the lesson")]
+    InvalidPlaybackTime(&'static str),
 }
+
+/// Longest lesson a playback position is recorded for.
+const MAX_LESSON_SECONDS: f64 = 48.0 * 3600.0;
+/// Positions this close to the end count as finished, so the lesson starts over.
+const FINISHED_WITHIN_SECONDS: f64 = 10.0;
 
 /// Ready local course-library application service.
 ///
@@ -261,6 +274,82 @@ impl CourseLibrary {
             .map_err(LibraryError::from)
     }
 
+    /// Remember where the learner stopped in a lesson resource. A position in
+    /// the last few seconds counts as finished and is stored as the start.
+    /// Returns `false` when the course has no such resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::InvalidPlaybackTime`] for negative, infinite,
+    /// or out-of-range values, or a storage failure.
+    pub fn save_playback_position(
+        &mut self,
+        course_id: &str,
+        resource_id: &str,
+        position_seconds: f64,
+        duration_seconds: f64,
+    ) -> Result<bool, LibraryError> {
+        if !duration_seconds.is_finite()
+            || duration_seconds <= 0.0
+            || duration_seconds > MAX_LESSON_SECONDS
+        {
+            return Err(LibraryError::InvalidPlaybackTime("duration"));
+        }
+        if !position_seconds.is_finite()
+            || position_seconds < 0.0
+            || position_seconds > duration_seconds + 1.0
+        {
+            return Err(LibraryError::InvalidPlaybackTime("position"));
+        }
+        if !self.has_resource(course_id, resource_id)? {
+            return Ok(false);
+        }
+        let position = if duration_seconds - position_seconds <= FINISHED_WITHIN_SECONDS {
+            0.0
+        } else {
+            position_seconds
+        };
+        self.storage.set_playback_position(
+            course_id,
+            resource_id,
+            PlaybackPosition {
+                position_ms: milliseconds(position),
+                duration_ms: milliseconds(duration_seconds),
+            },
+        )?;
+        Ok(true)
+    }
+
+    /// Where the learner stopped in a lesson resource, in seconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage failure.
+    pub fn playback_position(
+        &self,
+        course_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<f64>, LibraryError> {
+        Ok(self
+            .storage
+            .playback_position(course_id, resource_id)?
+            .map(|position| Duration::from_millis(position.position_ms).as_secs_f64()))
+    }
+
+    fn has_resource(&self, course_id: &str, resource_id: &str) -> Result<bool, LibraryError> {
+        Ok(self
+            .storage
+            .course_manifest(course_id)?
+            .is_some_and(|manifest| {
+                manifest
+                    .modules
+                    .iter()
+                    .flat_map(|module| &module.lessons)
+                    .flat_map(|lesson| &lesson.resources)
+                    .any(|resource| resource.id == resource_id)
+            }))
+    }
+
     /// Load the validated manifest snapshot for a logical course.
     ///
     /// # Errors
@@ -380,4 +469,9 @@ impl CourseLibrary {
             })
             .collect())
     }
+}
+
+/// Whole milliseconds of a validated, non-negative, bounded number of seconds.
+fn milliseconds(seconds: f64) -> u64 {
+    u64::try_from(Duration::from_secs_f64(seconds).as_millis()).unwrap_or(u64::MAX)
 }
