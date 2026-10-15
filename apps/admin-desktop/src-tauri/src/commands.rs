@@ -4,8 +4,8 @@ use course_format::ResourceKind;
 use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
     DistributionOptions, DraftServiceError, DraftSummary, FindingSeverity, MetadataEdit,
-    PeerReachability, PublishJobSnapshot, PublishStage, PublisherDrafts, ReleaseRecord,
-    ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit, TransferState,
+    PeerReachability, PublishJobSnapshot, PublishJobs, PublishStage, PublisherDrafts,
+    ReleaseRecord, ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit, TransferState,
     inspect_draft_media, network_profile_name, parse_network_profile, source_info,
 };
 use serde::{Deserialize, Serialize};
@@ -470,6 +470,69 @@ pub(crate) async fn list_releases(
             .map_err(|error| service_error("release_list_failed", error))
     })
     .await
+}
+
+/// Delete a draft the editor last saw at `expected_revision`. Releases and
+/// attached source files are never touched.
+#[tauri::command]
+pub(crate) async fn delete_draft(
+    draft_id: String,
+    expected_revision: u64,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    let jobs = Arc::clone(&state.publish_jobs);
+    run_blocking(move || {
+        delete(
+            &mut *lock_drafts(&drafts)?,
+            &jobs,
+            &draft_id,
+            expected_revision,
+        )
+    })
+    .await
+}
+
+/// Stop seeding a release and mark it archived. Its files stay on disk.
+#[tauri::command]
+pub(crate) async fn archive_release(
+    release_id: String,
+    state: State<'_, AppState>,
+) -> Result<ReleaseDto, CommandError> {
+    if let Some(seeding) = state.distribution.seeding.clone() {
+        return seeding
+            .archive(&release_id)
+            .await
+            .map(ReleaseDto::from)
+            .map_err(|error| service_error("release_archive_failed", error));
+    }
+    // Without an engine nothing is being seeded in this process.
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || archive(&mut *lock_drafts(&drafts)?, &release_id)).await
+}
+
+fn delete(
+    drafts: &mut PublisherDrafts,
+    jobs: &PublishJobs,
+    draft_id: &str,
+    expected_revision: u64,
+) -> Result<(), CommandError> {
+    if jobs.draft_in_progress(draft_id) {
+        return Err(service_error(
+            "draft_delete_failed",
+            DraftServiceError::DraftBusy,
+        ));
+    }
+    drafts
+        .delete_draft(draft_id, expected_revision)
+        .map_err(|error| service_error("draft_delete_failed", error))
+}
+
+fn archive(drafts: &mut PublisherDrafts, release_id: &str) -> Result<ReleaseDto, CommandError> {
+    drafts
+        .archive_release(release_id)
+        .map(ReleaseDto::from)
+        .map_err(|error| service_error("release_archive_failed", error))
 }
 
 #[tauri::command]
@@ -1106,6 +1169,8 @@ fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
         | DraftServiceError::Torrent(_)
         | DraftServiceError::InvalidAttempt(_) => CommandError::new(code, error),
         DraftServiceError::JobActive => CommandError::new("job_active", error),
+        DraftServiceError::DraftBusy => CommandError::new("draft_busy", error),
+        DraftServiceError::ReleaseArchived => CommandError::new("release_archived", error),
         DraftServiceError::Seeding(_) => CommandError::new("seeding_failed", error),
         DraftServiceError::VersionAlreadyReleased { .. } => {
             CommandError::new("version_already_released", error)
@@ -1490,6 +1555,68 @@ mod tests {
                 std::fs::set_permissions(&path, permissions).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn deleting_drafts_reports_busy_conflict_and_missing_codes() {
+        let (directory, mut drafts, draft) = publishable_draft("delete");
+        let jobs = publisher_application::PublishJobs::new(&directory.join("staging"));
+        let job = jobs.begin(&draft).unwrap();
+        let busy = delete(&mut drafts, &jobs, &draft.draft_id, draft.revision).unwrap_err();
+        assert_eq!(busy.code, "draft_busy");
+        assert!(jobs.cancel(&job.job_id));
+        jobs.run(
+            &job.job_id,
+            &draft,
+            &DistributionOptions::default(),
+            &mut |_| {},
+        );
+
+        let stale = delete(&mut drafts, &jobs, &draft.draft_id, 0).unwrap_err();
+        assert_eq!(stale.code, "revision_conflict");
+        assert_eq!(stale.current_revision, Some(draft.revision));
+        delete(&mut drafts, &jobs, &draft.draft_id, draft.revision).unwrap();
+        assert!(list(&drafts).unwrap().is_empty());
+        let missing = delete(&mut drafts, &jobs, &draft.draft_id, draft.revision).unwrap_err();
+        assert_eq!(missing.code, "draft_not_found");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn archiving_without_an_engine_marks_the_release_archived() {
+        let (directory, mut drafts, draft) = publishable_draft("archive");
+        let jobs = publisher_application::PublishJobs::new(&directory.join("staging"));
+        let job = jobs.begin(&draft).unwrap();
+        jobs.run(
+            &job.job_id,
+            &draft,
+            &DistributionOptions::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+        let releases_root = directory.join("releases");
+        let (record, _) = jobs
+            .activate(&job.job_id, &mut drafts, &releases_root)
+            .unwrap();
+        let release_id = record.release.release_id;
+
+        let archived = serde_json::to_value(archive(&mut drafts, &release_id).unwrap()).unwrap();
+        assert_eq!(archived["status"], "archived");
+        assert!(
+            releases_root
+                .join(&release_id)
+                .join("release.torrent")
+                .is_file()
+        );
+        let refused = drafts
+            .seed_request(&releases_root, &release_id)
+            .map_err(|error| service_error("seeding_failed", error))
+            .unwrap_err();
+        assert_eq!(refused.code, "release_archived");
+        let unknown = archive(&mut drafts, "release_0123456789abcdef0123456789abcdef").unwrap_err();
+        assert_eq!(unknown.code, "release_archive_failed");
+        make_writable(&directory);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

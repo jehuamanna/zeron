@@ -181,6 +181,8 @@ export const publisherApi = {
   listDrafts: () => invoke<DraftSummary[]>("list_drafts"),
   createDraft: () => invoke<DraftDetail>("create_draft"),
   getDraft: (draftId: string) => invoke<DraftDetail | null>("get_draft", { draftId }),
+  /** Deletes the draft only; its releases and source files are kept. */
+  deleteDraft: (draftId: string, expectedRevision: number) => invoke<void>("delete_draft", { draftId, expectedRevision }),
   updateDraftMetadata: (draftId: string, expectedRevision: number, metadata: DraftMetadata) =>
     invoke<DraftDetail>("update_draft_metadata", { draftId, expectedRevision, metadata }),
   editDraftStructure: (draftId: string, expectedRevision: number, edit: StructureEdit) =>
@@ -194,6 +196,8 @@ export const publisherApi = {
   onPublishJob: (handler: (job: PublishJob) => void) => listen<PublishJob>("publish-job", (event) => handler(event.payload)),
   activateRelease: (jobId: string) => invoke<Release>("activate_release", { jobId }),
   listReleases: () => invoke<Release[]>("list_releases"),
+  /** Stops seeding and marks the release archived; its files stay on disk. */
+  archiveRelease: (releaseId: string) => invoke<Release>("archive_release", { releaseId }),
   getReleaseDetails: (releaseId: string) => invoke<ReleaseDetails>("get_release_details", { releaseId }),
   /** Opens a native save dialog; resolves `false` when the publisher cancels. */
   exportReleaseTorrent: (releaseId: string) => invoke<boolean>("export_release_torrent", { releaseId }),

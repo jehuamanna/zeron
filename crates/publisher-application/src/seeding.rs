@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
-use publisher_storage::ReleaseRecord;
+use publisher_storage::{ReleaseRecord, ReleaseStatus};
 use torrent_metainfo::inspect_torrent;
 use torrent_port::{
     EngineError, InfoHash, NetworkProfile, PeerReachability, SeedRequest, TorrentEngine,
@@ -110,6 +110,9 @@ impl PublisherDrafts {
         let unknown = || DraftServiceError::InvalidAttempt("unknown release");
         let directory = release_directory(releases_root, release_id).ok_or_else(unknown)?;
         let record = self.storage.release(release_id)?.ok_or_else(unknown)?;
+        if record.status == ReleaseStatus::Archived {
+            return Err(DraftServiceError::ReleaseArchived);
+        }
         let package = StagedAttempt::open_package(
             directory.join(RELEASE_PACKAGE_DIRECTORY),
             directory.join(RELEASE_TORRENT_FILE),
@@ -217,6 +220,19 @@ impl<E: TorrentEngine> SeedingService<E> {
             .storage
             .set_seeding_intent(release_id, false)?;
         Ok(())
+    }
+
+    /// Stop seeding a release, then mark it archived and forget its intent.
+    /// Files are untouched. If the engine cannot stop the release, nothing
+    /// is archived.
+    ///
+    /// # Errors
+    /// Returns an error for unknown releases, engine failures, or storage failures.
+    pub async fn archive(&self, release_id: &str) -> Result<ReleaseRecord, DraftServiceError> {
+        self.stop(release_id).await?;
+        let record = self.drafts().archive_release(release_id)?;
+        self.errors().remove(release_id);
+        Ok(record)
     }
 
     /// Start every release the publisher wants seeded. Individual failures are

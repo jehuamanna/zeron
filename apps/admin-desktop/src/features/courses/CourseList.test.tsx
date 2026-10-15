@@ -7,7 +7,7 @@ import { CourseList, groupCourses } from "./CourseList";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn() },
+  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn(), deleteDraft: vi.fn(), archiveRelease: vi.fn() },
 }));
 
 const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=rust-systems";
@@ -144,5 +144,74 @@ describe("course management", () => {
     vi.mocked(publisherApi.listReleases).mockResolvedValue([]);
     const { view } = renderList();
     await waitFor(() => expect(view.container.textContent).toContain("Create your first course"));
+  });
+
+  it("deletes a draft only after confirmation, and keeps its releases", async () => {
+    vi.mocked(publisherApi.deleteDraft).mockResolvedValue(undefined);
+    const { view } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: "Delete draft v1.2.0" }));
+    const dialog = within(rust).getByRole("alertdialog", { name: "Delete draft v1.2.0?" });
+    expect(dialog.textContent).toContain("Published releases and your original media files are kept.");
+    expect(document.activeElement?.textContent).toBe("Cancel");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(within(rust).queryByRole("alertdialog")).toBeNull();
+    expect(publisherApi.deleteDraft).not.toHaveBeenCalled();
+
+    vi.mocked(publisherApi.listDrafts).mockResolvedValue([draft({ draftId: "draft_new", courseId: "course_new", title: "Fresh Course", courseVersion: "0.1.0", revision: 0, updatedAtUnixSeconds: 1_780_000_000 })]);
+    fireEvent.click(within(rust).getByRole("button", { name: "Delete draft v1.2.0" }));
+    fireEvent.click(within(rust).getByRole("button", { name: "Delete draft" }));
+    await waitFor(() => expect(publisherApi.deleteDraft).toHaveBeenCalledWith("draft_rust", 7));
+    await waitFor(() => expect(view.getByRole("listitem", { name: "Rust Systems" }).textContent).toContain("0 drafts · 2 releases"));
+    expect(within(view.getByRole("listitem", { name: "Rust Systems" })).queryByRole("button", { name: /Edit draft/ })).toBeNull();
+  });
+
+  it("explains why a draft could not be deleted", async () => {
+    vi.mocked(publisherApi.deleteDraft)
+      .mockRejectedValueOnce({ code: "draft_busy", message: "x" })
+      .mockRejectedValueOnce({ code: "revision_conflict", message: "x", currentRevision: 8 });
+    const { view } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: "Delete draft v1.2.0" }));
+    fireEvent.click(within(rust).getByRole("button", { name: "Delete draft" }));
+    await waitFor(() => expect(within(rust).getByRole("alert").textContent).toContain("Finish or cancel it first"));
+    const listed = vi.mocked(publisherApi.listDrafts).mock.calls.length;
+    fireEvent.click(within(rust).getByRole("button", { name: "Delete draft" }));
+    await waitFor(() => expect(within(rust).getByRole("alert").textContent).toContain("saved since the list loaded"));
+    await waitFor(() => expect(vi.mocked(publisherApi.listDrafts).mock.calls.length).toBeGreaterThan(listed));
+  });
+
+  it("archives a release after confirmation and shows it as archived", async () => {
+    vi.mocked(publisherApi.archiveRelease).mockImplementation(async () => {
+      const archived = release({ status: "archived" });
+      vi.mocked(publisherApi.listReleases).mockResolvedValue([archived, ...releases.slice(1)]);
+      vi.mocked(publisherApi.getDistribution).mockResolvedValue(distribution([seeding({ enabled: false, state: null, releaseStatus: "archived" })]));
+      return archived;
+    });
+    const { view } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.1.0/ }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Archive release/ }));
+    const dialog = within(rust).getByRole("alertdialog", { name: "Archive version 1.1.0?" });
+    expect(dialog.textContent).toContain("Seeding stops now");
+    expect(dialog.textContent).toContain("release files stay on this computer");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Archive release" }));
+    await waitFor(() => expect(publisherApi.archiveRelease).toHaveBeenCalledWith("release_2"));
+    await waitFor(() => expect(rust.textContent).toContain("Archived. This release is no longer seeded"));
+    expect(within(rust).queryByRole("button", { name: /Archive release/ })).toBeNull();
+    const row = within(rust).getByRole("button", { name: /Version 1.1.0/ });
+    expect(row.textContent).toContain("archived");
+    expect(row.textContent).toContain("Not seeding");
+  });
+
+  it("keeps the release unarchived when archiving fails", async () => {
+    vi.mocked(publisherApi.archiveRelease).mockRejectedValue({ code: "seeding_failed", message: "the engine could not stop the release" });
+    const { view } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.1.0/ }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Archive release/ }));
+    fireEvent.click(within(rust).getByRole("button", { name: "Archive release" }));
+    await waitFor(() => expect(within(rust).getByRole("alertdialog").textContent).toContain("could not stop the release"));
+    expect(within(rust).getByRole("button", { name: /Version 1.1.0/ }).textContent).toContain("published");
   });
 });

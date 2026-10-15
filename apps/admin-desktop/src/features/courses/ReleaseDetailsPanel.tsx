@@ -1,10 +1,11 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Check, Copy, Download } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Archive, Check, Copy, Download } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { copyText } from "../../lib/clipboard";
 import { formatBytes } from "../../lib/format";
 import { asCommandError, publisherApi, type Release, type SeedingStatus } from "../../services/publisher";
+import { ConfirmAction } from "./ConfirmAction";
 import { seedingLabel } from "./labels";
 
 type CopyState = "idle" | "copied" | "manual";
@@ -14,6 +15,17 @@ export function ReleaseDetailsPanel({ id, release, seeding }: { id: string; rele
   const magnetField = useRef<HTMLInputElement>(null);
   const [copy, setCopy] = useState<CopyState>("idle");
   const exportTorrent = useMutation({ mutationFn: () => publisherApi.exportReleaseTorrent(release.releaseId) });
+  const queryClient = useQueryClient();
+  const [archiving, setArchiving] = useState(false);
+  const archive = useMutation({
+    mutationFn: () => publisherApi.archiveRelease(release.releaseId),
+    onSuccess: () => {
+      setArchiving(false);
+      void queryClient.invalidateQueries({ queryKey: ["publisher-releases"] });
+      void queryClient.invalidateQueries({ queryKey: ["distribution"] });
+      void queryClient.invalidateQueries({ queryKey: ["publisher-release-details", release.releaseId] });
+    },
+  });
   const failure = seeding && seeding !== "unavailable" ? seeding.failure : null;
 
   const copyMagnet = async () => {
@@ -53,6 +65,26 @@ export function ReleaseDetailsPanel({ id, release, seeding }: { id: string; rele
         {exportTorrent.isSuccess && exportTorrent.data ? <p role="status" className="text-xs text-emerald-300">Torrent file saved.</p> : null}
         {exportTorrent.isError ? <p role="alert" className="text-xs text-red-300">{asCommandError(exportTorrent.error)?.message ?? "The torrent file could not be exported."}</p> : null}
       </div>
+
+      {release.status === "archived" ? (
+        <p className="text-xs text-slate-400">Archived. This release is no longer seeded; its files are kept on this computer.</p>
+      ) : archiving ? (
+        <ConfirmAction
+          title={`Archive version ${release.courseVersion}?`}
+          confirmLabel="Archive release"
+          pendingLabel="Archiving…"
+          pending={archive.isPending}
+          error={archive.isError ? (asCommandError(archive.error)?.message ?? "The release could not be archived.") : null}
+          onConfirm={() => archive.mutate()}
+          onCancel={() => { archive.reset(); setArchiving(false); }}
+        >
+          Seeding stops now and will not resume after a restart. Learners who already have this version keep it. The release files stay on this computer, and the version number can never be reused.
+        </ConfirmAction>
+      ) : (
+        <button type="button" onClick={() => setArchiving(true)} className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs hover:border-red-400/40 hover:text-red-200">
+          <Archive size={14} /> Archive release…
+        </button>
+      )}
 
       <div>
         <h4 className="text-xs font-semibold text-slate-400">Files</h4>

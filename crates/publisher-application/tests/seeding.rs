@@ -10,8 +10,8 @@ use std::{
 
 use publisher_application::{
     DistributionOptions, DraftServiceError, EngineError, MetadataEdit, NetworkProfile,
-    PeerReachability, PublishJobs, PublisherDrafts, SeedingService, StructureEdit, TransferState,
-    TransferStats,
+    PeerReachability, PublishJobs, PublisherDrafts, ReleaseStatus, SeedingService, StructureEdit,
+    TransferState, TransferStats,
 };
 use torrent_port::{
     FetchRequest, InfoHash, ResolveRequest, ResolvedTorrent, SeedRequest, TorrentEngine,
@@ -51,6 +51,9 @@ impl TorrentEngine for FakeEngine {
     }
 
     async fn stop(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
+        if let Some(error) = self.refuse.lock().unwrap().clone() {
+            return Err(error);
+        }
         self.active
             .lock()
             .unwrap()
@@ -297,6 +300,88 @@ async fn failures_are_reported_without_recording_intent() {
         fixture
             .service
             .start("release_0123456789abcdef0123456789abcdef")
+            .await,
+        Err(DraftServiceError::InvalidAttempt(_))
+    ));
+}
+
+#[tokio::test]
+async fn archiving_stops_seeding_keeps_files_and_refuses_restarts() {
+    let fixture = fixture("archive", &["1.0.0", "1.1.0"]);
+    let (older, newer) = (
+        fixture.release_ids[0].clone(),
+        fixture.release_ids[1].clone(),
+    );
+    fixture.service.start(&older).await.unwrap();
+    fixture.service.start(&newer).await.unwrap();
+
+    *fixture.engine.refuse.lock().unwrap() = Some(EngineError::Engine("stuck".to_owned()));
+    assert!(matches!(
+        fixture.service.archive(&newer).await,
+        Err(DraftServiceError::Seeding(_))
+    ));
+    assert_eq!(
+        fixture
+            .drafts
+            .lock()
+            .unwrap()
+            .release(&newer)
+            .unwrap()
+            .unwrap()
+            .status,
+        ReleaseStatus::Published
+    );
+    *fixture.engine.refuse.lock().unwrap() = None;
+
+    let archived = fixture.service.archive(&newer).await.unwrap();
+    assert_eq!(archived.status, ReleaseStatus::Archived);
+    assert_eq!(fixture.engine.active.lock().unwrap().len(), 1);
+    let statuses = fixture.service.statuses().unwrap();
+    let status = |id: &str| {
+        statuses
+            .iter()
+            .find(|status| status.release.release.release_id == id)
+            .unwrap()
+            .clone()
+    };
+    assert!(!status(&newer).enabled && status(&newer).transfer.is_none());
+    assert!(status(&older).enabled);
+    assert_eq!(status(&older).release.status, ReleaseStatus::Superseded);
+
+    let package = fixture.root.join("releases").join(&newer).join("package");
+    assert!(package.join("course.json").is_file());
+    assert!(
+        fs::metadata(package.join("course.json"))
+            .unwrap()
+            .permissions()
+            .readonly()
+    );
+
+    assert!(matches!(
+        fixture.service.start(&newer).await,
+        Err(DraftServiceError::ReleaseArchived)
+    ));
+    assert!(matches!(
+        fixture
+            .drafts
+            .lock()
+            .unwrap()
+            .seed_request(&fixture.root.join("releases"), &newer),
+        Err(DraftServiceError::ReleaseArchived)
+    ));
+    assert_eq!(fixture.service.archive(&newer).await.unwrap(), archived);
+
+    let restarted_engine = Arc::new(FakeEngine::default());
+    let restarted = SeedingService::new(
+        Arc::clone(&fixture.drafts),
+        Arc::clone(&restarted_engine),
+        fixture.root.join("releases"),
+    );
+    assert_eq!(restarted.restore().await.unwrap(), 1);
+    assert_eq!(restarted_engine.active.lock().unwrap().len(), 1);
+    assert!(matches!(
+        restarted
+            .archive("release_0123456789abcdef0123456789abcdef")
             .await,
         Err(DraftServiceError::InvalidAttempt(_))
     ));

@@ -113,6 +113,7 @@ function ReleaseRow({ release, disabled, onChanged }: { release: SeedingStatus; 
   });
   const error = toggle.isError ? (asCommandError(toggle.error)?.message ?? "The change failed.") : null;
   const checking = release.state === "checking";
+  const archived = release.releaseStatus === "archived";
   const percent = release.totalBytes > 0 ? Math.floor((release.verifiedBytes / release.totalBytes) * 100) : 0;
   return (
     <li className="rounded-2xl border border-white/10 bg-white/[0.035] px-5 py-4 text-sm">
@@ -125,7 +126,8 @@ function ReleaseRow({ release, disabled, onChanged }: { release: SeedingStatus; 
         <button
           type="button"
           onClick={() => toggle.mutate()}
-          disabled={disabled || toggle.isPending}
+          disabled={disabled || toggle.isPending || (archived && !release.enabled)}
+          title={archived && !release.enabled ? "Archived releases are not seeded" : undefined}
           aria-label={`${release.enabled ? "Stop seeding" : "Start seeding"} ${release.title} ${release.courseVersion}`}
           className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15 disabled:opacity-40"
         >

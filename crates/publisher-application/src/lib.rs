@@ -205,6 +205,12 @@ pub enum DraftServiceError {
     /// Another release preparation is already running.
     #[error("another release preparation is already running")]
     JobActive,
+    /// The draft has a release preparation that is running or ready to publish.
+    #[error("finish or cancel this draft's release preparation first")]
+    DraftBusy,
+    /// Archived releases are kept on disk but never seeded again.
+    #[error("archived releases cannot be seeded")]
+    ReleaseArchived,
     /// A staging attempt is unknown, incomplete, or was modified.
     #[error("{0}")]
     InvalidAttempt(&'static str),
@@ -262,6 +268,26 @@ impl PublisherDrafts {
     /// Returns an error when storage cannot be queried.
     pub fn list(&self) -> Result<Vec<DraftSummary>, DraftServiceError> {
         Ok(self.storage.list_drafts()?)
+    }
+
+    /// Delete a draft the editor last saw at `expected_revision`. Releases
+    /// made from it are kept; their source files are never touched.
+    ///
+    /// # Errors
+    /// Returns [`DraftServiceError::NotFound`], a revision conflict, or a
+    /// storage failure.
+    pub fn delete_draft(
+        &mut self,
+        draft_id: &str,
+        expected_revision: u64,
+    ) -> Result<(), DraftServiceError> {
+        if self.storage.delete_draft(draft_id, expected_revision)? {
+            Ok(())
+        } else {
+            Err(DraftServiceError::NotFound {
+                draft_id: draft_id.to_owned(),
+            })
+        }
     }
 
     /// Create an empty draft with fresh opaque draft and course IDs.

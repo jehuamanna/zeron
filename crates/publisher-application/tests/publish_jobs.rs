@@ -250,3 +250,50 @@ fn recovery_discards_interrupted_attempts() {
         0
     );
 }
+
+#[test]
+fn a_draft_is_in_progress_until_its_job_is_published_failed_or_cancelled() {
+    let scratch = Scratch::new("in-progress");
+    let jobs = PublishJobs::new(&scratch.staging());
+    let draft = publishable(&scratch, 1024);
+    assert!(!jobs.draft_in_progress(&draft.draft_id));
+    let job = jobs.begin(&draft).unwrap();
+    assert!(jobs.draft_in_progress(&draft.draft_id));
+    assert!(!jobs.draft_in_progress("draft_other"));
+    let finished = jobs
+        .run(
+            &job.job_id,
+            &draft,
+            &DistributionOptions::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(finished.stage, PublishStage::ReadyToPublish);
+    assert!(jobs.draft_in_progress(&draft.draft_id));
+
+    let scratch = Scratch::new("in-progress-ended");
+    let jobs = PublishJobs::new(&scratch.staging());
+    let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+    let invalid = drafts.create().unwrap().draft;
+    let failed = jobs.begin(&invalid).unwrap();
+    jobs.run(
+        &failed.job_id,
+        &invalid,
+        &DistributionOptions::default(),
+        &mut |_| {},
+    );
+    assert!(!jobs.draft_in_progress(&invalid.draft_id));
+    let draft = publishable(&scratch, 3 * 1024 * 1024);
+    let cancelled = jobs.begin(&draft).unwrap();
+    jobs.run(
+        &cancelled.job_id,
+        &draft,
+        &DistributionOptions::default(),
+        &mut |snapshot| {
+            if snapshot.stage == PublishStage::Packaging {
+                jobs.cancel(&snapshot.job_id);
+            }
+        },
+    );
+    assert!(!jobs.draft_in_progress(&draft.draft_id));
+}

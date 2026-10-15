@@ -161,6 +161,22 @@ impl PublisherDrafts {
         Ok(record)
     }
 
+    /// Mark a release archived and forget its seeding intent. The release
+    /// files stay on disk untouched. Callers that run an engine must stop
+    /// seeding first; [`crate::SeedingService::archive`] does both.
+    ///
+    /// # Errors
+    /// Returns [`DraftServiceError::InvalidAttempt`] for unknown releases or a
+    /// storage failure.
+    pub fn archive_release(
+        &mut self,
+        release_id: &str,
+    ) -> Result<ReleaseRecord, DraftServiceError> {
+        self.storage
+            .archive_release(release_id)?
+            .ok_or(DraftServiceError::InvalidAttempt("unknown release"))
+    }
+
     /// The torrent of a recorded release and the files it declares.
     ///
     /// The bytes are read with a size bound and their info hash must match

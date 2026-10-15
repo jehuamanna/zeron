@@ -118,3 +118,26 @@ fn rejects_a_future_database_schema() {
     ));
     fs::remove_file(database).unwrap();
 }
+
+#[test]
+fn deleting_a_draft_requires_its_current_revision() {
+    let mut storage = PublisherStorage::open_in_memory().unwrap();
+    storage.create_draft(&draft()).unwrap();
+    let mut saved = draft();
+    saved.revision = 1;
+    storage.update_draft(0, &saved).unwrap();
+
+    assert!(matches!(
+        storage.delete_draft("draft_one", 0),
+        Err(PublisherStorageError::RevisionConflict {
+            expected: 0,
+            actual: 1
+        })
+    ));
+    assert!(storage.draft("draft_one").unwrap().is_some());
+    assert!(storage.delete_draft("draft_one", 1).unwrap());
+    assert!(storage.draft("draft_one").unwrap().is_none());
+    assert_eq!(storage.list_drafts().unwrap().len(), 0);
+    assert!(!storage.delete_draft("draft_one", 1).unwrap());
+    assert!(!storage.delete_draft("draft_missing", 0).unwrap());
+}

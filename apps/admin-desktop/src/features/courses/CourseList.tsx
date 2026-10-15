@@ -1,9 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
-import { BookPlus, ChevronDown, ChevronRight, Lock, PencilLine } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BookPlus, ChevronDown, ChevronRight, Lock, PencilLine, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { formatBytes } from "../../lib/format";
-import { publisherApi, type DraftSummary, type Release, type SeedingStatus } from "../../services/publisher";
+import { asCommandError, publisherApi, type DraftSummary, type Release, type SeedingStatus } from "../../services/publisher";
+import { ConfirmAction } from "./ConfirmAction";
 import { ReleaseDetailsPanel } from "./ReleaseDetailsPanel";
 import { count, seedingLabel } from "./labels";
 
@@ -81,13 +82,8 @@ export function CourseList({ onOpenDraft }: { onOpenDraft: (draftId: string) => 
           </p>
 
           {course.drafts.length ? (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {course.drafts.map((draft) => (
-                <button key={draft.draftId} type="button" onClick={() => onOpenDraft(draft.draftId)} className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-sm hover:border-amber-300/40">
-                  <PencilLine size={15} className="text-amber-300" />
-                  Edit draft <span className="text-xs text-slate-500">v{draft.courseVersion} · r{draft.revision}</span>
-                </button>
-              ))}
+            <div className="mt-4 space-y-2">
+              {course.drafts.map((draft) => <DraftRow key={draft.draftId} draft={draft} onOpen={onOpenDraft} />)}
             </div>
           ) : null}
 
@@ -105,6 +101,62 @@ export function CourseList({ onOpenDraft }: { onOpenDraft: (draftId: string) => 
       ))}
     </ul>
   );
+}
+
+function DraftRow({ draft, onOpen }: { draft: DraftSummary; onOpen: (draftId: string) => void }) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const remove = useMutation({
+    mutationFn: () => publisherApi.deleteDraft(draft.draftId, draft.revision),
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ["publisher-draft", draft.draftId] });
+      void queryClient.invalidateQueries({ queryKey: ["publisher-drafts"] });
+    },
+    onError: (error) => {
+      if (asCommandError(error)?.code === "revision_conflict") void queryClient.invalidateQueries({ queryKey: ["publisher-drafts"] });
+    },
+  });
+  const failure = remove.isError ? deleteError(remove.error) : null;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => onOpen(draft.draftId)} className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-sm hover:border-amber-300/40">
+          <PencilLine size={15} className="text-amber-300" />
+          Edit draft <span className="text-xs text-slate-500">v{draft.courseVersion} · r{draft.revision}</span>
+        </button>
+        {!confirming ? (
+          <button type="button" aria-label={`Delete draft v${draft.courseVersion}`} onClick={() => setConfirming(true)} className="rounded-xl border border-white/10 p-2 text-slate-400 hover:border-red-400/40 hover:text-red-200">
+            <Trash2 size={15} />
+          </button>
+        ) : null}
+      </div>
+      {confirming ? (
+        <ConfirmAction
+          title={`Delete draft v${draft.courseVersion}?`}
+          confirmLabel="Delete draft"
+          pendingLabel="Deleting…"
+          pending={remove.isPending}
+          error={failure}
+          onConfirm={() => remove.mutate()}
+          onCancel={() => { remove.reset(); setConfirming(false); }}
+        >
+          The draft's structure and settings are removed from Zeron Publisher. Published releases and your original media files are kept.
+        </ConfirmAction>
+      ) : null}
+    </div>
+  );
+}
+
+function deleteError(error: unknown) {
+  const command = asCommandError(error);
+  switch (command?.code) {
+    case "revision_conflict":
+      return "This draft was saved since the list loaded. Check it before deleting.";
+    case "draft_busy":
+      return "This draft has a release preparation running or ready to publish. Finish or cancel it first.";
+    default:
+      return command?.message ?? "The draft could not be deleted.";
+  }
 }
 
 function ReleaseRow({ release, seeding }: { release: Release; seeding: SeedingStatus | "unavailable" | undefined }) {

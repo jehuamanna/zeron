@@ -23,6 +23,26 @@ fn release(release_id: &str, version: &str) -> NewRelease {
     }
 }
 
+fn draft() -> DraftCourse {
+    DraftCourse {
+        draft_id: "draft_one".to_owned(),
+        revision: 0,
+        metadata: DraftMetadata {
+            course_id: "course_one".to_owned(),
+            version: "1.2.0".to_owned(),
+            title: "Course".to_owned(),
+            description: None,
+            publisher_name: "P".to_owned(),
+            language: "en".to_owned(),
+            category: None,
+            tags: vec![],
+            prerequisites: vec![],
+            license_name: None,
+        },
+        modules: vec![],
+    }
+}
+
 #[test]
 fn a_new_release_supersedes_the_previous_published_release() {
     let mut storage = PublisherStorage::open_in_memory().unwrap();
@@ -156,4 +176,49 @@ fn seeding_intents_and_settings_persist() {
         storage.setting("network_profile").unwrap().as_deref(),
         Some("local_network")
     );
+}
+
+#[test]
+fn archiving_drops_the_seeding_intent_and_keeps_other_releases() {
+    let mut storage = PublisherStorage::open_in_memory().unwrap();
+    storage.create_draft(&draft()).unwrap();
+    storage
+        .insert_release(release("release_1", "1.0.0"))
+        .unwrap();
+    storage
+        .insert_release(release("release_2", "1.1.0"))
+        .unwrap();
+    storage.set_seeding_intent("release_1", true).unwrap();
+    storage.set_seeding_intent("release_2", true).unwrap();
+
+    let archived = storage.archive_release("release_2").unwrap().unwrap();
+    assert_eq!(archived.status, ReleaseStatus::Archived);
+    assert_eq!(archived.release, release("release_2", "1.1.0"));
+    assert_eq!(storage.seeding_intents().unwrap(), ["release_1"]);
+    assert_eq!(
+        storage.release("release_1").unwrap().unwrap().status,
+        ReleaseStatus::Superseded
+    );
+    assert_eq!(
+        storage
+            .archive_release("release_2")
+            .unwrap()
+            .unwrap()
+            .status,
+        ReleaseStatus::Archived
+    );
+    assert!(
+        storage
+            .archive_release("release_missing")
+            .unwrap()
+            .is_none()
+    );
+    assert!(storage.version_released("course_one", "1.1.0").unwrap());
+    assert!(matches!(
+        storage.insert_release(release("release_3", "1.1.0")),
+        Err(PublisherStorageError::VersionAlreadyReleased { .. })
+    ));
+
+    assert!(storage.delete_draft("draft_one", 0).unwrap());
+    assert_eq!(storage.releases().unwrap().len(), 2);
 }

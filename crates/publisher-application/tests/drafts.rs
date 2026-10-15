@@ -182,3 +182,32 @@ fn file_backed_drafts_survive_reopen() {
     assert_eq!(recovered.draft.revision, 1);
     std::fs::remove_file(database).unwrap();
 }
+
+#[test]
+fn deleting_a_draft_checks_its_revision_and_leaves_others() {
+    let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+    let kept = drafts.create().unwrap().draft.draft_id;
+    let draft_id = drafts.create().unwrap().draft.draft_id;
+    drafts.update_metadata(&draft_id, 0, edit("Saved")).unwrap();
+
+    assert!(matches!(
+        drafts.delete_draft(&draft_id, 0),
+        Err(DraftServiceError::RevisionConflict {
+            expected: 0,
+            actual: 1
+        })
+    ));
+    drafts.delete_draft(&draft_id, 1).unwrap();
+    assert!(drafts.draft(&draft_id).unwrap().is_none());
+    assert!(matches!(
+        drafts.delete_draft(&draft_id, 1),
+        Err(DraftServiceError::NotFound { .. })
+    ));
+    let remaining: Vec<_> = drafts
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|summary| summary.draft_id)
+        .collect();
+    assert_eq!(remaining, [kept]);
+}

@@ -204,6 +204,19 @@ impl PublishJobs {
         Ok(snapshot)
     }
 
+    /// Whether a job for `draft_id` is still preparing or is ready and
+    /// waiting to be published.
+    #[must_use]
+    pub fn draft_in_progress(&self, draft_id: &str) -> bool {
+        self.lock().jobs.values().any(|entry| {
+            entry.snapshot.draft_id == draft_id
+                && !matches!(
+                    entry.snapshot.stage,
+                    PublishStage::Published | PublishStage::Failed | PublishStage::Cancelled
+                )
+        })
+    }
+
     /// Current snapshot of a job.
     #[must_use]
     pub fn snapshot(&self, job_id: &str) -> Option<PublishJobSnapshot> {

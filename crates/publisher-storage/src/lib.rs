@@ -263,6 +263,35 @@ impl PublisherStorage {
         Ok(summary(draft, updated_at))
     }
 
+    /// Delete a draft at exactly `expected_revision`. Release records keep
+    /// their `draft_id` as history and are never touched.
+    ///
+    /// Returns `false` when no such draft exists.
+    ///
+    /// # Errors
+    /// Returns [`PublisherStorageError::RevisionConflict`] when the draft was
+    /// saved since the caller last saw it, or a storage failure.
+    pub fn delete_draft(
+        &mut self,
+        draft_id: &str,
+        expected_revision: u64,
+    ) -> Result<bool, PublisherStorageError> {
+        let deleted = self.connection.execute(
+            "DELETE FROM drafts WHERE draft_id=?1 AND revision=?2",
+            params![draft_id, to_i64(expected_revision, "expected revision")?],
+        )?;
+        if deleted > 0 {
+            return Ok(true);
+        }
+        match self.current_revision(draft_id)? {
+            Some(actual) => Err(PublisherStorageError::RevisionConflict {
+                expected: expected_revision,
+                actual,
+            }),
+            None => Ok(false),
+        }
+    }
+
     /// Load the exact saved draft snapshot.
     ///
     /// # Errors
@@ -454,6 +483,33 @@ impl PublisherStorage {
             })
         })
         .collect()
+    }
+
+    /// Mark a release archived and forget its seeding intent in one
+    /// transaction. Archiving is idempotent and never changes other releases.
+    ///
+    /// Returns `None` for unknown releases.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn archive_release(
+        &mut self,
+        release_id: &str,
+    ) -> Result<Option<ReleaseRecord>, PublisherStorageError> {
+        let transaction = self.connection.transaction()?;
+        let changed = transaction.execute(
+            "UPDATE releases SET status='archived' WHERE release_id=?1",
+            [release_id],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        transaction.execute(
+            "DELETE FROM seeding_intents WHERE release_id=?1",
+            [release_id],
+        )?;
+        transaction.commit()?;
+        self.release(release_id)
     }
 
     /// Persist whether a release should be seeded whenever the Admin app runs.

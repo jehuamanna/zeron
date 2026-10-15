@@ -151,7 +151,7 @@ The user reported these Publisher gaps:
 - files and folders cannot be added by drag and drop;
 - courses and releases cannot be edited, removed, or deleted.
 
-Sub-slice 1 (course management view, release details, and `.torrent` export) is done; see `docs/releases/phase-7-course-management.md`. Continue with sub-slice 2.
+Sub-slices 1 and 2 are done; see `docs/releases/phase-7-course-management.md` and `docs/releases/phase-7-draft-deletion-and-release-archive.md`. Continue with sub-slice 3.
 
 ### What exists today
 

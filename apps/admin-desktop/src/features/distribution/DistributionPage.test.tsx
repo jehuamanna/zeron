@@ -93,6 +93,15 @@ describe("distribution workspace", () => {
     expect(view.container.textContent).toContain("Not serving");
   });
 
+  it("does not offer to seed archived releases", async () => {
+    server = { ...server, releases: [status({ releaseStatus: "archived" })] };
+    const view = renderPage();
+    const start = await waitFor(() => view.getByRole("button", { name: "Start seeding Rust Systems 1.0.0" }));
+    expect(start.hasAttribute("disabled")).toBe(true);
+    expect(start.getAttribute("title")).toBe("Archived releases are not seeded");
+    expect(view.container.textContent).toContain("archived");
+  });
+
   it("saves the network profile and asks for a restart", async () => {
     const view = renderPage();
     const internet = await waitFor(() => view.getByRole("radio", { name: /Internet/ }));
