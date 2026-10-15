@@ -1,8 +1,8 @@
 # One Zeron app
 
-Status: in progress. Publisher and Learner are merging into one app, `apps/desktop`, following the user's decisions of 2026-10-16 in the handover. This note grows with each step and records evidence and limitations as they land.
+Status: complete. Publisher and Learner are one app, Zeron (`apps/desktop`, identifier `app.zeron`), following the user's decisions of 2026-10-16 in the handover. Library and Publish sit side by side, one Network setting drives a private download engine and a public engine that shares courses and seeds releases, and the old apps' data moves in on first start. Decisions are recorded in ADR 0011 (data import) and ADR 0012 (one app).
 
-## Delivered so far
+## Delivered
 
 ### 1. The Learner becomes `apps/desktop`
 
@@ -44,7 +44,12 @@ librqbit keeps one torrent per info hash in a session, so if Library shared a co
   - Every step resumes after a crash. A finished import, or a fresh install, does nothing again, and existing data in the new directory is never replaced.
   - If the import fails, startup stops, and the next start resumes.
 
-## Acceptance evidence so far
+### 6. The old apps are gone
+
+- `apps/admin-desktop` is deleted. The workspace, lockfiles, root scripts (`pnpm build`, `pnpm build:appimage`), and README build one app, with one AppImage that keeps `bundleMediaFramework: true`.
+- ADR 0012 supersedes the two-app topology. `system-overview.md`, `distribution.md`, `admin-publisher.md`, the roadmap, and the handover now describe one app.
+
+## Acceptance evidence
 
 - The Publisher's command tests run in the merged crate.
 - **Router test:** a reserved torrent stored as shared still fetches into the private engine; sharing it is refused, and nothing reaches the sharing engine.
@@ -65,11 +70,23 @@ librqbit keeps one torrent per info hash in a session, so if Library shared a co
 - **Storage test:** only locations under the moved directory are rebased, and a sibling directory whose name merely starts the same is not.
 - **Real data:** a copy of this machine's `app.zeron.learner` (settings, an empty library, WebKit and engine state), imported in a scratch `XDG_DATA_HOME`. It became `app.zeron` with `courses/`, the library at schema v11, the Internet profile, port 51413 with `UPnP`, and a `done` journal; WebKit and engine directories stayed behind, and the second run reported `AlreadyDone`.
 - **Browser preview** (Vite with faked IPC, 1180×760): Library, Publish (Courses and Distribution), and Network render in the shell; the Distribution link opens Network.
+- **Real window** (WebKitGTK through tauri-driver; debug build with the embedded frontend; scratch `XDG_DATA_HOME`). Fixture data was built through the application APIs:
+  - the old Publisher has release A, two real lessons (`lesson1.mp4`, `lesson2.mp4`) with its draft;
+  - the old Learner has course B, someone else's release (`lesson13.mp4`), downloaded under `app.zeron.learner/courses/`, kept offline, and shared, with Local network on fixed port 51499 and `UPnP` off.
+
+  Results:
+  - **Import:** first start wrote a `done` journal for both directories. `courses/`, `releases/`, and `staging/` now sit in `app.zeron`, and the old directories are empty.
+  - **Library:** course B shows "Sharing". Its lesson is 100% downloaded and available offline from the rebased location, and its sharing card shows live transfer metrics on the public engine.
+  - **Publish:** Courses shows draft A (r6) with release 1.0.0. In Distribution, Start seeding put release A in "Seeding" on the public engine.
+  - **Network:** "downloads use port 44563 · shared courses and releases are served on port 51499. UPnP is off." `ss` showed the app listening only on those two peer ports, plus local discovery, the loopback gateway, and the driver.
+  - **Own release:** importing release A by magnet resolved it from the app's own public engine and added it to Library. Lesson 1 played over the HTTPS gateway (ready state 4, advancing, "Verified on this computer: 70%"). Sharing it was refused with "this course is one of your releases; Publish already seeds it", and release A kept seeding with 13 MB uploaded this session.
+  - **Restart:** the journal was untouched, Library still had A and B, and release A resumed seeding.
 - All repository gates pass.
 
-## Limitations so far
-
-- The old Admin app still builds from `apps/admin-desktop` until the last step removes it.
+## Limitations
 - The old apps start empty after the import: their databases are removed. Running an old app while Zeron imports is unsupported.
 - Webview storage (`localStorage` UI choices) is not carried over.
 - A release reserved while Library already shares the same torrent in this session is not moved; it stays shared until restart, and seeding that release is refused meanwhile.
+- The Library's selected course stays open when switching to Publish and back, as before the merge.
+- The import was exercised on Linux only; macOS and Windows app-data siblings follow the same rule but are untested.
+- The release AppImage was not rebuilt for this note (debug build only), per the handover's packaging guidance.

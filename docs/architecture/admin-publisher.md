@@ -1,14 +1,14 @@
-# Admin and publisher architecture
+# Publisher architecture
 
 ## User workflow
 
-The Admin Desktop has five workspaces:
+Publishing is the **Publish** area of the one Zeron app ([ADR 0012](../decisions/0012-single-desktop-app.md)), beside Library. Its Courses tab covers the first four workspaces below, and its Distribution tab the fifth. Network settings are shared with Library. The five workspaces are:
 
 1. **Courses** lists drafts and immutable releases separately.
 2. **Builder** edits course metadata and the Course → Module → Lesson → Resource tree with keyboard-accessible drag/drop and explicit save status.
 3. **Validation** groups blocking errors, warnings, and media compatibility advice with navigation back to the source field.
 4. **Publish** previews the package plan, tracker settings, version, generated artifacts, and irreversible immutability boundary.
-5. **Distribution** operates local seeding jobs and reports engine-local metrics with their source and timestamp.
+5. **Distribution** operates local seeding jobs on the app's public engine, manages trackers, and reports engine-local metrics with their source and timestamp.
 
 Draft autosave writes normalized draft records transactionally. Adding a resource records an opaque resource ID and a backend-owned source-file reference; it does not copy or mutate bytes until packaging. Preview resolves the draft through the same validator used by publishing.
 

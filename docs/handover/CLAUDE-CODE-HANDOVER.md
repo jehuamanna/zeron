@@ -8,14 +8,16 @@ Last pushed commit before this handover: `6c9ad4b build: package the desktop app
 
 This document replaces the 2026-10-15 handover. A fresh Claude Code session on another machine should be able to continue from it alone.
 
-**Updated 2026-10-16 (latest pushed slice: `443ca51` uTP).** Start with [Active plan: one Zeron app, then full port mapping](#active-plan-one-zeron-app-then-full-port-mapping-user-decisions-2026-10-16).
+**Updated 2026-10-16.** Slice A (one Zeron app) is done; see `docs/releases/single-zeron-app.md`. Next is Slice B, the Zeron port mapper, in [Active plan: one Zeron app, then full port mapping](#active-plan-one-zeron-app-then-full-port-mapping-user-decisions-2026-10-16).
 
 ## Mission
 
-Zeron is an offline-first learning platform made of two separately packaged Tauri apps:
+Zeron is an offline-first learning platform: one Tauri app, `apps/desktop` (identifier `app.zeron`, ADR 0012), with two areas side by side:
 
-- **Learner Desktop:** imports, plays, and shares courses.
-- **Admin Desktop (Publisher):** builds, publishes, and seeds courses.
+- **Library:** imports, plays, and shares courses (formerly Learner Desktop).
+- **Publish:** builds, publishes, and seeds courses (formerly Admin Desktop).
+
+One Network setting covers both. A private engine downloads; a public engine on the one fixed port shares courses and seeds releases.
 
 BitTorrent distributes immutable course packages. It does not own the learning or publishing domain models.
 
@@ -26,7 +28,7 @@ Continue through the dependency-ordered roadmap ([docs/roadmap.md](../roadmap.md
 - a destructive action outside the approved scope;
 - an architectural blocker you can show evidence for.
 
-Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0009), and [phase-0 spike results](../research/phase-0-spike-results.md).
+Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0012), and [phase-0 spike results](../research/phase-0-spike-results.md).
 
 ## Start-of-session checklist
 
@@ -56,7 +58,7 @@ Native GTK dialogs cannot be driven by WebDriver. Seed fixtures through the appl
 
 On Node 26 corepack is not bundled. Install pnpm into a scratch directory with `npm install --prefix <dir> pnpm@11.25.0` and prepend `<dir>/node_modules/.bin` to `PATH`.
 
-Build an app with `pnpm --filter @zeron/<app> tauri build --debug --no-bundle` so the frontend is embedded (plain `cargo build` debug binaries load the Vite dev URL). Run one tauri-driver per app with distinct `--port` / `--native-port`.
+Build the app with `pnpm --filter @zeron/desktop tauri build --debug --no-bundle` so the frontend is embedded (plain `cargo build` debug binaries load the Vite dev URL). Run a tauri-driver per window you drive, with distinct `--port` / `--native-port`.
 
 Repository gates. All must pass before every commit:
 
@@ -72,7 +74,7 @@ git diff --check
 
 Tests that multicast or listen on the local network are `#[ignore]`. Run them on purpose with `cargo test -p <crate> --test <file> -- --ignored`.
 
-Packaging: Linux builds are **AppImage only** (user decision 2026-10-16: no `.deb`). Use `pnpm build:appimage` (root) or per app. The Learner AppImage bundles GStreamer (`bundleMediaFramework: true`). Don't run the slow release AppImage build before pushing unless the user asks.
+Packaging: Linux builds are **AppImage only** (user decision 2026-10-16: no `.deb`). Use `pnpm build:appimage` (root) or `pnpm --filter @zeron/desktop build:appimage`. The one Zeron AppImage bundles GStreamer (`bundleMediaFramework: true`). Don't run the slow release AppImage build before pushing unless the user asks.
 
 Real-course fixtures on this machine (user-provided 2026-10-16): `/home/jehu/Downloads/algoe-sixquevideo/` (2.3 GB, 13 H.264/AAC "N Design X.mp4" files; some named `.mp4.mp4`) and `/home/jehu/Downloads/algoexpert-sdfshortcourse/` (1.6 GB, `lesson1.mp4`–`lesson20.mp4` plus `Design Fundamentals.txt`, which lists the lesson titles). Do not use the 30 GB "Back-To-Back-SWE" course. Treat fixtures as read-only input. Publish them only into a scratch directory, keep them on Loopback or Local network, and never commit anything derived from them.
 
@@ -197,7 +199,7 @@ Each sub-slice needs its own release note (for example `docs/releases/phase-7-co
 
 ## Active plan: one Zeron app, then full port mapping (user decisions 2026-10-16)
 
-Read this section first. It supersedes the "two separately packaged apps" framing in the Mission above and in the architecture docs. Those docs change as part of slice A.
+Read this section first. Slice A is done: the Mission and the architecture docs now describe one app.
 
 ### State at handoff
 
@@ -212,7 +214,9 @@ Read this section first. It supersedes the "two separately packaged apps" framin
   - **Ways out:** a manual TCP 51413 forward on the publisher's router, a learner network that accepts connections (UPnP, NAT-PMP, or PCP), or the Phase 8 seed server.
   - **Scratch-only state:** the scratch Publisher data (`publisher-run`) and the public magnet live only in that session's scratchpad. The user asked that the magnet be shared only with the Learner and destroyed afterwards. Stop that seeding and archive or delete its release when the test ends.
 
-### Slice A: merge Publisher and Learner into one app `apps/desktop`
+### Slice A: merge Publisher and Learner into one app `apps/desktop` — done
+
+Delivered from `fbed259` through the commit that removed `apps/admin-desktop`; see `docs/releases/single-zeron-app.md`, ADR 0011 (data import), and ADR 0012 (one app). The decisions and facts below are kept for reference.
 
 User decisions:
 
@@ -349,8 +353,9 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 - `learning-domain`: pure learner rules (progress now, annotations next).
 - `learning-application` / `learning-storage`: learner import, library, torrent imports, sharing, and routing.
 - `media-gateway`: authenticated loopback HTTP(S) delivery, with no dependency on Tauri or torrents.
-- `apps/*/src-tauri`: composition and path-free DTO translation only. Command bodies are plain functions tested against in-memory storage. Errors carry `code`, plus `field` or `currentRevision` where relevant.
-- `apps/*/src`: thin React. TanStack Query holds backend data; Zustand holds ephemeral UI state. All Builder writes go through `draftWriter`.
+- `data-import`: one-time, crash-safe import of the former Learner and Publisher data into `app.zeron` (ADR 0011).
+- `apps/desktop/src-tauri`: composition and path-free DTO translation only; Publish commands live in its `publish` module. Command bodies are plain functions tested against in-memory storage. Errors carry `code`, plus `field` or `currentRevision` where relevant.
+- `apps/desktop/src`: thin React; Library at `app/Library.tsx`, Publish under `publish/`, the shell in `app/App.tsx`. TanStack Query holds backend data; Zustand holds ephemeral UI state. All Builder writes go through `draftWriter`.
 
 ## Review hotspots and constraints
 

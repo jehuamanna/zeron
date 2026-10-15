@@ -2,12 +2,12 @@
 
 ## Scope and quality attributes
 
-Zeron is a local-first course publishing and learning system with two independently packaged Tauri 2 applications:
+Zeron is a local-first course publishing and learning system: one Tauri 2 desktop app with two areas, side by side ([ADR 0012](../decisions/0012-single-desktop-app.md)):
 
-- **Learner Desktop** imports local folders, `.torrent` files, and magnet links; streams verified media; persists learning progress and annotations; and optionally seeds.
-- **Admin Desktop** builds course drafts, validates and packages immutable releases, creates torrents, and manages seeding.
+- **Library** imports local folders, `.torrent` files, and magnet links; streams verified media; persists learning progress and annotations; and optionally shares courses.
+- **Publish** builds course drafts, validates and packages immutable releases, creates torrents, and manages seeding.
 
-Neither experience requires a cloud service. An optional headless seed server and publisher catalog are later components. The most important quality attributes are offline operation, integrity, recoverability, bounded resource use, explicit network behavior, and preservation of learner-owned data.
+One Network setting covers both. A private torrent engine downloads and never uploads, and a public engine on the one fixed port serves shared courses and seeds releases. Neither area requires a cloud service. An optional headless seed server and publisher catalog are later components. The most important quality attributes are offline operation, integrity, recoverability, bounded resource use, explicit network behavior, and preservation of learner-owned data.
 
 ## Context and trust boundaries
 
@@ -35,8 +35,7 @@ Create components only when a phase needs them:
 
 ```text
 apps/
-  learner-desktop/       React UI + thin Tauri composition root
-  admin-desktop/         React UI + thin Tauri composition root
+  desktop/               React UI (Library, Publish) + thin Tauri composition root
 crates/
   course-format/         shared manifest/release types, schema validation
   learning-domain/       annotations, progress, stable identity rules
@@ -53,7 +52,7 @@ tools/
 tests/fixtures/           deterministic torrents and redistributable media
 ```
 
-`content-indexer`, `distribution-manager`, and `publisher-catalog` are introduced only in their roadmap phases. The two apps share DTO generation, Rust libraries, and visual primitives; they do not share app-specific state stores.
+`content-indexer`, `distribution-manager`, and `publisher-catalog` are introduced only in their roadmap phases. Library and Publish share Rust libraries and visual primitives; they keep separate state stores and API modules. `data-import` moves the former separate apps' data in once ([ADR 0011](../decisions/0011-importing-the-separate-apps-data.md)).
 
 ## Dependency direction
 
@@ -102,7 +101,7 @@ SQLite uses WAL mode where platform/filesystem testing permits, foreign keys, tr
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Desktop topology | Two Tauri apps in one workspace | Independent packaging and permissions without duplicate cores |
+| Desktop topology | One Tauri app with Library and Publish ([ADR 0012](../decisions/0012-single-desktop-app.md)) | One network setting, one public port, and one install for people who both learn and publish |
 | Course distribution | Multi-file BitTorrent v1 first | Broadest initial compatibility and per-resource layout |
 | Streaming transport | Authenticated loopback HTTP Range gateway | Native media elements understand ranges and backpressure |
 | Persistence | SQLite + FTS5 | Transactional offline storage and local search |

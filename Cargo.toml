@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "apps/admin-desktop/src-tauri",
     "apps/desktop/src-tauri",
     "crates/course-format",
     "crates/course-publisher",

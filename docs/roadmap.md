@@ -10,7 +10,7 @@ Create the workspace only for `course-format`, storage, application shell, and l
 
 ## Phase 2 — admin builder and reproducible publishing
 
-Add Admin Desktop and `course-publisher`: draft CRUD/autosave, hierarchy/reorder, validation, media probing, deterministic package/manifest generation, v1 torrent generation and verification, immutable release activation, and CLI parity. No cloud dependency.
+Add the Publisher (then a separate Admin Desktop, now the Publish area of the one app; see ADR 0012) and `course-publisher`: draft CRUD/autosave, hierarchy/reorder, validation, media probing, deterministic package/manifest generation, v1 torrent generation and verification, immutable release activation, and CLI parity. No cloud dependency.
 
 ## Phase 3 — local seed to metadata-first learner import
 

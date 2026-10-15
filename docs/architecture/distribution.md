@@ -48,7 +48,7 @@ Playback states are `IDLE`, `RESOLVING_FILE`, `PREPARING_STREAM`, `BUFFERING`, `
 
 ## Local distribution
 
-Admin and learner use the same adapter and persisted session model. Starting a seed validates that all release files still match metadata. Dashboard metrics are explicitly local: current upload rate, bytes uploaded by this engine session/history, currently connected peers, ratio derived from local counters, last activity, and errors. No global download count is presented.
+Library and Publish use the same adapter and persisted session model in one app ([ADR 0012](../decisions/0012-single-desktop-app.md)). A private engine downloads and never uploads; a public engine on the one fixed port serves shared courses and seeds releases. A torrent that is one of the user's releases is reserved on the public engine, so a Library copy of it stays private. Starting a seed validates that all release files still match metadata. Dashboard metrics are explicitly local: current upload rate, bytes uploaded by this engine session/history, currently connected peers, ratio derived from local counters, last activity, and errors. No global download count is presented.
 
 ## Optional remote seed server
 

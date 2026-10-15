@@ -17,7 +17,7 @@ The initial Rust workspace contains `course-format`, the framework-independent o
 - a publisher-domain foundation with revision-safe course drafts, structural validation, and explicit immutable-release workflow transitions.
 - durable publisher autosave snapshots with restart recovery and stale-editor protection.
 
-The latest completed slice is documented in [Phase 2: authenticated loopback media gateway](docs/releases/phase-2-loopback-media-gateway.md).
+Zeron is one desktop app with Library and Publish side by side ([ADR 0012](docs/decisions/0012-single-desktop-app.md)). Each completed slice is documented under [docs/releases](docs/releases/); the latest is [One Zeron app](docs/releases/single-zeron-app.md).
 
 ## Development
 
@@ -41,7 +41,7 @@ cargo run -p course-cli -- ./zeron.sqlite3 list
 cargo run -p course-cli -- ./zeron.sqlite3 search recovery
 ```
 
-Run the Learner Desktop during development:
+Run the Zeron desktop app (Library and Publish) during development:
 
 ```bash
 pnpm install --frozen-lockfile
