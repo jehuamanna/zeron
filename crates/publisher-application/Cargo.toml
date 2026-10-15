@@ -13,9 +13,12 @@ publisher-storage = { path = "../publisher-storage" }
 sha2.workspace = true
 thiserror.workspace = true
 torrent-metainfo = { path = "../torrent-metainfo" }
+torrent-port = { path = "../torrent-port" }
 
 [dev-dependencies]
 learning-application = { path = "../learning-application" }
+sha1.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true

@@ -4,8 +4,9 @@ use course_format::ResourceKind;
 use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
     DistributionOptions, DraftServiceError, DraftSummary, FindingSeverity, MetadataEdit,
-    PublishJobSnapshot, PublishStage, PublisherDrafts, ReleaseRecord, StoredDraft, StructureEdit,
-    inspect_draft_media, source_info,
+    PublishJobSnapshot, PublishStage, PublisherDrafts, ReleaseRecord, ReleaseSeedingStatus,
+    StoredDraft, StructureEdit, TransferState, inspect_draft_media, network_profile_name,
+    parse_network_profile, source_info,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -211,6 +212,33 @@ struct PreparedReleaseDto {
 struct JobFailureDto {
     code: &'static str,
     message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DistributionDto {
+    configured_profile: &'static str,
+    active_profile: &'static str,
+    listen_port: Option<u16>,
+    engine_error: Option<String>,
+    releases: Vec<SeedingStatusDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SeedingStatusDto {
+    release_id: String,
+    course_version: String,
+    title: String,
+    release_status: &'static str,
+    enabled: bool,
+    state: Option<&'static str>,
+    verified_bytes: u64,
+    total_bytes: u64,
+    uploaded_bytes: u64,
+    upload_bytes_per_second: u64,
+    connected_peers: u32,
+    failure: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -422,6 +450,112 @@ pub(crate) async fn list_releases(
 }
 
 #[tauri::command]
+pub(crate) async fn get_distribution(
+    state: State<'_, AppState>,
+) -> Result<DistributionDto, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    let seeding = state.distribution.seeding.clone();
+    let active_profile = network_profile_name(state.distribution.active_profile);
+    let listen_port = state
+        .distribution
+        .engine
+        .as_ref()
+        .and_then(|engine| torrent_engine_port(engine));
+    let engine_error = state.distribution.engine_error.clone();
+    run_blocking(move || {
+        let configured = lock_drafts(&drafts)?
+            .network_profile()
+            .map_err(|error| service_error("distribution_failed", error))?;
+        let releases = match seeding {
+            Some(seeding) => seeding
+                .statuses()
+                .map_err(|error| service_error("distribution_failed", error))?
+                .into_iter()
+                .map(SeedingStatusDto::from)
+                .collect(),
+            None => lock_drafts(&drafts)?
+                .releases()
+                .map_err(|error| service_error("distribution_failed", error))?
+                .into_iter()
+                .map(|release| {
+                    SeedingStatusDto::from(ReleaseSeedingStatus {
+                        release,
+                        enabled: false,
+                        transfer: None,
+                        start_error: None,
+                    })
+                })
+                .collect(),
+        };
+        Ok(DistributionDto {
+            configured_profile: network_profile_name(configured),
+            active_profile,
+            listen_port,
+            engine_error,
+            releases,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn start_seeding(
+    release_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    seeding_service(&state)?
+        .start(&release_id)
+        .await
+        .map_err(|error| service_error("seeding_failed", error))
+}
+
+#[tauri::command]
+pub(crate) async fn stop_seeding(
+    release_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    seeding_service(&state)?
+        .stop(&release_id)
+        .await
+        .map_err(|error| service_error("seeding_failed", error))
+}
+
+#[tauri::command]
+pub(crate) async fn set_network_profile(
+    profile: String,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    let profile = parse_network_profile(&profile)
+        .ok_or_else(|| CommandError::new("invalid_input", "unknown network profile"))?;
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || {
+        lock_drafts(&drafts)?
+            .set_network_profile(profile)
+            .map_err(|error| service_error("settings_failed", error))
+    })
+    .await
+}
+
+fn seeding_service(
+    state: &State<'_, AppState>,
+) -> Result<
+    Arc<publisher_application::SeedingService<torrent_librqbit::LibrqbitEngine>>,
+    CommandError,
+> {
+    state.distribution.seeding.clone().ok_or_else(|| {
+        CommandError::new(
+            "engine_unavailable",
+            "the torrent engine did not start; restart Zeron Publisher",
+        )
+    })
+}
+
+fn torrent_engine_port(engine: &torrent_librqbit::LibrqbitEngine) -> Option<u16> {
+    use publisher_application::TorrentEngine as _;
+    engine.listen_address().map(|address| address.port())
+}
+
+#[tauri::command]
 pub(crate) async fn validate_draft(
     draft_id: String,
     state: State<'_, AppState>,
@@ -542,6 +676,43 @@ impl From<&PublishJobSnapshot> for PublishJobDto {
                 message: failure.message.clone(),
             }),
             release_id: snapshot.release_id.clone(),
+        }
+    }
+}
+
+impl From<ReleaseSeedingStatus> for SeedingStatusDto {
+    fn from(status: ReleaseSeedingStatus) -> Self {
+        let transfer = status.transfer;
+        let release = status.release.release;
+        Self {
+            release_id: release.release_id,
+            course_version: release.course_version,
+            title: release.title,
+            release_status: status.release.status.as_str(),
+            enabled: status.enabled,
+            state: transfer.as_ref().map(|transfer| match transfer.state {
+                TransferState::Checking => "checking",
+                TransferState::Seeding => "seeding",
+                TransferState::Failed => "failed",
+            }),
+            verified_bytes: transfer
+                .as_ref()
+                .map_or(0, |transfer| transfer.verified_bytes),
+            total_bytes: transfer
+                .as_ref()
+                .map_or(release.total_bytes, |transfer| transfer.total_bytes),
+            uploaded_bytes: transfer
+                .as_ref()
+                .map_or(0, |transfer| transfer.uploaded_bytes),
+            upload_bytes_per_second: transfer
+                .as_ref()
+                .map_or(0, |transfer| transfer.upload_bytes_per_second),
+            connected_peers: transfer
+                .as_ref()
+                .map_or(0, |transfer| transfer.connected_peers),
+            failure: transfer
+                .and_then(|transfer| transfer.failure)
+                .or(status.start_error),
         }
     }
 }
@@ -743,6 +914,7 @@ fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
         | DraftServiceError::Torrent(_)
         | DraftServiceError::InvalidAttempt(_) => CommandError::new(code, error),
         DraftServiceError::JobActive => CommandError::new("job_active", error),
+        DraftServiceError::Seeding(_) => CommandError::new("seeding_failed", error),
         DraftServiceError::VersionAlreadyReleased { .. } => {
             CommandError::new("version_already_released", error)
         }
@@ -1075,6 +1247,71 @@ mod tests {
                 std::fs::set_permissions(&path, permissions).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn seeding_status_dto_reports_local_metrics_and_failures() {
+        let record = publisher_application::ReleaseRecord {
+            release: publisher_application::NewRelease {
+                release_id: "release_one".to_owned(),
+                course_id: "course_one".to_owned(),
+                course_version: "1.0.0".to_owned(),
+                title: "Course".to_owned(),
+                draft_id: "draft_one".to_owned(),
+                draft_revision: 3,
+                manifest_sha256: "f".repeat(64),
+                info_hash: "a".repeat(40),
+                magnet: "magnet:?xt=urn:btih:a".to_owned(),
+                piece_length: 16_384,
+                piece_count: 4,
+                file_count: 2,
+                total_bytes: 60_000,
+            },
+            published_at_unix_seconds: 1,
+            status: publisher_application::ReleaseStatus::Published,
+        };
+        let stopped = serde_json::to_value(SeedingStatusDto::from(ReleaseSeedingStatus {
+            release: record.clone(),
+            enabled: false,
+            transfer: None,
+            start_error: Some("the release files differ from their record".to_owned()),
+        }))
+        .unwrap();
+        assert!(stopped["state"].is_null());
+        assert_eq!(stopped["totalBytes"], 60_000);
+        assert_eq!(stopped["releaseStatus"], "published");
+        assert_eq!(
+            stopped["failure"],
+            "the release files differ from their record"
+        );
+
+        let seeding = serde_json::to_value(SeedingStatusDto::from(ReleaseSeedingStatus {
+            release: record,
+            enabled: true,
+            transfer: Some(publisher_application::TransferStats {
+                info_hash: torrent_port_hash(),
+                state: TransferState::Seeding,
+                verified_bytes: 60_000,
+                total_bytes: 60_000,
+                uploaded_bytes: 120_000,
+                upload_bytes_per_second: 2_048,
+                connected_peers: 3,
+                failure: None,
+            }),
+            start_error: None,
+        }))
+        .unwrap();
+        assert_eq!(seeding["state"], "seeding");
+        assert_eq!(seeding["enabled"], true);
+        assert_eq!(seeding["uploadedBytes"], 120_000);
+        assert_eq!(seeding["connectedPeers"], 3);
+        assert!(seeding["failure"].is_null());
+        assert!(parse_network_profile("internet").is_some());
+        assert!(parse_network_profile("everything").is_none());
+    }
+
+    fn torrent_port_hash() -> publisher_application::InfoHash {
+        publisher_application::InfoHash::parse(&"a".repeat(40)).unwrap()
     }
 
     #[test]

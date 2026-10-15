@@ -2,6 +2,7 @@
 
 mod publish_jobs;
 mod releases;
+mod seeding;
 mod sources;
 mod staging;
 mod torrents;
@@ -23,10 +24,16 @@ pub use publisher_storage::{
     DraftSummary, NewRelease, PublisherStorageError, ReleaseRecord, ReleaseStatus, StoredDraft,
 };
 pub use releases::{RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE, release_directory};
+pub use seeding::{
+    ReleaseSeedingStatus, SeedingService, network_profile_name, parse_network_profile,
+};
 pub use sources::{ResourceMediaFindings, SourceInfo, inspect_draft_media, source_info};
 pub use staging::{StagingReceipt, discard_abandoned_staging, discard_all_attempts, stage_draft};
 use thiserror::Error;
 pub use torrent_metainfo::{HashProgress, TorrentError};
+pub use torrent_port::{
+    EngineError, InfoHash, NetworkProfile, TorrentEngine, TransferState, TransferStats,
+};
 pub use torrents::{
     DistributionOptions, TorrentPhase, TorrentReceipt, discard_attempt, generate_torrent,
     verify_staged_torrent,
@@ -189,6 +196,9 @@ pub enum DraftServiceError {
         /// Rejected version.
         course_version: String,
     },
+    /// The torrent engine refused or failed an operation.
+    #[error(transparent)]
+    Seeding(EngineError),
     /// Another release preparation is already running.
     #[error("another release preparation is already running")]
     JobActive,

@@ -19,6 +19,7 @@ publisher-application = { path = "../../../crates/publisher-application" }
 serde.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
+torrent-librqbit = { path = "../../../crates/torrent-librqbit" }
 
 [dev-dependencies]
 serde_json.workspace = true

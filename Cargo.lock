@@ -3514,9 +3514,12 @@ dependencies = [
  "getrandom 0.4.3",
  "learning-application",
  "publisher-storage",
+ "sha1",
  "sha2 0.11.1",
  "thiserror 2.0.21",
+ "tokio",
  "torrent-metainfo",
+ "torrent-port",
 ]
 
 [[package]]
@@ -6343,6 +6346,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "torrent-librqbit",
 ]
 
 [[package]]

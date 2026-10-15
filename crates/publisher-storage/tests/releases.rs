@@ -121,8 +121,39 @@ fn version_one_databases_migrate_without_losing_drafts() {
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
     let reopened = PublisherStorage::open(&database).unwrap();
     assert_eq!(reopened.releases().unwrap().len(), 1);
     fs::remove_file(database).unwrap();
+}
+
+#[test]
+fn seeding_intents_and_settings_persist() {
+    let mut storage = PublisherStorage::open_in_memory().unwrap();
+    storage
+        .insert_release(release("release_1", "1.0.0"))
+        .unwrap();
+    storage
+        .insert_release(release("release_2", "1.1.0"))
+        .unwrap();
+    assert!(storage.seeding_intents().unwrap().is_empty());
+    storage.set_seeding_intent("release_1", true).unwrap();
+    storage.set_seeding_intent("release_1", true).unwrap();
+    storage.set_seeding_intent("release_2", true).unwrap();
+    let mut intents = storage.seeding_intents().unwrap();
+    intents.sort();
+    assert_eq!(intents, ["release_1", "release_2"]);
+    storage.set_seeding_intent("release_1", false).unwrap();
+    assert_eq!(storage.seeding_intents().unwrap(), ["release_2"]);
+    assert!(storage.set_seeding_intent("release_missing", true).is_err());
+
+    assert_eq!(storage.setting("network_profile").unwrap(), None);
+    storage.set_setting("network_profile", "internet").unwrap();
+    storage
+        .set_setting("network_profile", "local_network")
+        .unwrap();
+    assert_eq!(
+        storage.setting("network_profile").unwrap().as_deref(),
+        Some("local_network")
+    );
 }

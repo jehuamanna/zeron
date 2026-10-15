@@ -7,13 +7,23 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use publisher_application::{PublishJobs, PublisherDrafts};
-use tauri::Manager;
+use publisher_application::{NetworkProfile, PublishJobs, PublisherDrafts, SeedingService};
+use tauri::{Manager, RunEvent};
+use torrent_librqbit::{EngineConfig, LibrqbitEngine};
 
 pub(crate) struct AppState {
     pub(crate) drafts: Arc<Mutex<PublisherDrafts>>,
     pub(crate) publish_jobs: Arc<PublishJobs>,
     pub(crate) releases_root: PathBuf,
+    pub(crate) distribution: Distribution,
+}
+
+/// Seeding is optional at runtime: authoring keeps working if the engine cannot start.
+pub(crate) struct Distribution {
+    pub(crate) active_profile: NetworkProfile,
+    pub(crate) engine: Option<Arc<LibrqbitEngine>>,
+    pub(crate) seeding: Option<Arc<SeedingService<LibrqbitEngine>>>,
+    pub(crate) engine_error: Option<String>,
 }
 
 /// Start the publisher desktop application.
@@ -24,7 +34,7 @@ pub(crate) struct AppState {
 /// setup failure is logged by Tauri before process termination.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data = app.path().app_data_dir()?;
@@ -34,10 +44,24 @@ pub fn run() {
             drafts.recover_releases(&releases_root)?;
             let publish_jobs = PublishJobs::new(&app_data.join("staging"));
             publish_jobs.recover()?;
+            let active_profile = drafts.network_profile()?;
+            let drafts = Arc::new(Mutex::new(drafts));
+            let distribution = start_distribution(
+                active_profile,
+                app_data.join("engine"),
+                &drafts,
+                &releases_root,
+            );
+            if let Some(seeding) = distribution.seeding.clone() {
+                tauri::async_runtime::spawn(async move {
+                    let _ = seeding.restore().await;
+                });
+            }
             app.manage(AppState {
-                drafts: Arc::new(Mutex::new(drafts)),
+                drafts,
                 publish_jobs: Arc::new(publish_jobs),
                 releases_root,
+                distribution,
             });
             Ok(())
         })
@@ -55,7 +79,52 @@ pub fn run() {
             commands::activate_release,
             commands::list_releases,
             commands::validate_draft,
+            commands::get_distribution,
+            commands::start_seeding,
+            commands::stop_seeding,
+            commands::set_network_profile,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Zeron Publisher");
+        .build(tauri::generate_context!())
+        .expect("failed to build Zeron Publisher");
+    app.run(|app_handle, event| {
+        if matches!(event, RunEvent::Exit)
+            && let Some(engine) = app_handle.state::<AppState>().distribution.engine.clone()
+        {
+            tauri::async_runtime::block_on(engine.shutdown());
+        }
+    });
+}
+
+fn start_distribution(
+    active_profile: NetworkProfile,
+    state_directory: PathBuf,
+    drafts: &Arc<Mutex<PublisherDrafts>>,
+    releases_root: &std::path::Path,
+) -> Distribution {
+    let started = tauri::async_runtime::block_on(LibrqbitEngine::start(EngineConfig {
+        profile: active_profile,
+        state_directory,
+        listen_port: None,
+    }));
+    match started {
+        Ok(engine) => {
+            let engine = Arc::new(engine);
+            Distribution {
+                active_profile,
+                seeding: Some(Arc::new(SeedingService::new(
+                    Arc::clone(drafts),
+                    Arc::clone(&engine),
+                    releases_root.to_path_buf(),
+                ))),
+                engine: Some(engine),
+                engine_error: None,
+            }
+        }
+        Err(error) => Distribution {
+            active_profile,
+            engine: None,
+            seeding: None,
+            engine_error: Some(error.to_string()),
+        },
+    }
 }

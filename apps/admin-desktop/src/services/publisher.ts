@@ -120,6 +120,31 @@ export interface Release {
 
 export const finishedPublishStages: ReadonlySet<PublishStage> = new Set(["READY_TO_PUBLISH", "PUBLISHED", "FAILED", "CANCELLED"]);
 
+export type NetworkProfile = "loopback" | "local_network" | "internet";
+
+export interface SeedingStatus {
+  releaseId: string;
+  courseVersion: string;
+  title: string;
+  releaseStatus: Release["status"];
+  enabled: boolean;
+  state: "checking" | "seeding" | "failed" | null;
+  verifiedBytes: number;
+  totalBytes: number;
+  uploadedBytes: number;
+  uploadBytesPerSecond: number;
+  connectedPeers: number;
+  failure: string | null;
+}
+
+export interface Distribution {
+  configuredProfile: NetworkProfile;
+  activeProfile: NetworkProfile;
+  listenPort: number | null;
+  engineError: string | null;
+  releases: SeedingStatus[];
+}
+
 export interface CommandError {
   code: string;
   message: string;
@@ -152,5 +177,9 @@ export const publisherApi = {
   onPublishJob: (handler: (job: PublishJob) => void) => listen<PublishJob>("publish-job", (event) => handler(event.payload)),
   activateRelease: (jobId: string) => invoke<Release>("activate_release", { jobId }),
   listReleases: () => invoke<Release[]>("list_releases"),
+  getDistribution: () => invoke<Distribution>("get_distribution"),
+  startSeeding: (releaseId: string) => invoke<void>("start_seeding", { releaseId }),
+  stopSeeding: (releaseId: string) => invoke<void>("stop_seeding", { releaseId }),
+  setNetworkProfile: (profile: NetworkProfile) => invoke<void>("set_network_profile", { profile }),
   validateDraft: (draftId: string) => invoke<ValidationIssue[]>("validate_draft", { draftId }),
 };

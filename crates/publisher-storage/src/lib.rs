@@ -9,7 +9,7 @@ use course_publisher::DraftCourse;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Path-free draft information for Admin course lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -456,6 +456,69 @@ impl PublisherStorage {
         .collect()
     }
 
+    /// Persist whether a release should be seeded whenever the Admin app runs.
+    ///
+    /// # Errors
+    /// Returns a storage failure, including for unknown releases.
+    pub fn set_seeding_intent(
+        &mut self,
+        release_id: &str,
+        enabled: bool,
+    ) -> Result<(), PublisherStorageError> {
+        if enabled {
+            self.connection.execute(
+                "INSERT INTO seeding_intents (release_id, updated_at) VALUES (?1, ?2)
+                 ON CONFLICT (release_id) DO UPDATE SET updated_at = excluded.updated_at",
+                params![release_id, to_i64(now()?, "update timestamp")?],
+            )?;
+        } else {
+            self.connection.execute(
+                "DELETE FROM seeding_intents WHERE release_id=?1",
+                [release_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Releases the publisher wants seeded, oldest intent first.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn seeding_intents(&self) -> Result<Vec<String>, PublisherStorageError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT release_id FROM seeding_intents ORDER BY updated_at, release_id")?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(PublisherStorageError::from)
+    }
+
+    /// Read an application setting.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn setting(&self, key: &str) -> Result<Option<String>, PublisherStorageError> {
+        Ok(self
+            .connection
+            .query_row("SELECT value FROM settings WHERE key=?1", [key], |row| {
+                row.get(0)
+            })
+            .optional()?)
+    }
+
+    /// Write an application setting.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn set_setting(&mut self, key: &str, value: &str) -> Result<(), PublisherStorageError> {
+        self.connection.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
     fn current_revision(&self, draft_id: &str) -> Result<Option<u64>, PublisherStorageError> {
         let value: Option<i64> = self
             .connection
@@ -522,6 +585,21 @@ fn migrate(connection: &mut Connection) -> Result<(), PublisherStorageError> {
              );
              CREATE INDEX releases_by_course ON releases (course_id, published_at);
              PRAGMA user_version = 2;",
+        )?;
+        transaction.commit()?;
+    }
+    if found < 3 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE seeding_intents (
+                release_id TEXT PRIMARY KEY NOT NULL REFERENCES releases (release_id),
+                updated_at INTEGER NOT NULL CHECK (updated_at >= 0)
+             );
+             CREATE TABLE settings (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL
+             );
+             PRAGMA user_version = 3;",
         )?;
         transaction.commit()?;
     }

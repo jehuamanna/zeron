@@ -8,7 +8,7 @@ import { App } from "./App";
 
 vi.mock("../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/publisher")>()),
-  publisherApi: { listDrafts: vi.fn(), createDraft: vi.fn(), getDraft: vi.fn(), updateDraftMetadata: vi.fn(), validateDraft: vi.fn(), listReleases: vi.fn() },
+  publisherApi: { listDrafts: vi.fn(), createDraft: vi.fn(), getDraft: vi.fn(), updateDraftMetadata: vi.fn(), validateDraft: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn() },
 }));
 
 const created: DraftDetail = {
@@ -33,12 +33,24 @@ function renderApp() {
 }
 
 beforeEach(() => {
-  useBuilderUi.setState({ selectedDraftId: null });
+  useBuilderUi.setState({ selectedDraftId: null, workspace: "courses" });
   vi.mocked(publisherApi.listReleases).mockResolvedValue([]);
 });
 afterEach(cleanup);
 
 describe("publisher courses", () => {
+  it("switches between the courses and distribution workspaces", async () => {
+    vi.mocked(publisherApi.listDrafts).mockResolvedValue([]);
+    vi.mocked(publisherApi.getDistribution).mockResolvedValue({ configuredProfile: "local_network", activeProfile: "local_network", listenPort: null, engineError: null, releases: [] });
+    const view = renderApp();
+    fireEvent.click(view.getByRole("button", { name: "Distribution" }));
+    await waitFor(() => expect(view.container.textContent).toContain("Publish a release to seed it."));
+    expect(view.getByRole("heading", { level: 1 }).textContent).toBe("Distribution");
+    expect(view.queryByRole("button", { name: /New course/ })).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Courses" }));
+    await waitFor(() => expect(view.getByRole("heading", { level: 1 }).textContent).toBe("Publisher courses"));
+  });
+
   it("lists path-free draft summaries", async () => {
     vi.mocked(publisherApi.listDrafts).mockResolvedValue([{ draftId: "draft_one", courseId: "course_one", courseVersion: "1.0.0", title: "Systems Course", revision: 2, updatedAtUnixSeconds: 1 }]);
     const view = renderApp();
