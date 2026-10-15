@@ -342,3 +342,116 @@ fn make_writable(path: &Path) {
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn learners_resolve_metadata_and_fetch_only_selected_files() {
+    use torrent_port::{FetchRequest, ResolveRequest, TorrentSource};
+
+    let scratch = Scratch::new("fetch");
+    let release = publish(&scratch.0);
+    let seeder = engine(&scratch.0).await;
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    wait_for_state(&seeder, &info_hash, TransferState::Seeding).await;
+    let seeder_address = seeder.listen_address().unwrap();
+
+    let learner = LibrqbitEngine::start(EngineConfig {
+        profile: NetworkProfile::Loopback,
+        state_directory: scratch.0.join("learner-engine"),
+        listen_port: None,
+    })
+    .await
+    .unwrap();
+    let offline = learner
+        .resolve(ResolveRequest {
+            source: TorrentSource::Metainfo(release.torrent.clone()),
+            initial_peers: vec![],
+        })
+        .await
+        .unwrap();
+    assert_eq!(offline.info_hash.as_str(), release.info_hash);
+    assert_eq!(offline.files.len(), 4);
+    assert_eq!(offline.files[0].path, "course.json");
+
+    let magnet = format!("magnet:?xt=urn:btih:{}", release.info_hash);
+    let resolved = learner
+        .resolve(ResolveRequest {
+            source: TorrentSource::Magnet(magnet),
+            initial_peers: vec![seeder_address],
+        })
+        .await
+        .unwrap();
+    assert_eq!(resolved.info_hash, offline.info_hash);
+    assert_eq!(resolved.files, offline.files);
+    assert!(matches!(
+        learner
+            .resolve(ResolveRequest {
+                source: TorrentSource::Magnet("magnet:?dn=nothing".to_owned()),
+                initial_peers: vec![],
+            })
+            .await,
+        Err(EngineError::InvalidTorrent(_))
+    ));
+
+    let content = scratch.0.join("learner-cache");
+    let fetched = learner
+        .fetch(FetchRequest {
+            metainfo: resolved.metainfo.clone(),
+            content_root: content.clone(),
+            files: vec![0],
+            initial_peers: vec![seeder_address],
+        })
+        .await
+        .unwrap();
+    let manifest_length = resolved.files[0].length;
+    let stats = wait_for_file(&learner, &fetched, 0, manifest_length).await;
+    assert_eq!(stats.file_verified_bytes.len(), 4);
+    let largest = resolved
+        .files
+        .iter()
+        .max_by_key(|file| file.length)
+        .unwrap();
+    assert!(stats.file_verified_bytes[largest.index] < largest.length / 2);
+    assert_eq!(
+        std::fs::read(content.join("course.json")).unwrap(),
+        std::fs::read(release.package.join("course.json")).unwrap()
+    );
+
+    learner
+        .fetch(FetchRequest {
+            metainfo: resolved.metainfo.clone(),
+            content_root: content.clone(),
+            files: vec![0, largest.index],
+            initial_peers: vec![seeder_address],
+        })
+        .await
+        .unwrap();
+    wait_for_file(&learner, &fetched, largest.index, largest.length).await;
+    learner.shutdown().await;
+    seeder.shutdown().await;
+}
+
+async fn wait_for_file(
+    engine: &LibrqbitEngine,
+    info_hash: &InfoHash,
+    index: usize,
+    length: u64,
+) -> torrent_port::TransferStats {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let stats = engine.transfer(info_hash).expect("transfer is active");
+        if stats.file_verified_bytes.get(index) == Some(&length) {
+            return stats;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "file {index} incomplete: {stats:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}

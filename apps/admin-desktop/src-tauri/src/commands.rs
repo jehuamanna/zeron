@@ -691,7 +691,7 @@ impl From<ReleaseSeedingStatus> for SeedingStatusDto {
             release_status: status.release.status.as_str(),
             enabled: status.enabled,
             state: transfer.as_ref().map(|transfer| match transfer.state {
-                TransferState::Checking => "checking",
+                TransferState::Checking | TransferState::Downloading => "checking",
                 TransferState::Seeding => "seeding",
                 TransferState::Failed => "failed",
             }),
@@ -1295,7 +1295,9 @@ mod tests {
                 total_bytes: 60_000,
                 uploaded_bytes: 120_000,
                 upload_bytes_per_second: 2_048,
+                downloaded_bytes: 0,
                 connected_peers: 3,
+                file_verified_bytes: vec![60_000],
                 failure: None,
             }),
             start_error: None,

@@ -12,7 +12,9 @@ use publisher_application::{
     DistributionOptions, DraftServiceError, EngineError, MetadataEdit, NetworkProfile, PublishJobs,
     PublisherDrafts, SeedingService, StructureEdit, TransferState, TransferStats,
 };
-use torrent_port::{InfoHash, SeedRequest, TorrentEngine};
+use torrent_port::{
+    FetchRequest, InfoHash, ResolveRequest, ResolvedTorrent, SeedRequest, TorrentEngine,
+};
 
 #[derive(Default)]
 struct FakeEngine {
@@ -32,6 +34,14 @@ impl TorrentEngine for FakeEngine {
         }
         active.insert(parsed.clone(), request);
         Ok(parsed)
+    }
+
+    async fn resolve(&self, _: ResolveRequest) -> Result<ResolvedTorrent, EngineError> {
+        Err(EngineError::UnsupportedCapability("resolve"))
+    }
+
+    async fn fetch(&self, _: FetchRequest) -> Result<InfoHash, EngineError> {
+        Err(EngineError::UnsupportedCapability("fetch"))
     }
 
     async fn stop(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
@@ -55,7 +65,9 @@ impl TorrentEngine for FakeEngine {
                 total_bytes: 10,
                 uploaded_bytes: 5,
                 upload_bytes_per_second: 1,
+                downloaded_bytes: 0,
                 connected_peers: 1,
+                file_verified_bytes: vec![10],
                 failure: None,
             })
     }

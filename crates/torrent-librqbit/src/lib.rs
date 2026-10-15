@@ -8,7 +8,7 @@
 mod storage;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
     sync::{Arc, Mutex, PoisonError},
@@ -21,7 +21,8 @@ use librqbit::{
     api::TorrentIdOrHash, storage::StorageFactoryExt,
 };
 use torrent_port::{
-    EngineError, InfoHash, NetworkProfile, SeedRequest, TorrentEngine, TransferState, TransferStats,
+    EngineError, FetchRequest, InfoHash, NetworkProfile, ResolveRequest, ResolvedTorrent,
+    SeedRequest, TorrentEngine, TorrentFile, TorrentSource, TransferState, TransferStats,
 };
 
 use crate::storage::{ContentMismatch, ReadOnlyContent};
@@ -137,6 +138,114 @@ impl TorrentEngine for LibrqbitEngine {
         Ok(info_hash)
     }
 
+    async fn resolve(&self, request: ResolveRequest) -> Result<ResolvedTorrent, EngineError> {
+        let add = match request.source {
+            TorrentSource::Metainfo(bytes) => {
+                librqbit::torrent_from_bytes(&bytes)
+                    .map_err(|error| EngineError::InvalidTorrent(error.to_string()))?;
+                AddTorrent::from_bytes(bytes)
+            }
+            TorrentSource::Magnet(uri) => {
+                librqbit::Magnet::parse(&uri)
+                    .ok()
+                    .and_then(|magnet| magnet.as_id20())
+                    .ok_or_else(|| {
+                        EngineError::InvalidTorrent(
+                            "the magnet link has no v1 info hash".to_owned(),
+                        )
+                    })?;
+                AddTorrent::from_url(uri)
+            }
+        };
+        let response = self
+            .session
+            .add_torrent(
+                add,
+                Some(AddTorrentOptions {
+                    list_only: true,
+                    initial_peers: peers(request.initial_peers),
+                    ..AddTorrentOptions::default()
+                }),
+            )
+            .await
+            .map_err(|error| engine_error(&error))?;
+        let AddTorrentResponse::ListOnly(list) = response else {
+            return Err(EngineError::Engine(
+                "the torrent is already active in this engine".to_owned(),
+            ));
+        };
+        let files = list
+            .info
+            .iter_file_details()
+            .enumerate()
+            .map(|(index, details)| TorrentFile {
+                index,
+                path: details.filename.to_vec().join("/"),
+                length: details.len,
+            })
+            .collect();
+        Ok(ResolvedTorrent {
+            info_hash: InfoHash::parse(&list.info_hash.as_string())?,
+            name: list
+                .info
+                .name()
+                .map(std::borrow::Cow::into_owned)
+                .unwrap_or_default(),
+            files,
+            metainfo: list.torrent_bytes.to_vec(),
+        })
+    }
+
+    async fn fetch(&self, request: FetchRequest) -> Result<InfoHash, EngineError> {
+        let parsed = librqbit::torrent_from_bytes(&request.metainfo)
+            .map_err(|error| EngineError::InvalidTorrent(error.to_string()))?;
+        let info_hash = InfoHash::parse(&parsed.info_hash.as_string())?;
+        let active = self
+            .lock()
+            .get(&info_hash)
+            .map(|active| Arc::clone(&active.handle));
+        if let Some(handle) = active {
+            let selection: HashSet<usize> = request.files.into_iter().collect();
+            self.session
+                .update_only_files(&handle, &selection)
+                .await
+                .map_err(|error| engine_error(&error))?;
+            return Ok(info_hash);
+        }
+        std::fs::create_dir_all(&request.content_root).map_err(|error| {
+            EngineError::Engine(format!("cannot create the download directory: {error}"))
+        })?;
+        let response = self
+            .session
+            .add_torrent(
+                AddTorrent::from_bytes(request.metainfo),
+                Some(AddTorrentOptions {
+                    only_files: Some(request.files),
+                    output_folder: Some(request.content_root.to_string_lossy().into_owned()),
+                    overwrite: true,
+                    initial_peers: peers(request.initial_peers),
+                    ..AddTorrentOptions::default()
+                }),
+            )
+            .await
+            .map_err(|error| engine_error(&error))?;
+        let (AddTorrentResponse::Added(_, handle) | AddTorrentResponse::AlreadyManaged(_, handle)) =
+            response
+        else {
+            return Err(EngineError::Engine(
+                "unexpected list-only response".to_owned(),
+            ));
+        };
+        self.lock().insert(
+            info_hash.clone(),
+            Active {
+                handle,
+                failure: Arc::new(Mutex::new(None)),
+            },
+        );
+        Ok(info_hash)
+    }
+
     async fn stop(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
         let active = self
             .lock()
@@ -211,8 +320,9 @@ fn transfer_stats(info_hash: &InfoHash, active: &Active) -> TransferStats {
         .clone();
     let state = match (&failure, &engine_stats.state) {
         (Some(_), _) | (None, TorrentStatsState::Error) => TransferState::Failed,
+        (None, TorrentStatsState::Initializing { .. }) => TransferState::Checking,
         (None, TorrentStatsState::Live) if engine_stats.finished => TransferState::Seeding,
-        (None, _) => TransferState::Checking,
+        (None, _) => TransferState::Downloading,
     };
     let live = engine_stats.live.as_ref();
     TransferStats {
@@ -222,7 +332,9 @@ fn transfer_stats(info_hash: &InfoHash, active: &Active) -> TransferStats {
         total_bytes: engine_stats.total_bytes,
         uploaded_bytes: engine_stats.uploaded_bytes,
         upload_bytes_per_second: live.map_or(0, |live| live.upload_speed.as_bytes()),
+        downloaded_bytes: live.map_or(0, |live| live.snapshot.downloaded_and_checked_bytes),
         connected_peers: live.map_or(0, |live| live.snapshot.peer_stats.live),
+        file_verified_bytes: engine_stats.file_progress.clone(),
         failure: failure.or(engine_stats.error),
     }
 }
@@ -262,6 +374,10 @@ fn session_options(config: &EngineConfig) -> SessionOptions {
 /// always-created UDP tracker socket) to `lo` with `SO_BINDTODEVICE`.
 fn loopback_device(loopback: bool) -> Option<String> {
     (loopback && cfg!(target_os = "linux")).then(|| "lo".to_owned())
+}
+
+fn peers(initial_peers: Vec<SocketAddr>) -> Option<Vec<SocketAddr>> {
+    (!initial_peers.is_empty()).then_some(initial_peers)
 }
 
 fn engine_error(error: &anyhow::Error) -> EngineError {

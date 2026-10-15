@@ -62,12 +62,70 @@ pub struct SeedRequest {
     pub content_root: PathBuf,
 }
 
+/// Where torrent metadata comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TorrentSource {
+    /// Complete `.torrent` bytes, resolved without the network.
+    Metainfo(Vec<u8>),
+    /// A `magnet:` URI with a v1 info hash; metadata is fetched from peers.
+    Magnet(String),
+}
+
+/// Resolve metadata without downloading content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolveRequest {
+    /// Metadata source.
+    pub source: TorrentSource,
+    /// Peers to contact directly, in addition to whatever the profile allows.
+    pub initial_peers: Vec<SocketAddr>,
+}
+
+/// One file of a resolved torrent, by engine file index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TorrentFile {
+    /// Engine file index used for selection.
+    pub index: usize,
+    /// Untrusted `/`-joined path inside the torrent. Callers must validate it.
+    pub path: String,
+    /// Declared length.
+    pub length: u64,
+}
+
+/// Metadata of a torrent whose info hash has been verified.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedTorrent {
+    /// Torrent identity.
+    pub info_hash: InfoHash,
+    /// Root name declared by the torrent.
+    pub name: String,
+    /// Every file in engine order.
+    pub files: Vec<TorrentFile>,
+    /// Complete `.torrent` bytes for later restore.
+    pub metainfo: Vec<u8>,
+}
+
+/// Download only selected files into a caller-owned directory. Repeating the
+/// request for an active torrent replaces its selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchRequest {
+    /// Complete `.torrent` bytes from [`ResolvedTorrent::metainfo`].
+    pub metainfo: Vec<u8>,
+    /// Writable directory owned by the caller; existing verified data is reused.
+    pub content_root: PathBuf,
+    /// Engine file indices to download.
+    pub files: Vec<usize>,
+    /// Peers to contact directly.
+    pub initial_peers: Vec<SocketAddr>,
+}
+
 /// Engine-reported transfer state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferState {
     /// Existing content is being hash-checked before it can be served.
     Checking,
-    /// All pieces verified; serving peers.
+    /// Selected files are still being downloaded.
+    Downloading,
+    /// Every selected piece is verified; serving peers.
     Seeding,
     /// Checking or serving failed; nothing is served.
     Failed,
@@ -88,8 +146,12 @@ pub struct TransferStats {
     pub uploaded_bytes: u64,
     /// Current upload rate.
     pub upload_bytes_per_second: u64,
+    /// Bytes downloaded from peers in this session.
+    pub downloaded_bytes: u64,
     /// Currently connected peers.
     pub connected_peers: u32,
+    /// Verified bytes per engine file index.
+    pub file_verified_bytes: Vec<u64>,
     /// Failure description when `state` is [`TransferState::Failed`].
     pub failure: Option<String>,
 }
@@ -124,6 +186,19 @@ pub trait TorrentEngine: Send + Sync {
     fn seed(
         &self,
         request: SeedRequest,
+    ) -> impl Future<Output = Result<InfoHash, EngineError>> + Send;
+
+    /// Resolve and verify torrent metadata without downloading any file.
+    /// Dropping the future abandons resolution.
+    fn resolve(
+        &self,
+        request: ResolveRequest,
+    ) -> impl Future<Output = Result<ResolvedTorrent, EngineError>> + Send;
+
+    /// Download selected files; returns once the transfer is active.
+    fn fetch(
+        &self,
+        request: FetchRequest,
     ) -> impl Future<Output = Result<InfoHash, EngineError>> + Send;
 
     /// Stop serving a torrent. Content files are never deleted.
