@@ -134,6 +134,7 @@ pub fn run() {
             commands::get_course_progress,
             commands::read_document,
             commands::read_transcript,
+            commands::read_text_resource,
             commands::list_notes,
             commands::create_note,
             commands::update_note,

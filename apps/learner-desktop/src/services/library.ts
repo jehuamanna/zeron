@@ -273,6 +273,8 @@ export const libraryApi = {
   /** Saves only if the note is still at `expectedRevision`; never overwrites a newer note. */
   updateNote: (noteId: string, expectedRevision: number, anchor: NoteAnchor, body: string) =>
     invoke<NoteChange>("update_note", { noteId, expectedRevision, anchor, body }),
+  readText: (courseId: string, resourceId: string) =>
+    invoke<{ format: "markdown" | "text"; text: string }>("read_text_resource", { courseId, resourceId }),
   transcript: (courseId: string, mediaResourceId: string) => invoke<Transcript | null>("read_transcript", { courseId, mediaResourceId }),
   drawing: (courseId: string, lessonId: string) => invoke<Drawing | null>("get_drawing", { courseId, lessonId }),
   saveDrawing: (courseId: string, lessonId: string, expectedRevision: number | null, sceneJson: string, files: DrawingFile[]) =>

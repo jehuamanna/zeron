@@ -704,6 +704,8 @@ fn transcript_fixture() -> (TempRoot, CourseLibrary) {
         json!({ "language": "en" }),
     );
     add("handout", "pdf", "handout.pdf", b"%PDF-1.4\n", json!({}));
+    add("readme", "markdown", "README.md", b"# Notes\n", json!({}));
+    add("plain", "text", "notes.txt", b"plain notes\n", json!({}));
     let manifest = json!({
         "schemaVersion": 1, "courseId": "course_transcripts", "version": "1.0.0", "title": "Transcripts",
         "publisher": { "name": "Zeron Tests" }, "language": "en",
@@ -779,4 +781,43 @@ fn media_finds_its_transcript_by_relation_then_by_lesson() {
             .unwrap()
             .is_none()
     );
+}
+
+#[test]
+fn markdown_and_text_resources_are_readable_text() {
+    use learning_application::{DocumentSource, read_local_document};
+
+    let (_root, library) = transcript_fixture();
+    let (markdown, source) = library
+        .text_source("course_transcripts", "readme")
+        .unwrap()
+        .unwrap();
+    let DocumentSource::Local {
+        path,
+        sha256,
+        byte_length,
+    } = source
+    else {
+        panic!("a local text resource");
+    };
+    assert!(markdown);
+    assert_eq!(
+        read_local_document(&path, &sha256, byte_length).unwrap(),
+        b"# Notes\n"
+    );
+    let (markdown, source) = library
+        .text_source("course_transcripts", "plain")
+        .unwrap()
+        .unwrap();
+    assert!(!markdown);
+    assert_eq!(source.byte_length(), 12);
+    for resource in ["handout", "transcript_en", "video_a", "missing"] {
+        assert!(
+            library
+                .text_source("course_transcripts", resource)
+                .unwrap()
+                .is_none(),
+            "{resource}"
+        );
+    }
 }

@@ -16,7 +16,8 @@ mod torrent_import;
 pub use cache::{CacheError, CourseCache, RemovalReport};
 pub use disk::{DISK_RESERVE_BYTES, DiskGuard, DiskState, available_bytes, fits};
 pub use documents::{
-    DocumentError, DocumentSource, MAX_DOCUMENT_BYTES, read_local_document, read_torrent_document,
+    DocumentError, DocumentSource, MAX_DOCUMENT_BYTES, MAX_TEXT_BYTES, read_local_document,
+    read_torrent_document,
 };
 pub use downloads::{Availability, DownloadScope};
 pub use drawings::{Drawing, DrawingSave};

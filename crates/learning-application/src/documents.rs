@@ -17,6 +17,8 @@ use crate::{CourseLibrary, LibraryError, StreamWait, open_lesson_stream};
 
 /// Largest document read into memory for viewing.
 pub const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
+/// Largest Markdown or text resource read for the reader.
+pub const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
 /// How long a torrent document may take to arrive.
 const TORRENT_READ_LIMIT: Duration = Duration::from_secs(120);
 
@@ -75,6 +77,36 @@ impl CourseLibrary {
         resource_id: &str,
     ) -> Result<Option<DocumentSource>, LibraryError> {
         self.source_of_kind(course_id, resource_id, &[ResourceKind::Pdf])
+    }
+
+    /// Where a Markdown or plain-text resource's bytes come from, with whether
+    /// it is Markdown, or `None` for other resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage failure.
+    pub fn text_source(
+        &self,
+        course_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<(bool, DocumentSource)>, LibraryError> {
+        let Some(manifest) = self.manifest(course_id)? else {
+            return Ok(None);
+        };
+        let markdown = manifest
+            .modules
+            .iter()
+            .flat_map(|module| &module.lessons)
+            .flat_map(|lesson| &lesson.resources)
+            .find(|resource| resource.id == resource_id)
+            .is_some_and(|resource| resource.kind == ResourceKind::Markdown);
+        Ok(self
+            .source_of_kind(
+                course_id,
+                resource_id,
+                &[ResourceKind::Markdown, ResourceKind::Text],
+            )?
+            .map(|source| (markdown, source)))
     }
 
     /// The transcript of a video or audio resource: the resource it names as

@@ -8,9 +8,9 @@ use learning_application::{
     Anchor, Availability, CacheError, CancellationFlag, CourseImportReceipt, CourseLibrary,
     CourseSharingStatus, DISK_RESERVE_BYTES, DocumentError, DocumentSource, DownloadScope,
     DrawingFile, DrawingSave, EngineError, ImportError, InfoHash, LibraryError, LocalResource,
-    MAX_TRANSCRIPT_BYTES, NetworkProfile, Note, NoteChange, PeerReachability, RateLimits,
-    SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage, TorrentResource,
-    TorrentSource, TransferState, fits, parse_transcript, read_local_document,
+    MAX_TEXT_BYTES, MAX_TRANSCRIPT_BYTES, NetworkProfile, Note, NoteChange, PeerReachability,
+    RateLimits, SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage,
+    TorrentResource, TorrentSource, TransferState, fits, parse_transcript, read_local_document,
     read_torrent_document,
 };
 use media_gateway::{FileResource, StreamResource};
@@ -1153,6 +1153,43 @@ async fn read_source(
                 .map_err(document_error)
         }
     }
+}
+
+/// A Markdown or plain-text lesson resource.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TextResourceDto {
+    /// `markdown` or `text`.
+    format: &'static str,
+    text: String,
+}
+
+/// The verified text of a Markdown or plain-text resource.
+#[tauri::command]
+pub(crate) async fn read_text_resource(
+    course_id: String,
+    resource_id: String,
+    state: State<'_, AppState>,
+) -> Result<TextResourceDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    let (markdown, source) = run_blocking(move || {
+        lock_library(&library)?
+            .text_source(&course_id, &resource_id)
+            .map_err(|error| document_error(DocumentError::Library(error)))
+    })
+    .await?
+    .ok_or_else(|| document_error(DocumentError::NotADocument))?;
+    if source.byte_length() > MAX_TEXT_BYTES {
+        return Err(document_error(DocumentError::TooLarge));
+    }
+    let text = String::from_utf8(read_source(&state, source).await?).map_err(|_| CommandError {
+        code: "text_unreadable",
+        message: "the resource is not UTF-8 text".to_owned(),
+    })?;
+    Ok(TextResourceDto {
+        format: if markdown { "markdown" } else { "text" },
+        text,
+    })
 }
 
 /// A transcript as timed cues.

@@ -14,3 +14,17 @@ body {
 }
 
 button { font: inherit; }
+
+/* Lesson Markdown in the reader. */
+.reader h1 { margin: 0 0 1rem; font-size: 1.6rem; font-weight: 700; line-height: 1.25; color: #f8fafc; }
+.reader h2 { margin: 1.75rem 0 0.75rem; font-size: 1.3rem; font-weight: 650; color: #f1f5f9; }
+.reader h3, .reader h4 { margin: 1.5rem 0 0.5rem; font-size: 1.1rem; font-weight: 600; color: #e2e8f0; }
+.reader p { margin: 0.75rem 0; }
+.reader ul { margin: 0.75rem 0; padding-left: 1.5rem; list-style: disc; }
+.reader ol { margin: 0.75rem 0; padding-left: 1.5rem; list-style: decimal; }
+.reader li { margin: 0.25rem 0; }
+.reader blockquote { margin: 1rem 0; border-left: 3px solid rgb(255 255 255 / 0.2); padding-left: 1rem; color: #94a3b8; }
+.reader hr { margin: 1.5rem 0; border-color: rgb(255 255 255 / 0.1); }
+.reader table { margin: 1rem 0; border-collapse: collapse; font-size: 0.9em; }
+.reader th, .reader td { border: 1px solid rgb(255 255 255 / 0.12); padding: 0.4rem 0.75rem; text-align: left; }
+.reader th { background: rgb(255 255 255 / 0.05); font-weight: 600; }

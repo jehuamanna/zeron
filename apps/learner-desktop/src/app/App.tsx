@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, ChevronLeft, Download, File, HardDrive, Magnet, Network, Play, Search } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
@@ -21,6 +21,9 @@ const formatBytes = (bytes: number) =>
     bytes / 1_000_000,
   );
 
+// Markdown rendering and Shiki load only when a lesson text is opened.
+const TextReader = lazy(() => import("../features/reader/TextReader").then((module) => ({ default: module.TextReader })));
+
 export function App() {
   const queryClient = useQueryClient();
   const { selectedCourseId, selectCourse, networkOpen, showNetwork } = useLibraryUi();
@@ -28,6 +31,7 @@ export function App() {
   const [playing, setPlaying] = useState<string | null>(null);
   const [startAt, setStartAt] = useState<number | null>(null);
   const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
+  const [textView, setTextView] = useState<{ resourceId: string; title: string } | null>(null);
   const [pdfView, setPdfView] = useState<{ resourceId: string; title: string; page: number; region: Region | null } | null>(null);
   const player = useRef<PlayerHandle>(null);
   // A note's timestamp to start at when it opens a video that is not playing.
@@ -61,6 +65,7 @@ export function App() {
       setStartAt(pendingSeek.current ?? position);
       pendingSeek.current = null;
       setPdfView(null);
+      setTextView(null);
       setMediaUrl(registration.url);
       setPlaying(resourceId);
       setActiveLessonId(lessonOf(resourceId)?.id ?? null);
@@ -113,7 +118,17 @@ export function App() {
     setMediaUrl(null);
     setPlaying(null);
     setActiveLessonId(lesson.id);
+    setTextView(null);
     setPdfView({ resourceId, title: `${lesson.title} · PDF`, page, region: null });
+  };
+  const openText = (resourceId: string) => {
+    const lesson = lessonOf(resourceId);
+    if (!lesson) return;
+    setMediaUrl(null);
+    setPlaying(null);
+    setPdfView(null);
+    setActiveLessonId(lesson.id);
+    setTextView({ resourceId, title: lesson.title });
   };
   const lessonNotes = useQuery({
     queryKey: ["notes", detail.data?.courseId, activeLessonId],
@@ -140,6 +155,7 @@ export function App() {
     setPlaying(null);
     setActiveLessonId(null);
     setPdfView(null);
+    setTextView(null);
     selectCourse(null);
   };
 
@@ -220,6 +236,10 @@ export function App() {
                           pendingRegion={pdfView.region}
                           onRegion={(region) => setPdfView({ ...pdfView, region })}
                         />
+                      ) : textView ? (
+                        <Suspense fallback={<p className="text-sm text-slate-400">Opening {textView.title}…</p>}>
+                          <TextReader key={textView.resourceId} courseId={detail.data.courseId} resourceId={textView.resourceId} title={textView.title} />
+                        </Suspense>
                       ) : mediaUrl && playing ? (
                         <LessonPlayer
                           handle={player}
@@ -397,6 +417,16 @@ export function App() {
                                         className="inline-flex items-center gap-1 rounded-md bg-amber-300/10 px-2 py-1 text-xs text-amber-100 hover:bg-amber-300/20"
                                       >
                                         <File size={12} /> {pdfView?.resourceId === resource.id ? "Reading" : "Open PDF"}
+                                      </button>
+                                    ) : resource.kind === "markdown" || resource.kind === "text" ? (
+                                      <button
+                                        type="button"
+                                        key={resource.id}
+                                        aria-current={textView?.resourceId === resource.id ? "true" : undefined}
+                                        onClick={() => openText(resource.id)}
+                                        className="inline-flex items-center gap-1 rounded-md bg-violet-300/10 px-2 py-1 text-xs text-violet-100 hover:bg-violet-300/20"
+                                      >
+                                        <BookOpen size={12} /> {textView?.resourceId === resource.id ? "Reading" : "Read"}
                                       </button>
                                     ) : (
                                       <span key={resource.id} className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-400">
