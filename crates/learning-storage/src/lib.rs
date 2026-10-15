@@ -13,8 +13,8 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 3;
-const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash";
+const CURRENT_SCHEMA_VERSION: i64 = 4;
+const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
 
 /// Durable course metadata returned to application use cases.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +36,8 @@ pub struct StoredCourseSummary {
     /// Info hash when the course was imported from a torrent; such courses'
     /// resource bytes are not locally verified until downloaded.
     pub torrent_info_hash: Option<String>,
+    /// Whether the learner chose to share this torrent-sourced course.
+    pub sharing: bool,
 }
 
 /// Backend-only description of a torrent-sourced course for engine restore.
@@ -49,6 +51,8 @@ pub struct TorrentCourseSource {
     pub metainfo: Vec<u8>,
     /// Learner-owned download directory. Never serialize this over IPC.
     pub content_root: PathBuf,
+    /// Whether the learner chose to share this course with peers.
+    pub sharing: bool,
 }
 
 /// Storage startup and operation failures.
@@ -208,7 +212,7 @@ impl Storage {
     /// Returns [`StorageError`] for query or path-decoding failures.
     pub fn torrent_course_sources(&self) -> Result<Vec<TorrentCourseSource>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT t.course_id, t.info_hash, t.metainfo, l.path_encoding, l.path_bytes
+            "SELECT t.course_id, t.info_hash, t.metainfo, l.path_encoding, l.path_bytes, t.sharing
              FROM course_torrent_sources AS t JOIN course_locations AS l ON l.course_id = t.course_id
              ORDER BY t.course_id",
         )?;
@@ -219,18 +223,38 @@ impl Storage {
                 row.get::<_, Vec<u8>>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, Vec<u8>>(4)?,
+                row.get::<_, bool>(5)?,
             ))
         })?;
         rows.map(|row| {
-            let (course_id, info_hash, metainfo, encoding, bytes) = row?;
+            let (course_id, info_hash, metainfo, encoding, bytes, sharing) = row?;
             Ok(TorrentCourseSource {
                 course_id,
                 info_hash,
                 metainfo,
                 content_root: decode_path(&encoding, &bytes)?,
+                sharing,
             })
         })
         .collect()
+    }
+
+    /// Record whether the learner shares a torrent-sourced course. Returns
+    /// `false` when the course is not torrent-sourced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for write failures.
+    pub fn set_course_sharing(
+        &mut self,
+        course_id: &str,
+        sharing: bool,
+    ) -> Result<bool, StorageError> {
+        let changed = self.connection.execute(
+            "UPDATE course_torrent_sources SET sharing = ?2 WHERE course_id = ?1",
+            rusqlite::params![course_id, sharing],
+        )?;
+        Ok(changed == 1)
     }
 
     /// Read a learner setting.
@@ -448,6 +472,8 @@ impl Storage {
             total_resource_bytes,
             imported_at_unix_seconds: imported_at,
             torrent_info_hash: torrent.map(|(info_hash, _)| info_hash.to_owned()),
+            // Every import replaces the source row, so sharing starts off again.
+            sharing: false,
         })
     }
 }
@@ -526,6 +552,16 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
              PRAGMA user_version = 3;",
         )?;
         tx.commit()?;
+        found = 3;
+    }
+    if found == 3 {
+        let tx = connection.transaction()?;
+        tx.execute_batch(
+            "ALTER TABLE course_torrent_sources
+               ADD COLUMN sharing INTEGER NOT NULL DEFAULT 0 CHECK(sharing IN (0, 1));
+             PRAGMA user_version = 4;",
+        )?;
+        tx.commit()?;
     }
     Ok(())
 }
@@ -590,6 +626,7 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredCourseSum
             )
         })?,
         torrent_info_hash: row.get(7)?,
+        sharing: row.get(8)?,
     })
 }
 
@@ -732,6 +769,14 @@ mod tests {
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].metainfo, b"d4:infoe");
         assert_eq!(sources[0].content_root, Path::new("/cache/abc"));
+        assert!(
+            !sources[0].sharing,
+            "sharing is off until the learner opts in"
+        );
+        assert!(storage.set_course_sharing(&course.course_id, true).unwrap());
+        assert!(storage.torrent_course_sources().unwrap()[0].sharing);
+        assert!(storage.list_courses().unwrap()[0].sharing);
+        assert!(!storage.set_course_sharing("unknown", true).unwrap());
 
         storage
             .save_imported_course(&course, 64, Path::new("/local/course"))
@@ -745,6 +790,11 @@ mod tests {
                 .is_none()
         );
         assert!(storage.torrent_course_sources().unwrap().is_empty());
+        assert!(!storage.list_courses().unwrap()[0].sharing);
+        assert!(
+            !storage.set_course_sharing(&course.course_id, true).unwrap(),
+            "local courses cannot be shared"
+        );
 
         assert_eq!(storage.setting("network_profile").unwrap(), None);
         storage.set_setting("network_profile", "internet").unwrap();

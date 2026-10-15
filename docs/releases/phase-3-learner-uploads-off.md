@@ -26,6 +26,6 @@ Status: complete for the default. The Learner's torrent engine never serves cour
 
 ## Current limitations
 
-- There is no opt-in yet. Because the switch is per session, per-course sharing needs a design choice: a second, sharing engine session, or one app-wide setting.
-- There are no learner upload metrics yet; with uploads off they would always be zero.
+- Opt-in arrived with `phase-3-learner-course-sharing.md`: per-course sharing through a second, upload-enabled engine session.
+- Learner upload metrics arrived with per-course sharing.
 - The setting is fixed when the engine starts.

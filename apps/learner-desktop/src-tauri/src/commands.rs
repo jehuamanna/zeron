@@ -5,8 +5,8 @@ use std::{
 
 use course_format::ResourceKind;
 use learning_application::{
-    CancellationFlag, CourseImportReceipt, CourseLibrary, TorrentImportSnapshot,
-    TorrentImportStage, TorrentSource,
+    CancellationFlag, CourseImportReceipt, CourseLibrary, CourseSharingStatus, NetworkProfile,
+    SharingError, TorrentImportSnapshot, TorrentImportStage, TorrentSource, TransferState,
 };
 use media_gateway::FileResource;
 use serde::Serialize;
@@ -25,6 +25,7 @@ const MAX_MAGNET_BYTES: usize = 8 * 1024;
 pub(crate) struct ReadinessDto {
     state: &'static str,
     torrent_import: &'static str,
+    sharing: &'static str,
 }
 
 #[derive(Serialize)]
@@ -39,6 +40,7 @@ pub(crate) struct CourseSummaryDto {
     imported_at_unix_seconds: u64,
     source: &'static str,
     torrent_info_hash: Option<String>,
+    sharing: bool,
 }
 
 #[derive(Serialize)]
@@ -119,6 +121,20 @@ struct TorrentImportFailureDto {
     message: String,
 }
 
+/// A torrent course's sharing choice and metrics measured by this computer.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CourseSharingDto {
+    course_id: String,
+    available: bool,
+    sharing: bool,
+    network_profile: &'static str,
+    state: &'static str,
+    connected_peers: u32,
+    uploaded_bytes: u64,
+    upload_bytes_per_second: u64,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CommandError {
@@ -135,6 +151,16 @@ pub(crate) fn readiness(state: State<'_, AppState>) -> ReadinessDto {
     ReadinessDto {
         state: "ready",
         torrent_import: if state.torrents.imports.is_some() {
+            "ready"
+        } else {
+            "unavailable"
+        },
+        sharing: if state
+            .torrents
+            .sharing
+            .as_ref()
+            .is_some_and(|sharing| sharing.available())
+        {
             "ready"
         } else {
             "unavailable"
@@ -164,6 +190,7 @@ pub(crate) async fn list_courses(
                         imported_at_unix_seconds: course.imported_at_unix_seconds,
                         source: source_name(course.torrent_info_hash.as_deref()),
                         torrent_info_hash: course.torrent_info_hash,
+                        sharing: course.sharing,
                     })
                     .collect()
             })
@@ -340,6 +367,52 @@ fn validate_magnet(uri: &str) -> Result<String, CommandError> {
 }
 
 #[tauri::command]
+pub(crate) async fn get_course_sharing(
+    course_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<CourseSharingDto>, CommandError> {
+    let Some(sharing) = state.torrents.sharing.clone() else {
+        return Ok(None);
+    };
+    let profile = state.torrents.profile;
+    run_blocking(move || {
+        let available = sharing.available();
+        sharing
+            .statuses()
+            .map(|statuses| {
+                statuses
+                    .into_iter()
+                    .find(|status| status.course_id == course_id)
+                    .map(|status| CourseSharingDto::new(status, available, profile))
+            })
+            .map_err(|error| command_error("library_query_failed", error))
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn set_course_sharing(
+    course_id: String,
+    sharing: bool,
+    state: State<'_, AppState>,
+) -> Result<CourseSharingDto, CommandError> {
+    let service = state.torrents.sharing.clone().ok_or_else(|| CommandError {
+        code: "sharing_unavailable",
+        message: "sharing is unavailable because the torrent engine could not start".to_owned(),
+    })?;
+    service
+        .set(&course_id, sharing)
+        .await
+        .map_err(sharing_error)?;
+    get_course_sharing(course_id, state)
+        .await?
+        .ok_or_else(|| CommandError {
+            code: "not_torrent_course",
+            message: "only courses imported from a torrent can be shared".to_owned(),
+        })
+}
+
+#[tauri::command]
 pub(crate) async fn register_media(
     course_id: String,
     resource_id: String,
@@ -459,6 +532,42 @@ impl From<&TorrentImportSnapshot> for TorrentImportDto {
     }
 }
 
+fn sharing_error(error: SharingError) -> CommandError {
+    match error {
+        SharingError::NotTorrentCourse => command_error("not_torrent_course", error),
+        SharingError::Unavailable => command_error("sharing_unavailable", error),
+        // Engine details can name local directories; they never cross IPC.
+        SharingError::Engine(_) => CommandError {
+            code: "sharing_failed",
+            message: "the course could not be moved between torrent engines; nothing changed"
+                .to_owned(),
+        },
+        SharingError::Library(_) => command_error("library_unavailable", error),
+    }
+}
+
+impl CourseSharingDto {
+    fn new(status: CourseSharingStatus, available: bool, profile: NetworkProfile) -> Self {
+        let transfer = status.transfer.as_ref();
+        Self {
+            course_id: status.course_id,
+            available,
+            sharing: status.sharing,
+            network_profile: profile.name(),
+            state: transfer.map_or("inactive", |transfer| match transfer.state {
+                TransferState::Checking => "checking",
+                TransferState::Downloading => "downloading",
+                TransferState::Seeding => "ready",
+                TransferState::Failed => "failed",
+            }),
+            connected_peers: transfer.map_or(0, |transfer| transfer.connected_peers),
+            uploaded_bytes: transfer.map_or(0, |transfer| transfer.uploaded_bytes),
+            upload_bytes_per_second: transfer
+                .map_or(0, |transfer| transfer.upload_bytes_per_second),
+        }
+    }
+}
+
 const fn torrent_stage(stage: TorrentImportStage) -> &'static str {
     match stage {
         TorrentImportStage::Queued => "queued",
@@ -560,6 +669,53 @@ mod tests {
         assert_eq!(failed.failure.unwrap().code, "metadata_timeout");
         assert_eq!(source_name(None), "local");
         assert_eq!(source_name(Some("ab")), "torrent");
+    }
+
+    #[test]
+    fn sharing_status_maps_local_metrics_and_hides_engine_details() {
+        let idle = CourseSharingDto::new(
+            CourseSharingStatus {
+                course_id: "course_one".to_owned(),
+                sharing: false,
+                transfer: None,
+            },
+            true,
+            NetworkProfile::LocalNetwork,
+        );
+        assert_eq!(idle.state, "inactive");
+        assert_eq!(idle.network_profile, "local_network");
+        assert_eq!(idle.uploaded_bytes, 0);
+
+        let shared = CourseSharingDto::new(
+            CourseSharingStatus {
+                course_id: "course_one".to_owned(),
+                sharing: true,
+                transfer: Some(learning_application::TransferStats {
+                    info_hash: learning_application::InfoHash::parse(&"a".repeat(40)).unwrap(),
+                    state: TransferState::Seeding,
+                    verified_bytes: 10,
+                    total_bytes: 100,
+                    uploaded_bytes: 4096,
+                    upload_bytes_per_second: 512,
+                    downloaded_bytes: 0,
+                    connected_peers: 2,
+                    file_verified_bytes: vec![10, 0],
+                    failure: None,
+                }),
+            },
+            true,
+            NetworkProfile::Internet,
+        );
+        assert_eq!(shared.state, "ready");
+        assert_eq!(shared.connected_peers, 2);
+        assert_eq!(shared.uploaded_bytes, 4096);
+        assert_eq!(shared.upload_bytes_per_second, 512);
+
+        let failed = sharing_error(SharingError::Engine(
+            learning_application::EngineError::Engine("error opening /home/learner/x".to_owned()),
+        ));
+        assert_eq!(failed.code, "sharing_failed");
+        assert!(!failed.message.contains("/home/"));
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use torrent_metainfo::{
     DecodeError, PackageFile, TorrentError, TorrentOptions, Value, build_torrent, decode,
-    decode_dict_with_spans, encode, piece_length_for, verify_torrent,
+    decode_dict_with_spans, encode, info_hash, piece_length_for, verify_torrent,
 };
 
 struct Scratch(PathBuf);
@@ -193,6 +193,9 @@ fn identical_packages_build_identical_verifiable_torrents() {
 
     let verified = verify_torrent(&first.bytes, &scratch.0, &files, &never, &mut |_| {}).unwrap();
     assert_eq!(verified.info_hash, first.info_hash);
+    assert_eq!(info_hash(&first.bytes).unwrap(), first.info_hash);
+    assert!(info_hash(b"d4:name4:teste").is_err());
+    assert!(info_hash(b"not bencode").is_err());
     assert_eq!(verified.piece_count, 3);
     assert_eq!(verified.name, "course_rust-1.0.0");
 }

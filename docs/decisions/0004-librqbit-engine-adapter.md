@@ -36,7 +36,7 @@ AGENTS.md requires engine types to stay behind a capability port and every engin
 
 5. **Magnet resolution announces, but stores nothing.** librqbit's list-only add never announces to local service discovery or the DHT (`announce = !list_only` in `session.rs`), so a learner would only hear a seeder's periodic announcement, every five minutes. A magnet is therefore resolved with a live add that selects no file and uses `MetadataOnly`, a storage that creates no file and refuses every read and write. Once metadata is verified, the adapter waits up to 2 s, longer than discovery's one-second reply rate limit, for metadata peers to reconnect. It records them as `ResolvedTorrent::peers` and removes the torrent; that removal runs to completion even if the caller stops waiting. A torrent already active in the engine is answered from its own metadata without the network. `.torrent` bytes are still resolved offline with list-only.
 
-6. **Uploading is an explicit engine setting.** `EngineConfig::allow_uploads` maps to librqbit's session-wide `disable_upload` (Cargo feature `disable-upload`). With uploads off, the engine advertises no pieces, rejects piece requests, and refuses `seed`. librqbit has no per-torrent switch, so a per-course choice needs a separate session.
+6. **Uploading is an explicit engine setting.** `EngineConfig::allow_uploads` maps to librqbit's session-wide `disable_upload` (Cargo feature `disable-upload`). With uploads off, the engine advertises no pieces, rejects piece requests, and refuses `seed`. librqbit has no per-torrent switch, so per-course sharing uses a separate session: the Learner runs a private engine and a sharing engine, and `learning_application::TransferRouter` moves a course's transfer between them.
 
 ## Consequences
 

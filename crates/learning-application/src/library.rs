@@ -155,6 +155,20 @@ impl CourseLibrary {
         Ok(self.storage.course_torrent_info_hash(course_id)?)
     }
 
+    /// Store whether the learner shares a torrent-sourced course. Returns
+    /// `false` when the course is not torrent-sourced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on write failure.
+    pub fn set_course_sharing(
+        &mut self,
+        course_id: &str,
+        sharing: bool,
+    ) -> Result<bool, LibraryError> {
+        Ok(self.storage.set_course_sharing(course_id, sharing)?)
+    }
+
     /// Configured network profile; local network unless the learner chose otherwise.
     ///
     /// # Errors

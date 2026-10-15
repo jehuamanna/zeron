@@ -9,8 +9,8 @@ use std::{
 };
 
 use learning_application::{
-    CourseLibrary, ImportLimits, TorrentImportSnapshot, TorrentImportStage, TorrentImportTimeouts,
-    TorrentImports, TorrentSource,
+    CourseLibrary, CourseSharing, ImportLimits, SharingError, TorrentImportSnapshot,
+    TorrentImportStage, TorrentImportTimeouts, TorrentImports, TorrentSource, TransferRouter,
 };
 use publisher_application::{
     DistributionOptions, MetadataEdit, PublishJobs, PublisherDrafts, StructureEdit,
@@ -580,4 +580,177 @@ fn make_writable(path: &Path) {
             let _ = std::fs::set_permissions(&path, permissions);
         }
     }
+}
+
+/// Bytes of `course.json` a fresh engine obtains from `peer`, waiting until
+/// complete or `wait` elapses.
+async fn manifest_bytes_from(
+    root: &Path,
+    name: &str,
+    release: &Release,
+    peer: SocketAddr,
+    wait: Duration,
+) -> u64 {
+    let probe = loopback_engine(root, name, false).await;
+    let info_hash = probe
+        .fetch(FetchRequest {
+            metainfo: release.torrent.clone(),
+            content_root: root.join(format!("{name}-content")),
+            files: vec![0],
+            initial_peers: vec![peer],
+        })
+        .await
+        .unwrap();
+    let length = std::fs::metadata(release.package.join("course.json"))
+        .unwrap()
+        .len();
+    let deadline = Instant::now() + wait;
+    let mut verified = 0;
+    while Instant::now() < deadline {
+        verified = probe
+            .transfer(&info_hash)
+            .and_then(|stats| stats.file_verified_bytes.first().copied())
+            .unwrap_or(0);
+        if verified == length {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    probe.shutdown().await;
+    verified
+}
+
+struct Learner {
+    private: Arc<LibrqbitEngine>,
+    sharing: Arc<LibrqbitEngine>,
+    router: Arc<TransferRouter<LibrqbitEngine>>,
+    courses: CourseSharing<LibrqbitEngine>,
+}
+
+async fn learner(root: &Path, library: &Arc<Mutex<CourseLibrary>>, generation: u8) -> Learner {
+    let private = loopback_engine(root, &format!("private-{generation}"), false).await;
+    let sharing = loopback_engine(root, &format!("sharing-{generation}"), true).await;
+    let router = Arc::new(TransferRouter::new(
+        Arc::clone(&private),
+        Some(Arc::clone(&sharing)),
+    ));
+    let courses = CourseSharing::new(Arc::clone(&router), Arc::clone(library));
+    courses.load().unwrap();
+    Learner {
+        private,
+        sharing,
+        router,
+        courses,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn only_courses_the_learner_shares_are_served_and_the_choice_survives_restart() {
+    let scratch = Scratch::new("sharing");
+    let release = publish(&scratch.0);
+    let seeder = loopback_engine(&scratch.0, "seeder", true).await;
+    let seeder_address = seed(&seeder, release.torrent.clone(), release.package.clone()).await;
+    let library = Arc::new(Mutex::new(
+        CourseLibrary::open(&scratch.0.join("library.sqlite3"), ImportLimits::default()).unwrap(),
+    ));
+    let first = learner(&scratch.0, &library, 1).await;
+    let importer = imports(
+        Arc::clone(&first.router),
+        &library,
+        scratch.0.join("courses"),
+        TorrentImportTimeouts::default(),
+    );
+    let magnet = format!("magnet:?xt=urn:btih:{}", release.info_hash);
+    let (finished, _) = run(
+        &importer,
+        TorrentSource::Magnet(magnet),
+        vec![seeder_address],
+    )
+    .await;
+    let course_id = finished.course_id.expect("imported");
+    let info_hash = InfoHash::parse(&release.info_hash).unwrap();
+    seeder.shutdown().await;
+
+    // Imported courses stay private: nothing is served.
+    assert!(first.private.transfer(&info_hash).is_some());
+    assert!(first.sharing.transfer(&info_hash).is_none());
+    let private_address = first.private.listen_address().unwrap();
+    let served = manifest_bytes_from(
+        &scratch.0,
+        "probe-private",
+        &release,
+        private_address,
+        Duration::from_secs(4),
+    )
+    .await;
+    assert_eq!(served, 0);
+
+    // Sharing moves the transfer and re-checks course.json from disk (the seeder is gone).
+    first.courses.set(&course_id, true).await.unwrap();
+    assert!(first.private.transfer(&info_hash).is_none());
+    assert!(first.sharing.transfer(&info_hash).is_some());
+    let sharing_address = first.sharing.listen_address().unwrap();
+    let served = manifest_bytes_from(
+        &scratch.0,
+        "probe-sharing",
+        &release,
+        sharing_address,
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(
+        served,
+        std::fs::metadata(release.package.join("course.json"))
+            .unwrap()
+            .len()
+    );
+    let status = first.courses.statuses().unwrap().remove(0);
+    assert!(status.sharing);
+    assert!(status.transfer.unwrap().uploaded_bytes >= served);
+    assert!(library.lock().unwrap().courses().unwrap()[0].sharing);
+    first.private.shutdown().await;
+    first.sharing.shutdown().await;
+
+    // A restart restores the transfer into the sharing engine.
+    let second = learner(&scratch.0, &library, 2).await;
+    let restorer = imports(
+        Arc::clone(&second.router),
+        &library,
+        scratch.0.join("courses"),
+        TorrentImportTimeouts::default(),
+    );
+    assert_eq!(restorer.restore().await, 1);
+    assert!(second.sharing.transfer(&info_hash).is_some());
+    assert!(second.private.transfer(&info_hash).is_none());
+
+    // Stopping sharing moves it back and is stored.
+    second.courses.set(&course_id, false).await.unwrap();
+    assert!(second.private.transfer(&info_hash).is_some());
+    assert!(second.sharing.transfer(&info_hash).is_none());
+    assert!(!library.lock().unwrap().courses().unwrap()[0].sharing);
+    assert!(matches!(
+        second.courses.set("course_unknown", true).await,
+        Err(SharingError::NotTorrentCourse)
+    ));
+    second.private.shutdown().await;
+    second.sharing.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sharing_is_refused_without_a_sharing_engine() {
+    let scratch = Scratch::new("no-sharing-engine");
+    let library = Arc::new(Mutex::new(
+        CourseLibrary::open_in_memory(ImportLimits::default()).unwrap(),
+    ));
+    let private = loopback_engine(&scratch.0, "private", false).await;
+    let router = Arc::new(TransferRouter::new(Arc::clone(&private), None));
+    let courses = CourseSharing::new(Arc::clone(&router), Arc::clone(&library));
+    assert!(!courses.available());
+    let info_hash = InfoHash::parse(&"d".repeat(40)).unwrap();
+    assert!(matches!(
+        router.set_shared(&info_hash, true).await,
+        Err(EngineError::UnsupportedCapability(_))
+    ));
+    router.set_shared(&info_hash, false).await.unwrap();
+    private.shutdown().await;
 }

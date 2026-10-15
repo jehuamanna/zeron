@@ -13,6 +13,7 @@ export interface CourseSummary {
   importedAtUnixSeconds: number;
   source: CourseSource;
   torrentInfoHash: string | null;
+  sharing: boolean;
 }
 
 export interface ImportReceipt {
@@ -26,6 +27,18 @@ export interface ImportReceipt {
 export interface Readiness {
   state: "ready";
   torrentImport: "ready" | "unavailable";
+  sharing: "ready" | "unavailable";
+}
+
+export interface CourseSharing {
+  courseId: string;
+  available: boolean;
+  sharing: boolean;
+  networkProfile: "loopback" | "local_network" | "internet";
+  state: "inactive" | "checking" | "downloading" | "ready" | "failed";
+  connectedPeers: number;
+  uploadedBytes: number;
+  uploadBytesPerSecond: number;
 }
 
 export type TorrentImportStage =
@@ -106,6 +119,9 @@ export const libraryApi = {
   importMagnet: (uri: string) => invoke<TorrentImport>("import_magnet", { uri }),
   getTorrentImport: (jobId: string) => invoke<TorrentImport | null>("get_torrent_import", { jobId }),
   cancelTorrentImport: (jobId: string) => invoke<boolean>("cancel_torrent_import", { jobId }),
+  getCourseSharing: (courseId: string) => invoke<CourseSharing | null>("get_course_sharing", { courseId }),
+  setCourseSharing: (courseId: string, sharing: boolean) =>
+    invoke<CourseSharing>("set_course_sharing", { courseId, sharing }),
   onTorrentImport: (handler: (job: TorrentImport) => void) =>
     listen<TorrentImport>("torrent-import", (event) => handler(event.payload)),
 };

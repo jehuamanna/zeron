@@ -3,6 +3,7 @@ import { BookOpen, ChevronLeft, Download, File, HardDrive, Magnet, Play, Search 
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
+import { CourseSharingCard } from "../features/sharing/CourseSharingCard";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
 import { asCommandError, libraryApi } from "../services/library";
 import { useLibraryUi } from "../stores/library";
@@ -87,6 +88,7 @@ export function App() {
                         This course came from a torrent. Zeron has verified its outline (course.json) only; lesson media has not been downloaded, so nothing can be played yet.
                       </p>
                     ) : null}
+                    {torrentCourse ? <CourseSharingCard courseId={detail.data.courseId} /> : null}
                     <div className="mt-10 rounded-3xl border border-white/10 bg-black/20 p-8">
                       {mediaUrl ? (
                         <video key={mediaUrl} className="aspect-video w-full rounded-2xl bg-black" src={mediaUrl} controls autoPlay preload="metadata">
@@ -179,9 +181,14 @@ export function App() {
                     <div className="grid size-11 place-items-center rounded-xl bg-cyan-300/10 text-cyan-300">
                       {course.source === "torrent" ? <Magnet size={20} /> : <HardDrive size={20} />}
                     </div>
-                    <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-slate-400">
-                      {course.source === "torrent" ? "Torrent · outline only" : "Local · verified"}
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-slate-400">
+                        {course.source === "torrent" ? "Torrent · outline only" : "Local · verified"}
+                      </span>
+                      {course.sharing ? (
+                        <span className="rounded-full bg-cyan-300/10 px-2.5 py-1 text-xs text-cyan-200">Sharing</span>
+                      ) : null}
+                    </div>
                   </div>
                   <h2 className="text-lg font-semibold">{course.title}</h2>
                   <p className="mt-1 text-sm text-slate-400">{course.publisherName}</p>

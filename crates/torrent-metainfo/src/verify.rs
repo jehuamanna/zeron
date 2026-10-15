@@ -26,6 +26,19 @@ pub struct VerifiedTorrent {
     pub total_length: u64,
 }
 
+/// Lowercase hex v1 info hash: the SHA-1 of the raw `info` bytes as they
+/// appear in `torrent`, whether or not they are canonically encoded.
+///
+/// # Errors
+/// Returns a decode error, or [`TorrentError::Verification`] without an `info` dictionary.
+pub fn info_hash(torrent: &[u8]) -> Result<String, TorrentError> {
+    let top = decode_dict_with_spans(torrent)?;
+    let (_, span) = top
+        .get(b"info".as_slice())
+        .ok_or(TorrentError::Verification("missing info dictionary"))?;
+    Ok(hex(&Sha1::digest(&torrent[span.clone()])))
+}
+
 /// Decode `torrent` strictly and check that it describes exactly `expected`
 /// files, without reading package bytes.
 ///

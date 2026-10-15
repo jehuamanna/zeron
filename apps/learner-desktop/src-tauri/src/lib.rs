@@ -8,7 +8,8 @@ use std::{
 };
 
 use learning_application::{
-    CourseLibrary, ImportLimits, NetworkProfile, TorrentImportTimeouts, TorrentImports,
+    CourseLibrary, CourseSharing, ImportLimits, NetworkProfile, TorrentImportTimeouts,
+    TorrentImports, TransferRouter,
 };
 use media_gateway::{GatewayLimits, MediaGateway};
 use tauri::{Manager, RunEvent};
@@ -20,11 +21,16 @@ pub(crate) struct AppState {
     pub(crate) torrents: Torrents,
 }
 
+pub(crate) type Router = TransferRouter<LibrqbitEngine>;
+
 /// Torrent import is optional at runtime: local courses keep working if the
-/// engine cannot start.
+/// engines cannot start. Courses stay in a private engine that never uploads
+/// unless the learner shares them; shared courses move to a second engine.
 pub(crate) struct Torrents {
-    pub(crate) engine: Option<Arc<LibrqbitEngine>>,
-    pub(crate) imports: Option<Arc<TorrentImports<LibrqbitEngine>>>,
+    pub(crate) profile: NetworkProfile,
+    pub(crate) engines: Vec<Arc<LibrqbitEngine>>,
+    pub(crate) imports: Option<Arc<TorrentImports<Router>>>,
+    pub(crate) sharing: Option<Arc<CourseSharing<LibrqbitEngine>>>,
 }
 
 /// Start the learner desktop application.
@@ -47,6 +53,9 @@ pub fn run() {
             let media_gateway =
                 tauri::async_runtime::block_on(MediaGateway::start(GatewayLimits::default()))?;
             let torrents = start_torrents(profile, &app_data, &library);
+            if let Some(sharing) = &torrents.sharing {
+                sharing.load()?;
+            }
             if let Some(imports) = torrents.imports.clone() {
                 tauri::async_runtime::spawn(async move {
                     let _ = imports.restore().await;
@@ -69,6 +78,8 @@ pub fn run() {
             commands::import_magnet,
             commands::get_torrent_import,
             commands::cancel_torrent_import,
+            commands::get_course_sharing,
+            commands::set_course_sharing,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Zeron Learner Desktop");
@@ -76,7 +87,7 @@ pub fn run() {
         if matches!(event, RunEvent::Exit) {
             let state = app_handle.state::<AppState>();
             state.media_gateway.shutdown();
-            if let Some(engine) = state.torrents.engine.clone() {
+            for engine in state.torrents.engines.clone() {
                 tauri::async_runtime::block_on(engine.shutdown());
             }
         }
@@ -88,35 +99,39 @@ fn start_torrents(
     app_data: &std::path::Path,
     library: &Arc<Mutex<CourseLibrary>>,
 ) -> Torrents {
-    let started = tauri::async_runtime::block_on(LibrqbitEngine::start(EngineConfig {
+    let start = |directory: &str, allow_uploads: bool| {
+        tauri::async_runtime::block_on(LibrqbitEngine::start(EngineConfig {
+            profile,
+            state_directory: app_data.join(directory),
+            listen_port: None,
+            allow_uploads,
+        }))
+        .map(Arc::new)
+        // The detail can name local directories, so it stays in the process log.
+        .inspect_err(|error| eprintln!("torrent engine `{directory}` unavailable: {error}"))
+        .ok()
+    };
+    let Some(private) = start("engine", false) else {
+        return Torrents {
+            profile,
+            engines: Vec::new(),
+            imports: None,
+            sharing: None,
+        };
+    };
+    let shared = start("engine-sharing", true);
+    let router = Arc::new(TransferRouter::new(Arc::clone(&private), shared.clone()));
+    let courses_root: PathBuf = app_data.join("courses");
+    Torrents {
         profile,
-        state_directory: app_data.join("engine"),
-        listen_port: None,
-        // Learners share nothing unless they opt in.
-        allow_uploads: false,
-    }));
-    match started {
-        Ok(engine) => {
-            let engine = Arc::new(engine);
-            let courses_root: PathBuf = app_data.join("courses");
-            Torrents {
-                imports: Some(Arc::new(TorrentImports::new(
-                    Arc::clone(&engine),
-                    Arc::clone(library),
-                    courses_root,
-                    ImportLimits::default(),
-                    TorrentImportTimeouts::default(),
-                ))),
-                engine: Some(engine),
-            }
-        }
-        Err(error) => {
-            // The detail can name local directories, so it stays in the process log.
-            eprintln!("torrent engine unavailable: {error}");
-            Torrents {
-                engine: None,
-                imports: None,
-            }
-        }
+        engines: std::iter::once(private).chain(shared).collect(),
+        imports: Some(Arc::new(TorrentImports::new(
+            Arc::clone(&router),
+            Arc::clone(library),
+            courses_root,
+            ImportLimits::default(),
+            TorrentImportTimeouts::default(),
+        ))),
+        sharing: Some(Arc::new(CourseSharing::new(router, Arc::clone(library)))),
     }
 }

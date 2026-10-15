@@ -19,6 +19,8 @@ vi.mock("../services/library", async (importOriginal) => ({
     getTorrentImport: vi.fn(),
     cancelTorrentImport: vi.fn(),
     onTorrentImport: vi.fn(() => Promise.resolve(() => {})),
+    getCourseSharing: vi.fn(() => Promise.resolve(null)),
+    setCourseSharing: vi.fn(),
   },
 }));
 
@@ -40,7 +42,7 @@ describe("learner library", () => {
   });
 
   it("shows a durable course summary without a filesystem path", async () => {
-    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
     vi.mocked(libraryApi.list).mockResolvedValue([
       {
         courseId: "course_one",
@@ -52,6 +54,7 @@ describe("learner library", () => {
         importedAtUnixSeconds: 1,
         source: "local",
         torrentInfoHash: null,
+        sharing: false,
       },
     ]);
 
@@ -62,7 +65,7 @@ describe("learner library", () => {
   });
 
   it("shows the recoverable empty-library state", async () => {
-    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
     vi.mocked(libraryApi.list).mockResolvedValue([]);
 
     const view = renderApp();
@@ -70,7 +73,7 @@ describe("learner library", () => {
   });
 
   it("opens a path-free course outline", async () => {
-    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
     vi.mocked(libraryApi.list).mockResolvedValue([
       {
         courseId: "course_one",
@@ -82,6 +85,7 @@ describe("learner library", () => {
         importedAtUnixSeconds: 1,
         source: "local",
         torrentInfoHash: null,
+        sharing: false,
       },
     ]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
@@ -131,7 +135,7 @@ describe("learner library", () => {
 
   it("requests an opaque URL when a video is selected", async () => {
     useLibraryUi.getState().selectCourse("course_one");
-    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
     vi.mocked(libraryApi.list).mockResolvedValue([]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
       courseId: "course_one", courseVersion: "1.0.0", title: "Media Course", description: null,
@@ -156,7 +160,7 @@ describe("learner library", () => {
 
   it("labels torrent courses and withholds playback until media is downloaded", async () => {
     useLibraryUi.getState().selectCourse("course_torrent");
-    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
     vi.mocked(libraryApi.list).mockResolvedValue([]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
       courseId: "course_torrent", courseVersion: "1.0.0", title: "Torrent Course", description: null,
@@ -174,18 +178,19 @@ describe("learner library", () => {
   });
 
   it("shows the source of each course in the library", async () => {
-    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
     const summary = {
       courseVersion: "1.0.0", publisherName: "Zeron Tests", language: "en", totalResourceBytes: 1, importedAtUnixSeconds: 1,
     };
     vi.mocked(libraryApi.list).mockResolvedValue([
-      { ...summary, courseId: "local", title: "Local Course", source: "local", torrentInfoHash: null },
-      { ...summary, courseId: "torrent", title: "Torrent Course", source: "torrent", torrentInfoHash: "ab".repeat(20) },
+      { ...summary, courseId: "local", title: "Local Course", source: "local", torrentInfoHash: null, sharing: false },
+      { ...summary, courseId: "torrent", title: "Torrent Course", source: "torrent", torrentInfoHash: "ab".repeat(20), sharing: true },
     ]);
 
     const view = renderApp();
     await waitFor(() => expect(view.container.textContent).toContain("Torrent Course"));
     expect(view.container.textContent).toContain("Local · verified");
     expect(view.container.textContent).toContain("Torrent · outline only");
+    expect(view.container.textContent).toContain("Sharing");
   });
 });
