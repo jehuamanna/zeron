@@ -172,7 +172,7 @@ function ReleaseRow({ release, seeding }: { release: Release; seeding: SeedingSt
             {new Date(release.publishedAtUnixSeconds * 1000).toLocaleDateString()} · {count(release.fileCount, "file")} · {formatBytes(release.totalBytes)}
           </span>
         </span>
-        <span className="text-xs text-slate-400">{seedingLabel(seeding)}</span>
+        <span className="text-xs text-slate-400">{release.files === "deleted" ? "Files deleted" : seedingLabel(seeding)}</span>
         <span className={`rounded-full px-2.5 py-0.5 text-xs capitalize ${statusStyles[release.status]}`}>{release.status}</span>
       </button>
       {open ? <ReleaseDetailsPanel id={detailsId} release={release} seeding={seeding} /> : null}

@@ -7,13 +7,13 @@ import { CourseList, groupCourses } from "./CourseList";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn(), deleteDraft: vi.fn(), archiveRelease: vi.fn() },
+  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn(), deleteDraft: vi.fn(), archiveRelease: vi.fn(), deleteReleaseFiles: vi.fn() },
 }));
 
 const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=rust-systems";
 
 function release(overrides: Partial<Release>): Release {
-  return { releaseId: "release_2", courseId: "course_rust", courseVersion: "1.1.0", title: "Rust Systems", infoHash: "0123456789abcdef0123456789abcdef01234567", magnet, pieceLength: 16384, pieceCount: 2, fileCount: 3, totalBytes: 2048, publishedAtUnixSeconds: 1_760_000_000, status: "published", ...overrides };
+  return { releaseId: "release_2", courseId: "course_rust", courseVersion: "1.1.0", title: "Rust Systems", infoHash: "0123456789abcdef0123456789abcdef01234567", magnet, pieceLength: 16384, pieceCount: 2, fileCount: 3, totalBytes: 2048, publishedAtUnixSeconds: 1_760_000_000, status: "published", files: "present", ...overrides };
 }
 
 function draft(overrides: Partial<DraftSummary>): DraftSummary {
@@ -213,5 +213,52 @@ describe("course management", () => {
     fireEvent.click(within(rust).getByRole("button", { name: "Archive release" }));
     await waitFor(() => expect(within(rust).getByRole("alertdialog").textContent).toContain("could not stop the release"));
     expect(within(rust).getByRole("button", { name: /Version 1.1.0/ }).textContent).toContain("published");
+  });
+
+  it("deletes an archived release's files only after the version is typed", async () => {
+    const archived = release({ status: "archived" });
+    vi.mocked(publisherApi.listReleases).mockResolvedValue([archived, ...releases.slice(1)]);
+    vi.mocked(publisherApi.deleteReleaseFiles)
+      .mockRejectedValueOnce({ code: "release_delete_failed", message: "removing release files: permission denied" })
+      .mockImplementationOnce(async () => {
+        const deleted = release({ status: "archived", files: "deleted" });
+        vi.mocked(publisherApi.listReleases).mockResolvedValue([deleted, ...releases.slice(1)]);
+        return deleted;
+      });
+    const { view } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.1.0/ }));
+    expect(within(rust).queryByRole("button", { name: /Archive release/ })).toBeNull();
+    fireEvent.click(within(rust).getByRole("button", { name: /Delete files/ }));
+    const dialog = within(rust).getByRole("alertdialog", { name: "Delete the files of version 1.1.0?" });
+    expect(dialog.textContent).toContain("cannot be undone");
+    const confirm = within(dialog).getByRole("button", { name: "Delete files permanently" });
+    const typed = within(dialog).getByLabelText("Type 1.1.0 to confirm");
+    expect(confirm.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(typed, { target: { value: "1.1" } });
+    expect(confirm.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(typed, { target: { value: "1.1.0" } });
+    expect(confirm.hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(confirm);
+    await waitFor(() => expect(within(dialog).getByRole("alert").textContent).toContain("permission denied"));
+    fireEvent.click(confirm);
+    await waitFor(() => expect(rust.textContent).toContain("its files were deleted"));
+    expect(vi.mocked(publisherApi.deleteReleaseFiles).mock.calls).toEqual([["release_2", "1.1.0"], ["release_2", "1.1.0"]]);
+    expect(within(rust).queryByRole("button", { name: /Export .torrent/ })).toBeNull();
+    expect(within(rust).queryByRole("list", { name: "Release files" })).toBeNull();
+    expect(within(rust).getByRole("button", { name: /Version 1.1.0/ }).textContent).toContain("Files deleted");
+    expect((within(rust).getByLabelText("Magnet link") as HTMLInputElement).value).toBe(magnet);
+  });
+
+  it("offers a retry for an interrupted file deletion and never reads its torrent", async () => {
+    vi.mocked(publisherApi.listReleases).mockResolvedValue([release({ status: "archived", files: "deleting" })]);
+    vi.mocked(publisherApi.listDrafts).mockResolvedValue([]);
+    const { view } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.1.0/ }));
+    expect(rust.textContent).toContain("did not finish");
+    expect(within(rust).getByRole("button", { name: /Delete files/ })).toBeTruthy();
+    expect(publisherApi.getReleaseDetails).not.toHaveBeenCalled();
   });
 });

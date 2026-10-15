@@ -134,7 +134,7 @@ describe("release preparation", () => {
     vi.mocked(publisherApi.activateRelease).mockRejectedValueOnce({ code: "version_already_released", message: "version 1.0.0 was already released; choose a new version" });
     vi.mocked(publisherApi.activateRelease).mockImplementationOnce(async () => {
       server = job({ sequence: 5, stage: "PUBLISHED", prepared, releaseId: "release_one" });
-      return { releaseId: "release_one", courseId: "course_one", courseVersion: "1.0.0", title: "Course", infoHash: prepared.infoHash, magnet: prepared.magnet, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10, publishedAtUnixSeconds: 1, status: "published" };
+      return { releaseId: "release_one", courseId: "course_one", courseVersion: "1.0.0", title: "Course", infoHash: prepared.infoHash, magnet: prepared.magnet, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10, publishedAtUnixSeconds: 1, status: "published", files: "present" };
     });
     const view = renderPanel();
     fireEvent.click(await waitFor(() => view.getByRole("button", { name: /publish release/i })));

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, Copy, Download } from "lucide-react";
+import { Archive, Check, Copy, Download, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { copyText } from "../../lib/clipboard";
@@ -11,7 +11,12 @@ import { seedingLabel } from "./labels";
 type CopyState = "idle" | "copied" | "manual";
 
 export function ReleaseDetailsPanel({ id, release, seeding }: { id: string; release: Release; seeding: SeedingStatus | "unavailable" | undefined }) {
-  const details = useQuery({ queryKey: ["publisher-release-details", release.releaseId], queryFn: () => publisherApi.getReleaseDetails(release.releaseId) });
+  const filesPresent = release.files === "present";
+  const details = useQuery({
+    queryKey: ["publisher-release-details", release.releaseId],
+    queryFn: () => publisherApi.getReleaseDetails(release.releaseId),
+    enabled: filesPresent,
+  });
   const magnetField = useRef<HTMLInputElement>(null);
   const [copy, setCopy] = useState<CopyState>("idle");
   const exportTorrent = useMutation({ mutationFn: () => publisherApi.exportReleaseTorrent(release.releaseId) });
@@ -58,16 +63,16 @@ export function ReleaseDetailsPanel({ id, release, seeding }: { id: string; rele
         <dd className="text-slate-300">{new Date(release.publishedAtUnixSeconds * 1000).toLocaleString()}</dd>
       </dl>
 
-      <div className="flex flex-wrap items-center gap-3">
+      {filesPresent ? <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={() => exportTorrent.mutate()} disabled={exportTorrent.isPending} className="flex items-center gap-2 rounded-xl bg-amber-300 px-3 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50">
           <Download size={14} /> {exportTorrent.isPending ? "Exporting…" : "Export .torrent…"}
         </button>
         {exportTorrent.isSuccess && exportTorrent.data ? <p role="status" className="text-xs text-emerald-300">Torrent file saved.</p> : null}
         {exportTorrent.isError ? <p role="alert" className="text-xs text-red-300">{asCommandError(exportTorrent.error)?.message ?? "The torrent file could not be exported."}</p> : null}
-      </div>
+      </div> : null}
 
       {release.status === "archived" ? (
-        <p className="text-xs text-slate-400">Archived. This release is no longer seeded; its files are kept on this computer.</p>
+        <DeleteFiles release={release} />
       ) : archiving ? (
         <ConfirmAction
           title={`Archive version ${release.courseVersion}?`}
@@ -86,7 +91,7 @@ export function ReleaseDetailsPanel({ id, release, seeding }: { id: string; rele
         </button>
       )}
 
-      <div>
+      {filesPresent ? <div>
         <h4 className="text-xs font-semibold text-slate-400">Files</h4>
         {details.isPending ? <p className="mt-1 text-xs text-slate-500">Reading the release torrent…</p> : details.isError ? (
           <p role="alert" className="mt-1 text-xs text-red-300">{asCommandError(details.error)?.message ?? "The release files could not be read."}</p>
@@ -100,7 +105,54 @@ export function ReleaseDetailsPanel({ id, release, seeding }: { id: string; rele
             ))}
           </ul>
         )}
-      </div>
+      </div> : null}
+    </div>
+  );
+}
+
+function DeleteFiles({ release }: { release: Release }) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState("");
+  const remove = useMutation({
+    mutationFn: () => publisherApi.deleteReleaseFiles(release.releaseId, typed),
+    onSuccess: () => {
+      setConfirming(false);
+      queryClient.removeQueries({ queryKey: ["publisher-release-details", release.releaseId] });
+      void queryClient.invalidateQueries({ queryKey: ["publisher-releases"] });
+    },
+  });
+  if (release.files === "deleted") {
+    return <p className="text-xs text-slate-400">Archived, and its files were deleted. The record is kept so version {release.courseVersion} is never published again.</p>;
+  }
+  const inputId = `delete-files-${release.releaseId}`;
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-slate-400">
+        {release.files === "deleting"
+          ? "Archived. Deleting its files did not finish; it is retried when Zeron Publisher starts, or you can retry now."
+          : "Archived. This release is no longer seeded; its files are kept on this computer."}
+      </p>
+      {confirming ? (
+        <ConfirmAction
+          title={`Delete the files of version ${release.courseVersion}?`}
+          confirmLabel="Delete files permanently"
+          pendingLabel="Deleting…"
+          pending={remove.isPending}
+          confirmDisabled={typed.trim() !== release.courseVersion}
+          error={remove.isError ? (asCommandError(remove.error)?.message ?? "The release files could not be deleted.") : null}
+          onConfirm={() => remove.mutate()}
+          onCancel={() => { remove.reset(); setTyped(""); setConfirming(false); }}
+        >
+          <p>This removes {formatBytes(release.totalBytes)} of package and torrent files from this computer. It cannot be undone, and this computer can no longer seed or export the release. The release record stays, so the version is never reused.</p>
+          <label htmlFor={inputId} className="mt-3 block text-xs font-semibold text-slate-300">Type {release.courseVersion} to confirm</label>
+          <input id={inputId} value={typed} onChange={(event) => setTyped(event.target.value)} autoComplete="off" spellCheck={false} className="mt-1 w-40 rounded-lg border border-white/10 bg-black/30 px-2 py-1 font-mono text-xs text-slate-100" />
+        </ConfirmAction>
+      ) : (
+        <button type="button" onClick={() => setConfirming(true)} className="flex items-center gap-2 rounded-xl border border-red-400/30 px-3 py-2 text-xs text-red-200 hover:bg-red-400/10">
+          <Trash2 size={14} /> Delete files…
+        </button>
+      )}
     </div>
   );
 }

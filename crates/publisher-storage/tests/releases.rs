@@ -3,7 +3,9 @@
 use std::fs;
 
 use course_publisher::{DraftCourse, DraftMetadata};
-use publisher_storage::{NewRelease, PublisherStorage, PublisherStorageError, ReleaseStatus};
+use publisher_storage::{
+    NewRelease, PublisherStorage, PublisherStorageError, ReleaseFiles, ReleaseStatus,
+};
 
 fn release(release_id: &str, version: &str) -> NewRelease {
     NewRelease {
@@ -141,7 +143,7 @@ fn version_one_databases_migrate_without_losing_drafts() {
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
     let reopened = PublisherStorage::open(&database).unwrap();
     assert_eq!(reopened.releases().unwrap().len(), 1);
     fs::remove_file(database).unwrap();
@@ -221,4 +223,90 @@ fn archiving_drops_the_seeding_intent_and_keeps_other_releases() {
 
     assert!(storage.delete_draft("draft_one", 0).unwrap());
     assert_eq!(storage.releases().unwrap().len(), 2);
+}
+
+#[test]
+fn version_three_releases_migrate_with_their_files_present() {
+    let database = std::env::temp_dir().join(format!(
+        "zeron-publisher-migrate-v3-{}.sqlite3",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&database);
+    {
+        let mut storage = PublisherStorage::open(&database).unwrap();
+        storage
+            .insert_release(release("release_1", "1.0.0"))
+            .unwrap();
+    }
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE releases DROP COLUMN files_state;
+             PRAGMA user_version = 3;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let mut storage = PublisherStorage::open(&database).unwrap();
+    let migrated = storage.release("release_1").unwrap().unwrap();
+    assert_eq!(migrated.files, ReleaseFiles::Present);
+    assert_eq!(migrated.release, release("release_1", "1.0.0"));
+    assert!(
+        storage
+            .begin_release_file_deletion("release_1")
+            .unwrap()
+            .is_none()
+    );
+    drop(storage);
+    fs::remove_file(database).unwrap();
+}
+
+#[test]
+fn file_deletion_is_recorded_before_and_after_removal() {
+    let mut storage = PublisherStorage::open_in_memory().unwrap();
+    storage
+        .insert_release(release("release_1", "1.0.0"))
+        .unwrap();
+    assert!(
+        storage
+            .begin_release_file_deletion("release_1")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        storage
+            .begin_release_file_deletion("release_missing")
+            .unwrap()
+            .is_none()
+    );
+    storage.archive_release("release_1").unwrap();
+
+    let deleting = storage
+        .begin_release_file_deletion("release_1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(deleting.files, ReleaseFiles::Deleting);
+    assert_eq!(storage.releases_deleting_files().unwrap(), ["release_1"]);
+    assert_eq!(
+        storage
+            .begin_release_file_deletion("release_1")
+            .unwrap()
+            .unwrap()
+            .files,
+        ReleaseFiles::Deleting
+    );
+    storage.finish_release_file_deletion("release_1").unwrap();
+    assert_eq!(storage.releases_deleting_files().unwrap().len(), 0);
+    let deleted = storage.release("release_1").unwrap().unwrap();
+    assert_eq!(deleted.files, ReleaseFiles::Deleted);
+    assert_eq!(deleted.status, ReleaseStatus::Archived);
+    assert_eq!(
+        storage
+            .begin_release_file_deletion("release_1")
+            .unwrap()
+            .unwrap()
+            .files,
+        ReleaseFiles::Deleted
+    );
+    assert!(storage.version_released("course_one", "1.0.0").unwrap());
 }

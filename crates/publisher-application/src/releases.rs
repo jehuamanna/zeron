@@ -4,7 +4,7 @@ use std::{
 };
 
 use course_publisher::PackagingCancellation;
-use publisher_storage::{NewRelease, ReleaseRecord};
+use publisher_storage::{NewRelease, ReleaseFiles, ReleaseRecord, ReleaseStatus};
 use torrent_metainfo::{
     HashProgress, PackageFile, TorrentError, file_table, info_hash, inspect_torrent, verify_torrent,
 };
@@ -16,6 +16,7 @@ use crate::{
 
 const RELEASE_PREFIX: &str = "release_";
 const PARTIAL_SUFFIX: &str = ".partial";
+const DELETING_SUFFIX: &str = ".deleting";
 /// Package directory inside a release directory.
 pub const RELEASE_PACKAGE_DIRECTORY: &str = "package";
 /// Torrent file inside a release directory.
@@ -177,6 +178,71 @@ impl PublisherDrafts {
             .ok_or(DraftServiceError::InvalidAttempt("unknown release"))
     }
 
+    /// Permanently remove an archived release's directory. The record stays
+    /// as history, so the version can never be reused.
+    ///
+    /// `confirmation` must equal the release's course version, so a stray
+    /// call cannot delete files. The deletion is recorded first, then the
+    /// directory is renamed out of place and removed without following
+    /// symbolic links. [`Self::recover_release_deletions`] finishes a
+    /// deletion interrupted by a crash. Calling this again on a deleted
+    /// release returns its record.
+    ///
+    /// # Errors
+    /// Returns [`DraftServiceError::InvalidAttempt`] for unknown releases,
+    /// [`DraftServiceError::ReleaseNotArchived`] for releases still in use,
+    /// [`DraftServiceError::InvalidInput`] for a wrong confirmation, or an
+    /// I/O or storage failure.
+    pub fn delete_release_files(
+        &mut self,
+        releases_root: &Path,
+        release_id: &str,
+        confirmation: &str,
+    ) -> Result<ReleaseRecord, DraftServiceError> {
+        let unknown = || DraftServiceError::InvalidAttempt("unknown release");
+        release_directory(releases_root, release_id).ok_or_else(unknown)?;
+        let record = self.storage.release(release_id)?.ok_or_else(unknown)?;
+        if record.status != ReleaseStatus::Archived {
+            return Err(DraftServiceError::ReleaseNotArchived);
+        }
+        if record.files == ReleaseFiles::Deleted {
+            return Ok(record);
+        }
+        if confirmation.trim() != record.release.course_version {
+            return Err(DraftServiceError::InvalidInput {
+                field: "confirmation".to_owned(),
+                message: "must match the course version",
+            });
+        }
+        self.storage
+            .begin_release_file_deletion(release_id)?
+            .ok_or(DraftServiceError::ReleaseNotArchived)?;
+        remove_release_tree(releases_root, release_id)?;
+        self.storage.finish_release_file_deletion(release_id)?;
+        self.storage.release(release_id)?.ok_or_else(unknown)
+    }
+
+    /// Finish file deletions interrupted by a crash. Call once at startup,
+    /// after [`Self::recover_releases`].
+    ///
+    /// # Errors
+    /// Returns a storage or I/O failure; remaining deletions are retried on
+    /// the next start.
+    pub fn recover_release_deletions(
+        &mut self,
+        releases_root: &Path,
+    ) -> Result<usize, DraftServiceError> {
+        let pending = self.storage.releases_deleting_files()?;
+        for release_id in &pending {
+            if release_directory(releases_root, release_id).is_none() {
+                continue;
+            }
+            remove_release_tree(releases_root, release_id)?;
+            self.storage.finish_release_file_deletion(release_id)?;
+        }
+        Ok(pending.len())
+    }
+
     /// The torrent of a recorded release and the files it declares.
     ///
     /// The bytes are read with a size bound and their info hash must match
@@ -265,6 +331,61 @@ pub struct ReleaseTorrent {
 #[must_use]
 pub fn release_directory(releases_root: &Path, release_id: &str) -> Option<PathBuf> {
     is_release_id(release_id).then(|| releases_root.join(release_id))
+}
+
+/// Move `<root>/<release_id>` aside to `<release_id>.deleting`, then remove
+/// it. A symbolic link in either place is removed itself, never followed;
+/// `fs::remove_dir_all` does not follow links inside the tree.
+fn remove_release_tree(releases_root: &Path, release_id: &str) -> Result<(), DraftServiceError> {
+    let target = release_directory(releases_root, release_id)
+        .ok_or(DraftServiceError::InvalidAttempt("unknown release"))?;
+    let aside = releases_root.join(format!("{release_id}{DELETING_SUFFIX}"));
+    match fs::symlink_metadata(&target) {
+        Ok(metadata) => {
+            if metadata.is_dir() {
+                ensure_inside(releases_root, &target)?;
+            }
+            if fs::symlink_metadata(&aside).is_ok() {
+                remove_entry(&aside)?;
+            }
+            fs::rename(&target, &aside)
+                .map_err(|source| io_error("moving the release aside for deletion", source))?;
+        }
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+        Err(source) => return Err(io_error("inspecting the release directory", source)),
+    }
+    match fs::symlink_metadata(&aside) {
+        Ok(_) => remove_entry(&aside),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(io_error("inspecting the release directory", source)),
+    }
+}
+
+fn remove_entry(path: &Path) -> Result<(), DraftServiceError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|source| io_error("inspecting the release directory", source))?;
+    if metadata.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+    .map_err(|source| io_error("removing release files", source))
+}
+
+/// Re-check, after resolving every link, that a release directory sits
+/// directly under the releases root.
+fn ensure_inside(releases_root: &Path, target: &Path) -> Result<(), DraftServiceError> {
+    let root = fs::canonicalize(releases_root)
+        .map_err(|source| io_error("resolving the releases directory", source))?;
+    let resolved = fs::canonicalize(target)
+        .map_err(|source| io_error("resolving the release directory", source))?;
+    if resolved.parent() == Some(root.as_path()) && resolved.file_name() == target.file_name() {
+        Ok(())
+    } else {
+        Err(DraftServiceError::InvalidAttempt(
+            "the release directory is outside the releases folder",
+        ))
+    }
 }
 
 fn finalize(partial: &Path, final_path: &Path) -> Result<(), DraftServiceError> {

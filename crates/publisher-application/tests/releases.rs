@@ -5,7 +5,8 @@ use std::{fs, path::PathBuf};
 use learning_application::{CancellationFlag, ImportLimits, import_local_course};
 use publisher_application::{
     DistributionOptions, DraftServiceError, MetadataEdit, PublishJobs, PublishStage,
-    PublisherDrafts, RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE, ReleaseStatus, StructureEdit,
+    PublisherDrafts, RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE, ReleaseFiles, ReleaseStatus,
+    StructureEdit,
 };
 
 struct Scratch(PathBuf);
@@ -37,6 +38,20 @@ impl Scratch {
                 names
             })
             .unwrap_or_default()
+    }
+}
+
+impl Scratch {
+    fn make_tree_writable(path: &std::path::Path) {
+        for entry in fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            let metadata = fs::symlink_metadata(&path).unwrap();
+            if metadata.is_dir() {
+                Self::make_tree_writable(&path);
+            } else if metadata.is_file() {
+                set_writable(&path, true);
+            }
+        }
     }
 }
 
@@ -487,4 +502,166 @@ fn recorded_release_torrents_are_read_back_only_while_they_match_the_record() {
             .release_torrent(&fixture.scratch.releases(), &release_id),
         Err(DraftServiceError::InvalidAttempt(_))
     ));
+}
+
+fn set_writable(path: &std::path::Path, writable: bool) {
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_readonly(!writable);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
+#[test]
+fn only_archived_releases_lose_their_files_and_only_with_the_version_typed() {
+    let mut fixture = Fixture::new("delete-files");
+    let first = fixture.prepare();
+    let (older, _) = fixture
+        .jobs
+        .activate(&first, &mut fixture.drafts, &fixture.scratch.releases())
+        .unwrap();
+    fixture.set_version("1.1.0");
+    let second = fixture.prepare();
+    let (newer, _) = fixture
+        .jobs
+        .activate(&second, &mut fixture.drafts, &fixture.scratch.releases())
+        .unwrap();
+    let root = fixture.scratch.releases();
+    let (older_id, newer_id) = (older.release.release_id, newer.release.release_id);
+
+    for id in [&older_id, &newer_id] {
+        assert!(matches!(
+            fixture.drafts.delete_release_files(&root, id, "1.0.0"),
+            Err(DraftServiceError::ReleaseNotArchived)
+        ));
+    }
+    for id in [
+        "../releases",
+        "release_missing",
+        "release_0123456789abcdef0123456789abcdef",
+    ] {
+        assert!(matches!(
+            fixture.drafts.delete_release_files(&root, id, "1.0.0"),
+            Err(DraftServiceError::InvalidAttempt(_))
+        ));
+    }
+    fixture.drafts.archive_release(&older_id).unwrap();
+    for typed in ["", "1.1.0", "1.0", "Released Course"] {
+        assert!(matches!(
+            fixture.drafts.delete_release_files(&root, &older_id, typed),
+            Err(DraftServiceError::InvalidInput { ref field, .. }) if field == "confirmation"
+        ));
+    }
+    assert!(root.join(&older_id).join(RELEASE_TORRENT_FILE).is_file());
+
+    let deleted = fixture
+        .drafts
+        .delete_release_files(&root, &older_id, " 1.0.0 ")
+        .unwrap();
+    assert_eq!(deleted.status, ReleaseStatus::Archived);
+    assert_eq!(deleted.files, ReleaseFiles::Deleted);
+    assert_eq!(Scratch::entries(&root), std::slice::from_ref(&newer_id));
+    assert_eq!(
+        fixture
+            .drafts
+            .delete_release_files(&root, &older_id, "")
+            .unwrap(),
+        deleted
+    );
+    assert!(fixture.drafts.release_torrent(&root, &older_id).is_err());
+    assert!(matches!(
+        fixture.drafts.seed_request(&root, &older_id),
+        Err(DraftServiceError::ReleaseArchived)
+    ));
+    fixture.set_version("1.0.0");
+    let reused = fixture.prepare();
+    assert!(matches!(
+        fixture.jobs.activate(&reused, &mut fixture.drafts, &root),
+        Err(DraftServiceError::VersionAlreadyReleased { .. })
+    ));
+    assert_eq!(
+        fixture.drafts.release(&newer_id).unwrap().unwrap().files,
+        ReleaseFiles::Present
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn deleting_release_files_never_follows_symbolic_links() {
+    let mut fixture = Fixture::new("delete-links");
+    let outside = fixture.scratch.0.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("keep.txt"), b"keep").unwrap();
+    let root = fixture.scratch.releases();
+
+    let mut ids = Vec::new();
+    for version in ["1.0.0", "1.1.0"] {
+        fixture.set_version(version);
+        let job = fixture.prepare();
+        let (record, _) = fixture
+            .jobs
+            .activate(&job, &mut fixture.drafts, &root)
+            .unwrap();
+        fixture
+            .drafts
+            .archive_release(&record.release.release_id)
+            .unwrap();
+        ids.push(record.release.release_id);
+    }
+    let package = root.join(&ids[0]).join(RELEASE_PACKAGE_DIRECTORY);
+    std::os::unix::fs::symlink(&outside, package.join("escape")).unwrap();
+    std::os::unix::fs::symlink(outside.join("keep.txt"), package.join("escape.txt")).unwrap();
+    fixture
+        .drafts
+        .delete_release_files(&root, &ids[0], "1.0.0")
+        .unwrap();
+
+    Scratch::make_tree_writable(&root.join(&ids[1]));
+    fs::remove_dir_all(root.join(&ids[1])).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join(&ids[1])).unwrap();
+    fixture
+        .drafts
+        .delete_release_files(&root, &ids[1], "1.1.0")
+        .unwrap();
+
+    assert_eq!(fs::read(outside.join("keep.txt")).unwrap(), b"keep");
+    assert_eq!(Scratch::entries(&root).len(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn startup_finishes_interrupted_and_half_done_file_deletions() {
+    let mut fixture = Fixture::new("delete-recover");
+    let job = fixture.prepare();
+    let root = fixture.scratch.releases();
+    let (record, _) = fixture
+        .jobs
+        .activate(&job, &mut fixture.drafts, &root)
+        .unwrap();
+    let release_id = record.release.release_id;
+    fixture.drafts.archive_release(&release_id).unwrap();
+
+    set_writable(&root, false);
+    let interrupted = fixture
+        .drafts
+        .delete_release_files(&root, &release_id, "1.0.0");
+    set_writable(&root, true);
+    assert!(matches!(interrupted, Err(DraftServiceError::Torrent(_))));
+    assert_eq!(
+        fixture.drafts.release(&release_id).unwrap().unwrap().files,
+        ReleaseFiles::Deleting
+    );
+    assert!(root.join(&release_id).is_dir());
+
+    let aside = root.join(format!("{release_id}.deleting"));
+    fs::rename(root.join(&release_id), &aside).unwrap();
+    fs::remove_file(aside.join(RELEASE_TORRENT_FILE)).unwrap();
+    assert_eq!(fixture.drafts.recover_releases(&root).unwrap(), 0);
+    assert!(aside.is_dir());
+
+    assert_eq!(fixture.drafts.recover_release_deletions(&root).unwrap(), 1);
+    assert_eq!(Scratch::entries(&root).len(), 0);
+    assert_eq!(
+        fixture.drafts.release(&release_id).unwrap().unwrap().files,
+        ReleaseFiles::Deleted
+    );
+    assert_eq!(fixture.drafts.recover_release_deletions(&root).unwrap(), 0);
 }

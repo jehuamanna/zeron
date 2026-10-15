@@ -198,6 +198,7 @@ pub(crate) struct ReleaseDto {
     total_bytes: u64,
     published_at_unix_seconds: u64,
     status: &'static str,
+    files: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -509,6 +510,39 @@ pub(crate) async fn archive_release(
     // Without an engine nothing is being seeded in this process.
     let drafts = Arc::clone(&state.drafts);
     run_blocking(move || archive(&mut *lock_drafts(&drafts)?, &release_id)).await
+}
+
+/// Permanently remove an archived release's files. `confirmation` must be
+/// the release's course version; the record stays as history.
+#[tauri::command]
+pub(crate) async fn delete_release_files(
+    release_id: String,
+    confirmation: String,
+    state: State<'_, AppState>,
+) -> Result<ReleaseDto, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    let releases_root = state.releases_root.clone();
+    run_blocking(move || {
+        delete_files(
+            &mut *lock_drafts(&drafts)?,
+            &releases_root,
+            &release_id,
+            &confirmation,
+        )
+    })
+    .await
+}
+
+fn delete_files(
+    drafts: &mut PublisherDrafts,
+    releases_root: &std::path::Path,
+    release_id: &str,
+    confirmation: &str,
+) -> Result<ReleaseDto, CommandError> {
+    drafts
+        .delete_release_files(releases_root, release_id, confirmation)
+        .map(ReleaseDto::from)
+        .map_err(|error| service_error("release_delete_failed", error))
 }
 
 fn delete(
@@ -988,6 +1022,7 @@ impl From<ReleaseRecord> for ReleaseDto {
             total_bytes: release.total_bytes,
             published_at_unix_seconds: record.published_at_unix_seconds,
             status: record.status.as_str(),
+            files: record.files.as_str(),
         }
     }
 }
@@ -1171,6 +1206,7 @@ fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
         DraftServiceError::JobActive => CommandError::new("job_active", error),
         DraftServiceError::DraftBusy => CommandError::new("draft_busy", error),
         DraftServiceError::ReleaseArchived => CommandError::new("release_archived", error),
+        DraftServiceError::ReleaseNotArchived => CommandError::new("release_not_archived", error),
         DraftServiceError::Seeding(_) => CommandError::new("seeding_failed", error),
         DraftServiceError::VersionAlreadyReleased { .. } => {
             CommandError::new("version_already_released", error)
@@ -1615,6 +1651,19 @@ mod tests {
         assert_eq!(refused.code, "release_archived");
         let unknown = archive(&mut drafts, "release_0123456789abcdef0123456789abcdef").unwrap_err();
         assert_eq!(unknown.code, "release_archive_failed");
+        assert_eq!(archived["files"], "present");
+
+        let wrong = delete_files(&mut drafts, &releases_root, &release_id, "9.9.9").unwrap_err();
+        assert_eq!(wrong.code, "invalid_input");
+        assert_eq!(wrong.field.as_deref(), Some("confirmation"));
+        let deleted = serde_json::to_value(
+            delete_files(&mut drafts, &releases_root, &release_id, "1.0.0").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(deleted["status"], "archived");
+        assert_eq!(deleted["files"], "deleted");
+        assert!(!releases_root.join(&release_id).exists());
+        assert!(!deleted.to_string().contains(&*directory.to_string_lossy()));
         make_writable(&directory);
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -1654,6 +1703,7 @@ mod tests {
             },
             published_at_unix_seconds: 1,
             status: publisher_application::ReleaseStatus::Published,
+            files: publisher_application::ReleaseFiles::Present,
         };
         let stopped = serde_json::to_value(SeedingStatusDto::from(ReleaseSeedingStatus {
             release: record.clone(),

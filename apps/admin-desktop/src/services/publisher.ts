@@ -116,6 +116,8 @@ export interface Release {
   totalBytes: number;
   publishedAtUnixSeconds: number;
   status: "published" | "superseded" | "archived";
+  /** Whether the release files are on disk; only archived releases can lose them. */
+  files: "present" | "deleting" | "deleted";
 }
 
 export interface ReleaseFile {
@@ -198,6 +200,8 @@ export const publisherApi = {
   listReleases: () => invoke<Release[]>("list_releases"),
   /** Stops seeding and marks the release archived; its files stay on disk. */
   archiveRelease: (releaseId: string) => invoke<Release>("archive_release", { releaseId }),
+  /** Permanently removes an archived release's files; `confirmation` must be its course version. */
+  deleteReleaseFiles: (releaseId: string, confirmation: string) => invoke<Release>("delete_release_files", { releaseId, confirmation }),
   getReleaseDetails: (releaseId: string) => invoke<ReleaseDetails>("get_release_details", { releaseId }),
   /** Opens a native save dialog; resolves `false` when the publisher cancels. */
   exportReleaseTorrent: (releaseId: string) => invoke<boolean>("export_release_torrent", { releaseId }),

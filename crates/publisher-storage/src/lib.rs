@@ -9,7 +9,7 @@ use course_publisher::DraftCourse;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// Path-free draft information for Admin course lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +69,38 @@ impl ReleaseStatus {
     }
 }
 
+/// Whether a release's package and torrent are still on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseFiles {
+    /// The release directory is kept.
+    Present,
+    /// Deletion was requested and may be half done; startup recovery finishes it.
+    Deleting,
+    /// The release directory was removed; the record stays as history.
+    Deleted,
+}
+
+impl ReleaseFiles {
+    /// Stable lowercase name, as stored and exposed over IPC.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Present => "present",
+            Self::Deleting => "deleting",
+            Self::Deleted => "deleted",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "present" => Some(Self::Present),
+            "deleting" => Some(Self::Deleting),
+            "deleted" => Some(Self::Deleted),
+            _ => None,
+        }
+    }
+}
+
 /// Facts recorded when a verified preparation becomes an immutable release.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewRelease {
@@ -109,6 +141,8 @@ pub struct ReleaseRecord {
     pub published_at_unix_seconds: u64,
     /// Current lifecycle status.
     pub status: ReleaseStatus,
+    /// Whether the release files are still on disk.
+    pub files: ReleaseFiles,
 }
 
 /// Publisher persistence failure.
@@ -400,6 +434,7 @@ impl PublisherStorage {
             release,
             published_at_unix_seconds: published_at,
             status: ReleaseStatus::Published,
+            files: ReleaseFiles::Present,
         })
     }
 
@@ -449,7 +484,7 @@ impl PublisherStorage {
         let mut statement = self.connection.prepare(&format!(
             "SELECT release_id, course_id, course_version, title, draft_id, draft_revision,
                 manifest_sha256, info_hash, magnet, piece_length, piece_count, file_count, total_bytes,
-                published_at, status
+                published_at, status, files_state
              FROM releases {filter} ORDER BY published_at DESC, release_id"
         ))?;
         let rows = statement.query_map(parameters, |row| {
@@ -471,15 +506,18 @@ impl PublisherStorage {
                 },
                 from_i64(row.get(13)?, 13)?,
                 row.get::<_, String>(14)?,
+                row.get::<_, String>(15)?,
             ))
         })?;
         rows.map(|row| {
-            let (release, published_at, status) = row?;
+            let (release, published_at, status, files) = row?;
             Ok(ReleaseRecord {
                 release,
                 published_at_unix_seconds: published_at,
                 status: ReleaseStatus::parse(&status)
                     .ok_or(PublisherStorageError::UnknownReleaseStatus(status))?,
+                files: ReleaseFiles::parse(&files)
+                    .ok_or(PublisherStorageError::UnknownReleaseStatus(files))?,
             })
         })
         .collect()
@@ -510,6 +548,57 @@ impl PublisherStorage {
         )?;
         transaction.commit()?;
         self.release(release_id)
+    }
+
+    /// Record that an archived release's files are about to be removed. Only
+    /// archived releases qualify; a release already deleting or deleted is
+    /// returned unchanged so callers can resume.
+    ///
+    /// Returns `None` for unknown or unarchived releases.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn begin_release_file_deletion(
+        &mut self,
+        release_id: &str,
+    ) -> Result<Option<ReleaseRecord>, PublisherStorageError> {
+        self.connection.execute(
+            "UPDATE releases SET files_state='deleting'
+             WHERE release_id=?1 AND status='archived' AND files_state='present'",
+            [release_id],
+        )?;
+        Ok(self
+            .release(release_id)?
+            .filter(|record| record.status == ReleaseStatus::Archived))
+    }
+
+    /// Record that a release's files are gone. The record stays as history.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn finish_release_file_deletion(
+        &mut self,
+        release_id: &str,
+    ) -> Result<(), PublisherStorageError> {
+        self.connection.execute(
+            "UPDATE releases SET files_state='deleted'
+             WHERE release_id=?1 AND files_state='deleting'",
+            [release_id],
+        )?;
+        Ok(())
+    }
+
+    /// Releases whose file deletion was requested but not confirmed finished.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn releases_deleting_files(&self) -> Result<Vec<String>, PublisherStorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT release_id FROM releases WHERE files_state='deleting' ORDER BY release_id",
+        )?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(PublisherStorageError::from)
     }
 
     /// Persist whether a release should be seeded whenever the Admin app runs.
@@ -656,6 +745,15 @@ fn migrate(connection: &mut Connection) -> Result<(), PublisherStorageError> {
                 value TEXT NOT NULL
              );
              PRAGMA user_version = 3;",
+        )?;
+        transaction.commit()?;
+    }
+    if found < 4 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE releases ADD COLUMN files_state TEXT NOT NULL DEFAULT 'present'
+                CHECK (files_state IN ('present', 'deleting', 'deleted'));
+             PRAGMA user_version = 4;",
         )?;
         transaction.commit()?;
     }

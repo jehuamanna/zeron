@@ -21,7 +21,8 @@ pub use course_publisher::{
 pub use publish_jobs::{JobFailure, JobProgress, PreparedRelease, PublishJobSnapshot, PublishJobs};
 use publisher_storage::PublisherStorage;
 pub use publisher_storage::{
-    DraftSummary, NewRelease, PublisherStorageError, ReleaseRecord, ReleaseStatus, StoredDraft,
+    DraftSummary, NewRelease, PublisherStorageError, ReleaseFiles, ReleaseRecord, ReleaseStatus,
+    StoredDraft,
 };
 pub use releases::{
     RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE, ReleaseTorrent, release_directory,
@@ -211,6 +212,9 @@ pub enum DraftServiceError {
     /// Archived releases are kept on disk but never seeded again.
     #[error("archived releases cannot be seeded")]
     ReleaseArchived,
+    /// Only archived releases may have their files deleted.
+    #[error("archive the release before deleting its files")]
+    ReleaseNotArchived,
     /// A staging attempt is unknown, incomplete, or was modified.
     #[error("{0}")]
     InvalidAttempt(&'static str),

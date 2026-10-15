@@ -43,9 +43,14 @@ pub fn run() {
         .setup(|app| {
             let app_data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data)?;
-            let drafts = PublisherDrafts::open(&app_data.join("publisher.sqlite3"))?;
+            let mut drafts = PublisherDrafts::open(&app_data.join("publisher.sqlite3"))?;
             let releases_root = app_data.join("releases");
             drafts.recover_releases(&releases_root)?;
+            // A failed retry leaves the release marked as deleting; the
+            // publisher can retry from the UI, and the next start tries again.
+            if let Err(error) = drafts.recover_release_deletions(&releases_root) {
+                eprintln!("finishing interrupted release file deletions failed: {error}");
+            }
             let publish_jobs = PublishJobs::new(&app_data.join("staging"));
             publish_jobs.recover()?;
             let active_profile = drafts.network_profile()?;
@@ -86,6 +91,7 @@ pub fn run() {
             commands::activate_release,
             commands::list_releases,
             commands::archive_release,
+            commands::delete_release_files,
             commands::get_release_details,
             commands::export_release_torrent,
             commands::validate_draft,

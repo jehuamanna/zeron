@@ -24,7 +24,7 @@ Continue through the dependency-ordered roadmap ([docs/roadmap.md](../roadmap.md
 - a destructive action outside the approved scope;
 - an architectural blocker you can show evidence for.
 
-Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0005), and [phase-0 spike results](../research/phase-0-spike-results.md).
+Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0006), and [phase-0 spike results](../research/phase-0-spike-results.md).
 
 ## Start-of-session checklist
 
@@ -72,7 +72,7 @@ Tests that multicast or listen on the local network are `#[ignore]`. Run them on
 
 Packaging: Linux builds are **AppImage only** (user decision 2026-10-16: no `.deb`). Use `pnpm build:appimage` (root) or per app. The Learner AppImage bundles GStreamer (`bundleMediaFramework: true`). Don't run the slow release AppImage build before pushing unless the user asks.
 
-Real-course fixture: the user's 2.3 GB `13-Systems-Design-Interview-Questions/files` folder (13 H.264/AAC MP4s) was on a removable drive of the old machine. Ask the user where it is on this machine. Do not use the 30 GB "Back-To-Back-SWE" course. Treat fixtures as read-only input. Publish them only into a scratch directory, keep them on Loopback or Local network, and never commit anything derived from them.
+Real-course fixtures on this machine (user-provided 2026-10-16): `/home/jehu/Downloads/algoe-sixquevideo/` (2.3 GB, 13 H.264/AAC "N Design X.mp4" files; some named `.mp4.mp4`) and `/home/jehu/Downloads/algoexpert-sdfshortcourse/` (1.6 GB, `lesson1.mp4`–`lesson20.mp4` plus `Design Fundamentals.txt`, which lists the lesson titles). Do not use the 30 GB "Back-To-Back-SWE" course. Treat fixtures as read-only input. Publish them only into a scratch directory, keep them on Loopback or Local network, and never commit anything derived from them.
 
 UI testing in a browser pane: fake Tauri IPC by assigning `window.__TAURI_INTERNALS__ = { invoke, transformCallback }` after load.
 
@@ -151,14 +151,14 @@ The user reported these Publisher gaps:
 - files and folders cannot be added by drag and drop;
 - courses and releases cannot be edited, removed, or deleted.
 
-Sub-slices 1 and 2 are done; see `docs/releases/phase-7-course-management.md` and `docs/releases/phase-7-draft-deletion-and-release-archive.md`. Continue with sub-slice 3.
+Sub-slices 1–3 are done; see `docs/releases/phase-7-course-management.md`, `phase-7-draft-deletion-and-release-archive.md`, and `phase-7-release-file-deletion.md` (ADR 0006). Continue with sub-slice 4.
 
 ### What exists today
 
 - Builder structure editing already adds, renames, removes, and reorders modules, lessons, and resources (`StructureEditor.tsx`, `StructureEdit` commands). Removing a resource detaches it and never touches the source file.
 - `features/courses/CourseList.tsx` groups drafts and releases by `course_id`. `ReleaseDetailsPanel.tsx` shows the magnet with Copy (`navigator.clipboard` works on WebKitGTK), the info hash, files (`get_release_details`), and `export_release_torrent`. Each release lives at `<app_data>/releases/<release_id>/`, holding `package/` and `release.torrent` (constants `RELEASE_PACKAGE_DIRECTORY` and `RELEASE_TORRENT_FILE` in `crates/publisher-application/src/releases.rs`). Both are read-only on disk.
 - `tauri-plugin-dialog` is already a dependency. `choose_and_attach_resource` opens the native picker in Rust (`commands.rs`).
-- Publisher schema is v3 (tables `drafts`, `releases`, `seeding_intents`, `settings`). `releases.status` is one of `published`, `superseded`, or `archived`; archiving is not wired up yet. `seeding_intents.release_id` references `releases`.
+- Publisher schema is v4 (tables `drafts`, `releases`, `seeding_intents`, `settings`). `releases.status` is one of `published`, `superseded`, or `archived`, and `releases.files_state` is one of `present`, `deleting`, or `deleted` (ADR 0006). `seeding_intents.release_id` references `releases`.
 - The Courses page (`App.tsx`) shows draft cards and a flat "Releases" list. Drafts and releases share `course_id`.
 
 ### User decisions, all made on 2026-10-16
@@ -248,7 +248,7 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 
 - `course-format`: manifest wire contract and semantic validation.
 - `course-publisher`: draft and publishing policy, staging, and media inspection, with no SQLite or Tauri.
-- `publisher-storage`: Admin SQLite persistence (schema v3) with compare-and-swap draft saves.
+- `publisher-storage`: Admin SQLite persistence (schema v4) with compare-and-swap draft saves.
 - `publisher-application`: Admin use cases: drafts, sources, staging, torrents, publish jobs, releases, seeding, and settings.
 - `torrent-metainfo`: deterministic v1 metainfo writing and inspection.
 - `torrent-port`: engine-neutral contract, including `NetworkProfile` and `PeerReachability`.
