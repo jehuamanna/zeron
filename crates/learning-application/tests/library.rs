@@ -112,6 +112,13 @@ fn verified_import_survives_database_restart() {
             .unwrap(),
         None
     );
+    let resource = library
+        .local_resource("course_recovery", "resource_video")
+        .unwrap()
+        .unwrap();
+    assert_eq!(resource.path, course_root.join("lesson.mp4"));
+    assert_eq!(resource.media_type, "video/mp4");
+    assert_eq!(resource.byte_length, 23);
 }
 
 #[test]

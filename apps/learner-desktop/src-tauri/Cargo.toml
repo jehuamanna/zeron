@@ -15,9 +15,11 @@ tauri-build.workspace = true
 [dependencies]
 course-format = { path = "../../../crates/course-format" }
 learning-application = { path = "../../../crates/learning-application" }
+media-gateway = { path = "../../../crates/media-gateway" }
 serde.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

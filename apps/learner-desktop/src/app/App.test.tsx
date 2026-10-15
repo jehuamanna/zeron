@@ -12,6 +12,7 @@ vi.mock("../services/library", () => ({
     list: vi.fn(),
     chooseAndImport: vi.fn(),
     detail: vi.fn(),
+    registerMedia: vi.fn(),
   },
 }));
 
@@ -111,5 +112,30 @@ describe("learner library", () => {
     await waitFor(() => expect(view.container.textContent).toContain("Foundations"));
     expect(view.container.textContent).toContain("Introduction");
     expect(view.container.textContent).not.toContain("/course/");
+  });
+
+  it("requests an opaque URL when a video is selected", async () => {
+    useLibraryUi.getState().selectCourse("course_one");
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "course_one", courseVersion: "1.0.0", title: "Media Course", description: null,
+      publisherName: "Zeron Tests", modules: [{ id: "module", title: "Module", lessons: [{
+        id: "lesson", title: "Lesson", resources: [{ id: "video", kind: "video", mediaType: "video/mp4", byteLength: 10, durationSeconds: null }],
+      }] }],
+    });
+    vi.mocked(libraryApi.registerMedia).mockResolvedValue({
+      url: "http://127.0.0.1:49152/v1/media/opaque/secret", mediaType: "video/mp4", byteLength: 10,
+    });
+
+    const view = renderApp();
+    const play = await waitFor(() => {
+      const button = Array.from(view.container.querySelectorAll("button")).find((candidate) => candidate.textContent?.includes("Play video"));
+      expect(button).toBeDefined();
+      return button!;
+    });
+    fireEvent.click(play);
+    await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("/v1/media/opaque/secret"));
+    expect(libraryApi.registerMedia).toHaveBeenCalledWith("course_one", "video");
   });
 });

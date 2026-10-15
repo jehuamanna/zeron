@@ -3,7 +3,7 @@
 mod library;
 mod local_import;
 
-pub use library::{CourseImportReceipt, CourseLibrary, LibraryError};
+pub use library::{CourseImportReceipt, CourseLibrary, LibraryError, LocalResource};
 pub use local_import::{
     CancellationFlag, ImportError, ImportLimits, ImportedCourse, VerifiedResource,
     import_local_course,

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use course_format::CourseManifest;
 use learning_storage::{Storage, StorageError, StoredCourseSummary};
@@ -19,6 +19,17 @@ pub struct CourseImportReceipt {
     pub verified_resource_count: usize,
     /// Sum of verified resource bytes.
     pub total_resource_bytes: u64,
+}
+
+/// Backend-only description of a verified package resource.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalResource {
+    /// Filesystem location. Never serialize this field over IPC.
+    pub path: PathBuf,
+    /// Manifest-declared media type.
+    pub media_type: String,
+    /// Manifest-declared byte length.
+    pub byte_length: u64,
 }
 
 /// Course-library startup and use-case failures.
@@ -160,5 +171,36 @@ impl CourseLibrary {
             .flat_map(|lesson| &lesson.resources)
             .find(|resource| resource.id == resource_id);
         Ok(resource.map(|resource| root.join(&resource.path)))
+    }
+
+    /// Resolve a resource and its delivery metadata for a backend adapter.
+    ///
+    /// The returned path must remain inside the Rust process.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] if the stored package cannot be recovered.
+    pub fn local_resource(
+        &self,
+        course_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<LocalResource>, LibraryError> {
+        let Some(manifest) = self.storage.course_manifest(course_id)? else {
+            return Ok(None);
+        };
+        let Some(root) = self.storage.course_package_root(course_id)? else {
+            return Ok(None);
+        };
+        Ok(manifest
+            .modules
+            .iter()
+            .flat_map(|module| &module.lessons)
+            .flat_map(|lesson| &lesson.resources)
+            .find(|resource| resource.id == resource_id)
+            .map(|resource| LocalResource {
+                path: root.join(&resource.path),
+                media_type: resource.media_type.clone(),
+                byte_length: resource.byte_length,
+            }))
     }
 }

@@ -4,6 +4,7 @@ members = [
     "crates/course-format",
     "crates/learning-application",
     "crates/learning-storage",
+    "crates/media-gateway",
     "tools/course-cli",
 ]
 resolver = "3"
@@ -15,6 +16,9 @@ rust-version = "1.93"
 publish = false
 
 [workspace.dependencies]
+axum = "=0.8.9"
+futures-util = "=0.3.34"
+getrandom = "=0.4.3"
 schemars = "=1.2.3"
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 semver = "=1.0.28"
@@ -25,6 +29,9 @@ tauri = "=2.12.4"
 tauri-build = "=2.7.3"
 tauri-plugin-dialog = "=2.8.3"
 thiserror = "=2.0.21"
+tokio = "=1.53.3"
+tokio-util = "=0.7.20"
+tower-http = "=0.7.1"
 unicode-normalization = "=0.1.25"
 url = "=2.5.8"
 

@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use course_format::ResourceKind;
 use learning_application::{CancellationFlag, CourseImportReceipt, CourseLibrary};
+use media_gateway::FileResource;
 use serde::Serialize;
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
@@ -71,6 +72,14 @@ struct ResourceDto {
     media_type: String,
     byte_length: u64,
     duration_seconds: Option<f64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MediaRegistrationDto {
+    url: String,
+    media_type: String,
+    byte_length: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -152,6 +161,40 @@ pub(crate) async fn choose_and_import_course(
             .map_err(|error| command_error("course_import_failed", error))
     })
     .await
+}
+
+#[tauri::command]
+pub(crate) async fn register_media(
+    course_id: String,
+    resource_id: String,
+    state: State<'_, AppState>,
+) -> Result<MediaRegistrationDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    let resource = run_blocking(move || {
+        let library = lock_library(&library)?;
+        library
+            .local_resource(&course_id, &resource_id)
+            .map_err(|error| command_error("media_lookup_failed", error))?
+            .ok_or_else(|| CommandError {
+                code: "media_not_found",
+                message: "the selected media resource is unavailable".to_owned(),
+            })
+    })
+    .await?;
+    state
+        .media_gateway
+        .register(FileResource {
+            path: resource.path,
+            media_type: resource.media_type,
+            byte_length: resource.byte_length,
+        })
+        .await
+        .map(|registration| MediaRegistrationDto {
+            url: registration.url,
+            media_type: registration.media_type,
+            byte_length: registration.byte_length,
+        })
+        .map_err(|error| command_error("media_registration_failed", error))
 }
 
 impl From<CourseImportReceipt> for ImportReceiptDto {

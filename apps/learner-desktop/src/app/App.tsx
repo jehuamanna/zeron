@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, ChevronLeft, Download, File, HardDrive, Play, Search } from "lucide-react";
+import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { libraryApi } from "../services/library";
@@ -13,6 +14,7 @@ const formatBytes = (bytes: number) =>
 export function App() {
   const queryClient = useQueryClient();
   const { selectedCourseId, selectCourse } = useLibraryUi();
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const readiness = useQuery({ queryKey: ["readiness"], queryFn: libraryApi.readiness });
   const courses = useQuery({
     queryKey: ["courses"],
@@ -30,6 +32,15 @@ export function App() {
     queryFn: () => libraryApi.detail(selectedCourseId!),
     enabled: selectedCourseId !== null,
   });
+  const openMedia = useMutation({
+    mutationFn: (resourceId: string) => libraryApi.registerMedia(selectedCourseId!, resourceId),
+    onSuccess: (registration) => setMediaUrl(registration.url),
+  });
+
+  const leaveCourse = () => {
+    setMediaUrl(null);
+    selectCourse(null);
+  };
 
   return (
     <main className="min-h-screen bg-[#071018] text-slate-100">
@@ -53,7 +64,7 @@ export function App() {
         <section className="py-10">
           {selectedCourseId ? (
             <div>
-              <Button variant="ghost" onClick={() => selectCourse(null)} className="mb-7">
+              <Button variant="ghost" onClick={leaveCourse} className="mb-7">
                 <ChevronLeft size={17} /> Back to library
               </Button>
               {detail.isPending ? (
@@ -69,12 +80,19 @@ export function App() {
                     <h1 className="text-4xl font-semibold tracking-tight">{detail.data.title}</h1>
                     <p className="mt-3 max-w-2xl text-slate-400">{detail.data.description ?? `Published by ${detail.data.publisherName}`}</p>
                     <div className="mt-10 rounded-3xl border border-white/10 bg-black/20 p-8">
-                      <div className="grid aspect-video place-items-center rounded-2xl bg-[#03080d] text-slate-500">
-                        <div className="text-center">
-                          <Play className="mx-auto mb-3" size={30} />
-                          <p>Choose a video lesson to begin</p>
+                      {mediaUrl ? (
+                        <video key={mediaUrl} className="aspect-video w-full rounded-2xl bg-black" src={mediaUrl} controls autoPlay preload="metadata">
+                          This system cannot play the selected video format.
+                        </video>
+                      ) : (
+                        <div className="grid aspect-video place-items-center rounded-2xl bg-[#03080d] text-slate-500">
+                          <div className="text-center">
+                            <Play className="mx-auto mb-3" size={30} />
+                            <p>Choose a video lesson to begin</p>
+                          </div>
                         </div>
-                      </div>
+                      )}
+                      {openMedia.isError ? <p role="alert" className="mt-3 text-sm text-red-300">This verified media file is no longer available.</p> : null}
                     </div>
                   </div>
                   <aside aria-label="Course contents" className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
@@ -88,7 +106,17 @@ export function App() {
                               <div key={lesson.id} className="rounded-xl border border-white/10 bg-black/10 p-3">
                                 <p className="text-sm font-medium">{lesson.title}</p>
                                 <div className="mt-2 flex flex-wrap gap-2">
-                                  {lesson.resources.map((resource) => (
+                                  {lesson.resources.map((resource) => resource.kind === "video" ? (
+                                    <button
+                                      type="button"
+                                      key={resource.id}
+                                      onClick={() => openMedia.mutate(resource.id)}
+                                      disabled={openMedia.isPending}
+                                      className="inline-flex items-center gap-1 rounded-md bg-cyan-300/10 px-2 py-1 text-xs text-cyan-200 hover:bg-cyan-300/20 disabled:opacity-50"
+                                    >
+                                      <Play size={12} /> Play video
+                                    </button>
+                                  ) : (
                                     <span key={resource.id} className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-400">
                                       <File size={12} /> {resource.kind}
                                     </span>

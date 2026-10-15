@@ -22,6 +22,12 @@ export interface Readiness {
   state: "ready";
 }
 
+export interface MediaRegistration {
+  url: string;
+  mediaType: string;
+  byteLength: number;
+}
+
 export interface CourseDetail {
   courseId: string;
   courseVersion: string;
@@ -49,5 +55,7 @@ export const libraryApi = {
   readiness: () => invoke<Readiness>("readiness"),
   list: () => invoke<CourseSummary[]>("list_courses"),
   detail: (courseId: string) => invoke<CourseDetail | null>("get_course_detail", { courseId }),
+  registerMedia: (courseId: string, resourceId: string) =>
+    invoke<MediaRegistration>("register_media", { courseId, resourceId }),
   chooseAndImport: () => invoke<ImportReceipt | null>("choose_and_import_course"),
 };
