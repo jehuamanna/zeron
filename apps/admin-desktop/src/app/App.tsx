@@ -5,6 +5,7 @@ import { useCallback, useState } from "react";
 import { Builder } from "../features/builder/Builder";
 import { ReadinessPanel } from "../features/builder/ReadinessPanel";
 import { PublishPanel } from "../features/publish/PublishPanel";
+import { ReleaseList } from "../features/releases/ReleaseList";
 import { publisherApi, type DraftDetail } from "../services/publisher";
 import { useBuilderUi } from "../stores/builder";
 
@@ -81,7 +82,9 @@ export function App() {
                   </div>
                 ) : <p role="alert" className="text-red-300">This draft could not be recovered.</p>}
               </div>
-            ) : drafts.isPending ? <p className="text-slate-400">Loading publisher drafts…</p> : drafts.isError || createDraft.isError ? (
+            ) : (
+              <>
+                {drafts.isPending ? <p className="text-slate-400">Loading publisher drafts…</p> : drafts.isError || createDraft.isError ? (
               <p role="alert" className="rounded-2xl border border-red-400/30 bg-red-400/10 p-5 text-red-200">Publisher storage is unavailable.</p>
             ) : drafts.data?.length ? (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{drafts.data.map((item) => (
@@ -91,6 +94,9 @@ export function App() {
               ))}</div>
             ) : (
               <div className="rounded-3xl border border-dashed border-white/15 py-20 text-center"><BookPlus className="mx-auto mb-4 text-amber-300" size={30} /><h2 className="text-xl font-semibold">Create your first course</h2><p className="mt-2 text-slate-400">Drafts stay editable and separate from immutable published releases.</p></div>
+            )}
+                <ReleaseList />
+              </>
             )}
           </div>
         </section>

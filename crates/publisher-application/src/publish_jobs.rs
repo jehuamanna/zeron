@@ -11,9 +11,12 @@ use course_publisher::{
 };
 use torrent_metainfo::TorrentError;
 
+use publisher_storage::ReleaseRecord;
+
 use crate::{
-    DistributionOptions, DraftServiceError, StagingReceipt, TorrentPhase, TorrentReceipt,
-    discard_abandoned_staging, discard_attempt, generate_torrent, opaque_id, stage_draft,
+    DistributionOptions, DraftServiceError, PublisherDrafts, StagingReceipt, TorrentPhase,
+    TorrentReceipt, discard_all_attempts, discard_attempt, generate_torrent, opaque_id,
+    stage_draft,
 };
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
@@ -66,6 +69,8 @@ pub struct PublishJobSnapshot {
     pub prepared: Option<PreparedRelease>,
     /// Failure details when the job reaches `Failed`.
     pub failure: Option<JobFailure>,
+    /// Release created from this job once it reaches `Published`.
+    pub release_id: Option<String>,
 }
 
 impl PublishJobSnapshot {
@@ -74,7 +79,10 @@ impl PublishJobSnapshot {
     pub fn is_finished(&self) -> bool {
         matches!(
             self.stage,
-            PublishStage::ReadyToPublish | PublishStage::Failed | PublishStage::Cancelled
+            PublishStage::ReadyToPublish
+                | PublishStage::Published
+                | PublishStage::Failed
+                | PublishStage::Cancelled
         )
     }
 }
@@ -110,12 +118,57 @@ impl PublishJobs {
         }
     }
 
-    /// Remove attempts interrupted by a previous crash. Call once at startup.
+    /// Remove every attempt left by a previous process. Preparations are
+    /// session-scoped, so nothing can activate them after a restart. Call once
+    /// at startup, before any job begins.
     ///
     /// # Errors
     /// Returns an I/O failure from the staging root.
     pub fn recover(&self) -> Result<usize, DraftServiceError> {
-        discard_abandoned_staging(&self.staging_root)
+        discard_all_attempts(&self.staging_root)
+    }
+
+    /// Activate a `ReadyToPublish` job into an immutable release.
+    ///
+    /// # Errors
+    /// Rejects unknown or unready jobs, reused versions, and activation failures.
+    pub fn activate(
+        &self,
+        job_id: &str,
+        drafts: &mut PublisherDrafts,
+        releases_root: &Path,
+    ) -> Result<(ReleaseRecord, PublishJobSnapshot), DraftServiceError> {
+        let snapshot = self
+            .snapshot(job_id)
+            .ok_or(DraftServiceError::InvalidAttempt(
+                "unknown release preparation",
+            ))?;
+        let (PublishStage::ReadyToPublish, Some(prepared)) = (snapshot.stage, &snapshot.prepared)
+        else {
+            return Err(DraftServiceError::InvalidAttempt(
+                "the release preparation is not ready to publish",
+            ));
+        };
+        let mut workflow = PublishingWorkflow::restore(snapshot.stage);
+        workflow
+            .transition(PublishStage::Published)
+            .map_err(|_| DraftServiceError::InvalidAttempt("the release cannot be published"))?;
+        let record = drafts.activate_release(
+            &self.staging_root,
+            releases_root,
+            prepared,
+            &snapshot.draft_id,
+            snapshot.draft_revision,
+        )?;
+        let published = self
+            .update(job_id, |snapshot| {
+                snapshot.stage = PublishStage::Published;
+                snapshot.release_id = Some(record.release.release_id.clone());
+            })
+            .ok_or(DraftServiceError::InvalidAttempt(
+                "unknown release preparation",
+            ))?;
+        Ok((record, published))
     }
 
     /// Register a new job for a frozen draft snapshot.
@@ -137,6 +190,7 @@ impl PublishJobs {
             progress: None,
             prepared: None,
             failure: None,
+            release_id: None,
         };
         registry.jobs.insert(
             job_id.clone(),

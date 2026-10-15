@@ -26,6 +26,18 @@ pub struct VerifiedTorrent {
     pub total_length: u64,
 }
 
+/// Decode `torrent` strictly and check that it describes exactly `expected`
+/// files, without reading package bytes.
+///
+/// # Errors
+/// Returns [`TorrentError::Verification`] for any structural disagreement.
+pub fn inspect_torrent(
+    torrent: &[u8],
+    expected: &[PackageFile],
+) -> Result<VerifiedTorrent, TorrentError> {
+    structure(torrent, expected).map(|structure| structure.summary)
+}
+
 /// Decode `torrent` strictly, check that it describes exactly `expected`
 /// files, and rehash every piece from the files below `root`.
 ///
@@ -38,6 +50,47 @@ pub fn verify_torrent(
     cancelled: &dyn Fn() -> bool,
     progress: &mut dyn FnMut(HashProgress),
 ) -> Result<VerifiedTorrent, TorrentError> {
+    let Structure {
+        summary,
+        pieces,
+        files,
+    } = structure(torrent, expected)?;
+    let mut stream = PackageStream::new(root, &files);
+    let piece_capacity = usize::try_from(summary.piece_length)
+        .map_err(|_| TorrentError::Verification("piece length too large"))?;
+    let mut piece = vec![0_u8; piece_capacity];
+    let mut verified = 0_u64;
+    for expected_digest in pieces.chunks_exact(20) {
+        if cancelled() {
+            return Err(TorrentError::Cancelled);
+        }
+        let filled = stream.fill(&mut piece)?;
+        if Sha1::digest(&piece[..filled]).as_slice() != expected_digest {
+            return Err(TorrentError::Verification(
+                "a piece hash does not match the package bytes",
+            ));
+        }
+        verified += u64::try_from(filled).unwrap_or(u64::MAX);
+        progress(HashProgress {
+            hashed_bytes: verified,
+            total_bytes: summary.total_length,
+        });
+    }
+    if stream.fill(&mut piece[..1.min(piece_capacity)])? != 0 || verified != summary.total_length {
+        return Err(TorrentError::Verification(
+            "package bytes do not end with the last piece",
+        ));
+    }
+    Ok(summary)
+}
+
+struct Structure {
+    summary: VerifiedTorrent,
+    pieces: Vec<u8>,
+    files: Vec<PackageFile>,
+}
+
+fn structure(torrent: &[u8], expected: &[PackageFile]) -> Result<Structure, TorrentError> {
     let top = decode_dict_with_spans(torrent)?;
     let (info, span) = top
         .get(b"info".as_slice())
@@ -88,39 +141,16 @@ pub fn verify_torrent(
             "piece count does not match total length",
         ));
     }
-
-    let mut stream = PackageStream::new(root, &files);
-    let piece_capacity = usize::try_from(piece_length)
-        .map_err(|_| TorrentError::Verification("piece length too large"))?;
-    let mut piece = vec![0_u8; piece_capacity];
-    let mut verified = 0_u64;
-    for expected_digest in pieces.chunks_exact(20) {
-        if cancelled() {
-            return Err(TorrentError::Cancelled);
-        }
-        let filled = stream.fill(&mut piece)?;
-        if Sha1::digest(&piece[..filled]).as_slice() != expected_digest {
-            return Err(TorrentError::Verification(
-                "a piece hash does not match the package bytes",
-            ));
-        }
-        verified += u64::try_from(filled).unwrap_or(u64::MAX);
-        progress(HashProgress {
-            hashed_bytes: verified,
-            total_bytes: total_length,
-        });
-    }
-    if stream.fill(&mut piece[..1.min(piece_capacity)])? != 0 || verified != total_length {
-        return Err(TorrentError::Verification(
-            "package bytes do not end with the last piece",
-        ));
-    }
-    Ok(VerifiedTorrent {
-        info_hash,
-        name,
-        piece_length,
-        piece_count,
-        total_length,
+    Ok(Structure {
+        summary: VerifiedTorrent {
+            info_hash,
+            name,
+            piece_length,
+            piece_count,
+            total_length,
+        },
+        pieces: pieces.clone(),
+        files,
     })
 }
 

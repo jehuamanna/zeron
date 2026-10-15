@@ -1,6 +1,7 @@
 //! Admin publisher use cases shared by Zeron composition roots.
 
 mod publish_jobs;
+mod releases;
 mod sources;
 mod staging;
 mod torrents;
@@ -18,9 +19,12 @@ pub use course_publisher::{
 };
 pub use publish_jobs::{JobFailure, JobProgress, PreparedRelease, PublishJobSnapshot, PublishJobs};
 use publisher_storage::PublisherStorage;
-pub use publisher_storage::{DraftSummary, PublisherStorageError, StoredDraft};
+pub use publisher_storage::{
+    DraftSummary, NewRelease, PublisherStorageError, ReleaseRecord, ReleaseStatus, StoredDraft,
+};
+pub use releases::{RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE, release_directory};
 pub use sources::{ResourceMediaFindings, SourceInfo, inspect_draft_media, source_info};
-pub use staging::{StagingReceipt, discard_abandoned_staging, stage_draft};
+pub use staging::{StagingReceipt, discard_abandoned_staging, discard_all_attempts, stage_draft};
 use thiserror::Error;
 pub use torrent_metainfo::{HashProgress, TorrentError};
 pub use torrents::{
@@ -179,6 +183,12 @@ pub enum DraftServiceError {
     /// Torrent generation or verification failed or was cancelled.
     #[error(transparent)]
     Torrent(TorrentError),
+    /// The course version already has a release; choose a new version.
+    #[error("version {course_version} was already released; choose a new version")]
+    VersionAlreadyReleased {
+        /// Rejected version.
+        course_version: String,
+    },
     /// Another release preparation is already running.
     #[error("another release preparation is already running")]
     JobActive,
@@ -198,6 +208,9 @@ impl From<PublisherStorageError> for DraftServiceError {
         match error {
             PublisherStorageError::RevisionConflict { expected, actual } => {
                 Self::RevisionConflict { expected, actual }
+            }
+            PublisherStorageError::VersionAlreadyReleased { course_version } => {
+                Self::VersionAlreadyReleased { course_version }
             }
             other => Self::Storage(other),
         }

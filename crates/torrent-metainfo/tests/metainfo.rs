@@ -377,3 +377,20 @@ fn hashing_can_be_cancelled() {
         Err(TorrentError::Cancelled)
     ));
 }
+
+#[test]
+fn inspection_checks_structure_without_reading_package_bytes() {
+    let scratch = Scratch::new("inspect");
+    let files = package(&scratch);
+    let built = build_torrent(&scratch.0, &files, &options(), &never, &mut |_| {}).unwrap();
+    fs::remove_dir_all(scratch.0.join("resources")).unwrap();
+    let summary = torrent_metainfo::inspect_torrent(&built.bytes, &files).unwrap();
+    assert_eq!(summary.info_hash, built.info_hash);
+    assert_eq!(summary.piece_count, built.piece_count);
+    let mut other = files.clone();
+    other[0].length += 1;
+    assert!(matches!(
+        torrent_metainfo::inspect_torrent(&built.bytes, &other),
+        Err(TorrentError::Verification(_))
+    ));
+}

@@ -8,7 +8,7 @@ import { App } from "./App";
 
 vi.mock("../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/publisher")>()),
-  publisherApi: { listDrafts: vi.fn(), createDraft: vi.fn(), getDraft: vi.fn(), updateDraftMetadata: vi.fn(), validateDraft: vi.fn() },
+  publisherApi: { listDrafts: vi.fn(), createDraft: vi.fn(), getDraft: vi.fn(), updateDraftMetadata: vi.fn(), validateDraft: vi.fn(), listReleases: vi.fn() },
 }));
 
 const created: DraftDetail = {
@@ -32,7 +32,10 @@ function renderApp() {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><App /></QueryClientProvider>);
 }
 
-beforeEach(() => useBuilderUi.setState({ selectedDraftId: null }));
+beforeEach(() => {
+  useBuilderUi.setState({ selectedDraftId: null });
+  vi.mocked(publisherApi.listReleases).mockResolvedValue([]);
+});
 afterEach(cleanup);
 
 describe("publisher courses", () => {

@@ -101,6 +101,48 @@ pub fn discard_abandoned_staging(staging_root: &Path) -> Result<usize, DraftServ
     Ok(removed)
 }
 
+/// Remove every staging attempt and torrent, complete or not.
+///
+/// Preparations are session-scoped: once the process that prepared them has
+/// exited, nothing can activate them, so they are derived data safe to drop.
+/// Only names matching the attempt patterns directly under `staging_root`
+/// are touched; symbolic links and other entries are left alone.
+///
+/// # Errors
+/// Returns an I/O failure when the root cannot be listed or an entry cannot be removed.
+pub fn discard_all_attempts(staging_root: &Path) -> Result<usize, DraftServiceError> {
+    let entries = match fs::read_dir(staging_root) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(source) => return Err(io_error("listing the staging root", source)),
+    };
+    let mut removed = 0;
+    for entry in entries {
+        let entry = entry.map_err(|source| io_error("listing the staging root", source))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|source| io_error("inspecting a staging attempt", source))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let attempt_directory =
+            file_type.is_dir() && (is_completed_attempt(&name) || is_partial_attempt(&name));
+        let attempt_torrent = file_type.is_file()
+            && (is_partial_torrent(&name)
+                || name
+                    .strip_suffix(".torrent")
+                    .is_some_and(is_completed_attempt));
+        if attempt_directory {
+            fs::remove_dir_all(entry.path())
+                .map_err(|source| io_error("removing a staging attempt", source))?;
+            removed += 1;
+        } else if attempt_torrent {
+            fs::remove_file(entry.path())
+                .map_err(|source| io_error("removing a staging torrent", source))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 fn is_partial_attempt(name: &str) -> bool {
     name.strip_suffix(PARTIAL_SUFFIX)
         .is_some_and(is_completed_attempt)

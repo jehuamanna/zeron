@@ -100,9 +100,25 @@ export interface PublishJob {
   progress: { completedBytes: number; totalBytes: number } | null;
   prepared: PreparedRelease | null;
   failure: { code: string; message: string } | null;
+  releaseId: string | null;
 }
 
-export const finishedPublishStages: ReadonlySet<PublishStage> = new Set(["READY_TO_PUBLISH", "FAILED", "CANCELLED"]);
+export interface Release {
+  releaseId: string;
+  courseId: string;
+  courseVersion: string;
+  title: string;
+  infoHash: string;
+  magnet: string;
+  pieceLength: number;
+  pieceCount: number;
+  fileCount: number;
+  totalBytes: number;
+  publishedAtUnixSeconds: number;
+  status: "published" | "superseded" | "archived";
+}
+
+export const finishedPublishStages: ReadonlySet<PublishStage> = new Set(["READY_TO_PUBLISH", "PUBLISHED", "FAILED", "CANCELLED"]);
 
 export interface CommandError {
   code: string;
@@ -134,5 +150,7 @@ export const publisherApi = {
   getPublishJob: (jobId: string) => invoke<PublishJob | null>("get_publish_job", { jobId }),
   cancelPublishJob: (jobId: string) => invoke<boolean>("cancel_publish_job", { jobId }),
   onPublishJob: (handler: (job: PublishJob) => void) => listen<PublishJob>("publish-job", (event) => handler(event.payload)),
+  activateRelease: (jobId: string) => invoke<Release>("activate_release", { jobId }),
+  listReleases: () => invoke<Release[]>("list_releases"),
   validateDraft: (draftId: string) => invoke<ValidationIssue[]>("validate_draft", { draftId }),
 };

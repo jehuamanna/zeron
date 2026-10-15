@@ -7,6 +7,7 @@ use std::{
 
 use course_format::parse_and_validate;
 use course_publisher::{MANIFEST_FILE_NAME, PackagingCancellation};
+use sha2::{Digest, Sha256};
 use torrent_metainfo::{
     HashProgress, PackageFile, TorrentError, TorrentOptions, build_torrent, verify_torrent,
 };
@@ -174,17 +175,19 @@ pub fn verify_staged_torrent(
         .map_err(DraftServiceError::Torrent)
 }
 
-struct StagedAttempt {
+pub(crate) struct StagedAttempt {
     staging_root: PathBuf,
     attempt_id: String,
-    root: PathBuf,
-    course_id: String,
-    course_version: String,
-    files: Vec<PackageFile>,
+    pub(crate) root: PathBuf,
+    pub(crate) course_id: String,
+    pub(crate) course_version: String,
+    pub(crate) title: String,
+    pub(crate) manifest_sha256: String,
+    pub(crate) files: Vec<PackageFile>,
 }
 
 impl StagedAttempt {
-    fn open(staging_root: &Path, attempt_id: &str) -> Result<Self, DraftServiceError> {
+    pub(crate) fn open(staging_root: &Path, attempt_id: &str) -> Result<Self, DraftServiceError> {
         if !is_completed_attempt(attempt_id) {
             return Err(DraftServiceError::InvalidAttempt("unknown staging attempt"));
         }
@@ -220,17 +223,25 @@ impl StagedAttempt {
                 "the staged files differ from course.json",
             ));
         }
+        let digest = Sha256::digest(&manifest_bytes);
+        let mut manifest_sha256 = String::with_capacity(64);
+        for byte in digest {
+            use std::fmt::Write as _;
+            let _ = write!(manifest_sha256, "{byte:02x}");
+        }
         Ok(Self {
             staging_root: staging_root.to_path_buf(),
             attempt_id: attempt_id.to_owned(),
             root,
             course_id: manifest.course_id,
             course_version: manifest.version,
+            title: manifest.title,
+            manifest_sha256,
             files,
         })
     }
 
-    fn torrent_path(&self) -> PathBuf {
+    pub(crate) fn torrent_path(&self) -> PathBuf {
         self.staging_root
             .join(format!("{}.torrent", self.attempt_id))
     }
@@ -288,7 +299,7 @@ fn read_bounded(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn read_torrent(path: &Path) -> Result<Vec<u8>, DraftServiceError> {
+pub(crate) fn read_torrent(path: &Path) -> Result<Vec<u8>, DraftServiceError> {
     read_bounded(path, MAX_TORRENT_BYTES)
         .map_err(|_| DraftServiceError::InvalidAttempt("the torrent file is missing or unreadable"))
 }

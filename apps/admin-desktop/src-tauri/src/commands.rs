@@ -4,7 +4,7 @@ use course_format::ResourceKind;
 use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
     DistributionOptions, DraftServiceError, DraftSummary, FindingSeverity, MetadataEdit,
-    PublishJobSnapshot, PublishStage, PublisherDrafts, StoredDraft, StructureEdit,
+    PublishJobSnapshot, PublishStage, PublisherDrafts, ReleaseRecord, StoredDraft, StructureEdit,
     inspect_draft_media, source_info,
 };
 use serde::{Deserialize, Serialize};
@@ -164,6 +164,24 @@ pub(crate) struct PublishJobDto {
     progress: Option<JobProgressDto>,
     prepared: Option<PreparedReleaseDto>,
     failure: Option<JobFailureDto>,
+    release_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReleaseDto {
+    release_id: String,
+    course_id: String,
+    course_version: String,
+    title: String,
+    info_hash: String,
+    magnet: String,
+    piece_length: u64,
+    piece_count: u64,
+    file_count: u64,
+    total_bytes: u64,
+    published_at_unix_seconds: u64,
+    status: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -372,6 +390,38 @@ pub(crate) fn cancel_publish_job(job_id: String, state: State<'_, AppState>) -> 
 }
 
 #[tauri::command]
+pub(crate) async fn activate_release(
+    app: AppHandle,
+    job_id: String,
+    state: State<'_, AppState>,
+) -> Result<ReleaseDto, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    let jobs = Arc::clone(&state.publish_jobs);
+    let releases_root = state.releases_root.clone();
+    let (record, snapshot) = run_blocking(move || {
+        jobs.activate(&job_id, &mut *lock_drafts(&drafts)?, &releases_root)
+            .map_err(|error| service_error("release_activation_failed", error))
+    })
+    .await?;
+    let _ = app.emit(PUBLISH_JOB_EVENT, PublishJobDto::from(&snapshot));
+    Ok(ReleaseDto::from(record))
+}
+
+#[tauri::command]
+pub(crate) async fn list_releases(
+    state: State<'_, AppState>,
+) -> Result<Vec<ReleaseDto>, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || {
+        lock_drafts(&drafts)?
+            .releases()
+            .map(|records| records.into_iter().map(ReleaseDto::from).collect())
+            .map_err(|error| service_error("release_list_failed", error))
+    })
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn validate_draft(
     draft_id: String,
     state: State<'_, AppState>,
@@ -491,6 +541,27 @@ impl From<&PublishJobSnapshot> for PublishJobDto {
                 code: failure.code,
                 message: failure.message.clone(),
             }),
+            release_id: snapshot.release_id.clone(),
+        }
+    }
+}
+
+impl From<ReleaseRecord> for ReleaseDto {
+    fn from(record: ReleaseRecord) -> Self {
+        let release = record.release;
+        Self {
+            release_id: release.release_id,
+            course_id: release.course_id,
+            course_version: release.course_version,
+            title: release.title,
+            info_hash: release.info_hash,
+            magnet: release.magnet,
+            piece_length: release.piece_length,
+            piece_count: release.piece_count,
+            file_count: release.file_count,
+            total_bytes: release.total_bytes,
+            published_at_unix_seconds: record.published_at_unix_seconds,
+            status: record.status.as_str(),
         }
     }
 }
@@ -672,6 +743,9 @@ fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
         | DraftServiceError::Torrent(_)
         | DraftServiceError::InvalidAttempt(_) => CommandError::new(code, error),
         DraftServiceError::JobActive => CommandError::new("job_active", error),
+        DraftServiceError::VersionAlreadyReleased { .. } => {
+            CommandError::new("version_already_released", error)
+        }
     }
 }
 
@@ -959,8 +1033,48 @@ mod tests {
         assert_eq!(json["prepared"]["infoHash"].as_str().unwrap().len(), 40);
         assert_eq!(json["prepared"]["fileCount"], 2);
         assert!(json["failure"].is_null());
+        assert!(json["releaseId"].is_null());
         assert!(!json.to_string().contains(&*directory.to_string_lossy()));
+
+        let (record, published) = jobs
+            .activate(&job.job_id, &mut drafts, &directory.join("releases"))
+            .unwrap();
+        let release = serde_json::to_value(ReleaseDto::from(record)).unwrap();
+        assert_eq!(release["status"], "published");
+        assert_eq!(release["courseVersion"], "1.0.0");
+        assert_eq!(release["fileCount"], 2);
+        assert!(!release.to_string().contains(&*directory.to_string_lossy()));
+        let published = serde_json::to_value(PublishJobDto::from(&published)).unwrap();
+        assert_eq!(published["stage"], "PUBLISHED");
+        assert_eq!(published["releaseId"], release["releaseId"]);
+        let repeat = jobs.begin(&draft).unwrap();
+        jobs.run(
+            &repeat.job_id,
+            &draft,
+            &DistributionOptions::default(),
+            &mut |_| {},
+        );
+        let error = jobs
+            .activate(&repeat.job_id, &mut drafts, &directory.join("releases"))
+            .map_err(|error| service_error("release_activation_failed", error))
+            .unwrap_err();
+        assert_eq!(error.code, "version_already_released");
+        make_writable(&directory);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn make_writable(path: &std::path::Path) {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                make_writable(&path);
+            } else {
+                let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+                #[expect(clippy::permissions_set_readonly_false, reason = "test cleanup")]
+                permissions.set_readonly(false);
+                std::fs::set_permissions(&path, permissions).unwrap();
+            }
+        }
     }
 
     #[test]

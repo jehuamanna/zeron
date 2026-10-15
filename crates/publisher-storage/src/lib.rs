@@ -1,4 +1,4 @@
-//! `SQLite` persistence for mutable publisher drafts.
+//! `SQLite` persistence for mutable publisher drafts and immutable release records.
 
 use std::{
     path::Path,
@@ -9,7 +9,7 @@ use course_publisher::DraftCourse;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// Path-free draft information for Admin course lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +35,80 @@ pub struct StoredDraft {
     pub draft: DraftCourse,
     /// Last successful save time as Unix seconds.
     pub updated_at_unix_seconds: u64,
+}
+
+/// Lifecycle of an activated release. Release bytes never change in any state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseStatus {
+    /// The course's current release.
+    Published,
+    /// A newer release of the same course was published.
+    Superseded,
+    /// Retained but hidden from active management.
+    Archived,
+}
+
+impl ReleaseStatus {
+    /// Stable lowercase name, as stored and exposed over IPC.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Published => "published",
+            Self::Superseded => "superseded",
+            Self::Archived => "archived",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "published" => Some(Self::Published),
+            "superseded" => Some(Self::Superseded),
+            "archived" => Some(Self::Archived),
+            _ => None,
+        }
+    }
+}
+
+/// Facts recorded when a verified preparation becomes an immutable release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewRelease {
+    /// Opaque release identity.
+    pub release_id: String,
+    /// Logical course identity.
+    pub course_id: String,
+    /// Released course version; unique per course.
+    pub course_version: String,
+    /// Display title at release time.
+    pub title: String,
+    /// Draft the release was prepared from.
+    pub draft_id: String,
+    /// Draft revision frozen into the release.
+    pub draft_revision: u64,
+    /// SHA-256 of the released `course.json`.
+    pub manifest_sha256: String,
+    /// v1 info hash.
+    pub info_hash: String,
+    /// Magnet link.
+    pub magnet: String,
+    /// Torrent piece length.
+    pub piece_length: u64,
+    /// Torrent piece count.
+    pub piece_count: u64,
+    /// Number of package files, including `course.json`.
+    pub file_count: u64,
+    /// Total package bytes.
+    pub total_bytes: u64,
+}
+
+/// A durable, immutable release record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseRecord {
+    /// Recorded release facts.
+    pub release: NewRelease,
+    /// Activation time as Unix seconds.
+    pub published_at_unix_seconds: u64,
+    /// Current lifecycle status.
+    pub status: ReleaseStatus,
 }
 
 /// Publisher persistence failure.
@@ -68,6 +142,15 @@ pub enum PublisherStorageError {
     /// The system clock cannot produce a Unix timestamp.
     #[error("system clock is before the Unix epoch")]
     InvalidSystemClock,
+    /// The course version was already released; versions are never reused.
+    #[error("course version {course_version} was already released")]
+    VersionAlreadyReleased {
+        /// Rejected version.
+        course_version: String,
+    },
+    /// A stored release status is not recognized.
+    #[error("stored release status `{0}` is not recognized")]
+    UnknownReleaseStatus(String),
     /// The database was created by a newer application.
     #[error("publisher schema version {found} is newer than supported version {supported}")]
     FutureSchema {
@@ -236,6 +319,143 @@ impl PublisherStorage {
             .map_err(PublisherStorageError::from)
     }
 
+    /// Record a release, marking the course's previously published release superseded.
+    ///
+    /// # Errors
+    /// Returns [`PublisherStorageError::VersionAlreadyReleased`] when the
+    /// course version already has a release, or a storage failure.
+    pub fn insert_release(
+        &mut self,
+        release: NewRelease,
+    ) -> Result<ReleaseRecord, PublisherStorageError> {
+        let published_at = now()?;
+        let transaction = self.connection.transaction()?;
+        let exists: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM releases WHERE course_id=?1 AND course_version=?2)",
+            params![release.course_id, release.course_version],
+            |row| row.get(0),
+        )?;
+        if exists {
+            return Err(PublisherStorageError::VersionAlreadyReleased {
+                course_version: release.course_version,
+            });
+        }
+        transaction.execute(
+            "UPDATE releases SET status='superseded' WHERE course_id=?1 AND status='published'",
+            [&release.course_id],
+        )?;
+        transaction.execute(
+            "INSERT INTO releases (release_id, course_id, course_version, title, draft_id, draft_revision,
+                manifest_sha256, info_hash, magnet, piece_length, piece_count, file_count, total_bytes,
+                published_at, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'published')",
+            params![
+                release.release_id,
+                release.course_id,
+                release.course_version,
+                release.title,
+                release.draft_id,
+                to_i64(release.draft_revision, "draft revision")?,
+                release.manifest_sha256,
+                release.info_hash,
+                release.magnet,
+                to_i64(release.piece_length, "piece length")?,
+                to_i64(release.piece_count, "piece count")?,
+                to_i64(release.file_count, "file count")?,
+                to_i64(release.total_bytes, "total bytes")?,
+                to_i64(published_at, "publish timestamp")?,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(ReleaseRecord {
+            release,
+            published_at_unix_seconds: published_at,
+            status: ReleaseStatus::Published,
+        })
+    }
+
+    /// Whether a course version already has a release.
+    ///
+    /// # Errors
+    /// Returns an error when storage cannot be queried.
+    pub fn version_released(
+        &self,
+        course_id: &str,
+        course_version: &str,
+    ) -> Result<bool, PublisherStorageError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM releases WHERE course_id=?1 AND course_version=?2)",
+            params![course_id, course_version],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Load one release record.
+    ///
+    /// # Errors
+    /// Returns an error when storage cannot be queried or decoded.
+    pub fn release(
+        &self,
+        release_id: &str,
+    ) -> Result<Option<ReleaseRecord>, PublisherStorageError> {
+        Ok(self
+            .query_releases("WHERE release_id=?1", [release_id])?
+            .into_iter()
+            .next())
+    }
+
+    /// All releases, newest first.
+    ///
+    /// # Errors
+    /// Returns an error when storage cannot be queried or decoded.
+    pub fn releases(&self) -> Result<Vec<ReleaseRecord>, PublisherStorageError> {
+        self.query_releases("", [])
+    }
+
+    fn query_releases(
+        &self,
+        filter: &str,
+        parameters: impl rusqlite::Params,
+    ) -> Result<Vec<ReleaseRecord>, PublisherStorageError> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT release_id, course_id, course_version, title, draft_id, draft_revision,
+                manifest_sha256, info_hash, magnet, piece_length, piece_count, file_count, total_bytes,
+                published_at, status
+             FROM releases {filter} ORDER BY published_at DESC, release_id"
+        ))?;
+        let rows = statement.query_map(parameters, |row| {
+            Ok((
+                NewRelease {
+                    release_id: row.get(0)?,
+                    course_id: row.get(1)?,
+                    course_version: row.get(2)?,
+                    title: row.get(3)?,
+                    draft_id: row.get(4)?,
+                    draft_revision: from_i64(row.get(5)?, 5)?,
+                    manifest_sha256: row.get(6)?,
+                    info_hash: row.get(7)?,
+                    magnet: row.get(8)?,
+                    piece_length: from_i64(row.get(9)?, 9)?,
+                    piece_count: from_i64(row.get(10)?, 10)?,
+                    file_count: from_i64(row.get(11)?, 11)?,
+                    total_bytes: from_i64(row.get(12)?, 12)?,
+                },
+                from_i64(row.get(13)?, 13)?,
+                row.get::<_, String>(14)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (release, published_at, status) = row?;
+            Ok(ReleaseRecord {
+                release,
+                published_at_unix_seconds: published_at,
+                status: ReleaseStatus::parse(&status)
+                    .ok_or(PublisherStorageError::UnknownReleaseStatus(status))?,
+            })
+        })
+        .collect()
+    }
+
     fn current_revision(&self, draft_id: &str) -> Result<Option<u64>, PublisherStorageError> {
         let value: Option<i64> = self
             .connection
@@ -263,7 +483,7 @@ fn migrate(connection: &mut Connection) -> Result<(), PublisherStorageError> {
             supported: SCHEMA_VERSION,
         });
     }
-    if found == 0 {
+    if found < 1 {
         let transaction = connection.transaction()?;
         transaction.execute_batch(
             "CREATE TABLE drafts (
@@ -276,6 +496,32 @@ fn migrate(connection: &mut Connection) -> Result<(), PublisherStorageError> {
                 updated_at INTEGER NOT NULL CHECK (updated_at >= 0)
              );
              PRAGMA user_version = 1;",
+        )?;
+        transaction.commit()?;
+    }
+    if found < 2 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE releases (
+                release_id TEXT PRIMARY KEY NOT NULL,
+                course_id TEXT NOT NULL,
+                course_version TEXT NOT NULL,
+                title TEXT NOT NULL,
+                draft_id TEXT NOT NULL,
+                draft_revision INTEGER NOT NULL CHECK (draft_revision >= 0),
+                manifest_sha256 TEXT NOT NULL,
+                info_hash TEXT NOT NULL,
+                magnet TEXT NOT NULL,
+                piece_length INTEGER NOT NULL CHECK (piece_length > 0),
+                piece_count INTEGER NOT NULL CHECK (piece_count >= 0),
+                file_count INTEGER NOT NULL CHECK (file_count > 0),
+                total_bytes INTEGER NOT NULL CHECK (total_bytes >= 0),
+                published_at INTEGER NOT NULL CHECK (published_at >= 0),
+                status TEXT NOT NULL CHECK (status IN ('published', 'superseded', 'archived')),
+                UNIQUE (course_id, course_version)
+             );
+             CREATE INDEX releases_by_course ON releases (course_id, published_at);
+             PRAGMA user_version = 2;",
         )?;
         transaction.commit()?;
     }
