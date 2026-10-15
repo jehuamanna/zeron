@@ -24,10 +24,12 @@ export function StorageSettings() {
   });
   if (storage.isPending) return null;
   if (storage.isError) return <p className="mt-6 text-xs text-slate-500">Storage use is unavailable while the torrent engine is not running.</p>;
-  return <StorageForm key={String(storage.data.cacheLimitBytes)} streamedBytes={storage.data.streamedBytes} limitBytes={storage.data.cacheLimitBytes} saving={save.isPending} error={save.isError ? (asCommandError(save.error)?.message ?? "The limit could not be saved.") : null} freed={save.isSuccess ? save.data.freedBytes : null} onSave={(limit) => save.mutate(limit)} />;
+  return <StorageForm key={String(storage.data.cacheLimitBytes)} availableBytes={storage.data.availableBytes} lowDisk={storage.data.lowDisk} streamedBytes={storage.data.streamedBytes} limitBytes={storage.data.cacheLimitBytes} saving={save.isPending} error={save.isError ? (asCommandError(save.error)?.message ?? "The limit could not be saved.") : null} freed={save.isSuccess ? save.data.freedBytes : null} onSave={(limit) => save.mutate(limit)} />;
 }
 
-function StorageForm({ streamedBytes, limitBytes, saving, error, freed, onSave }: {
+function StorageForm({ availableBytes, lowDisk, streamedBytes, limitBytes, saving, error, freed, onSave }: {
+  availableBytes: number | null;
+  lowDisk: boolean;
   streamedBytes: number;
   limitBytes: number | null;
   saving: boolean;
@@ -46,6 +48,8 @@ function StorageForm({ streamedBytes, limitBytes, saving, error, freed, onSave }
   return (
     <form onSubmit={submit} aria-labelledby="storage-heading" className="mt-6 border-t border-white/10 pt-5">
       <h2 id="storage-heading" className="font-medium">Storage</h2>
+      {availableBytes !== null ? <p className="mt-1 text-xs text-slate-400">{formatSize(availableBytes)} free on the downloads disk. Zeron pauses downloads when less than 1 GB is free.</p> : null}
+      {lowDisk ? <p role="alert" className="mt-1 text-xs text-amber-200">Downloads are paused because the disk is nearly full. They resume once space is freed.</p> : null}
       <p className="mt-1 text-xs text-slate-400">Streamed lessons that are not kept offline use {formatSize(streamedBytes)}. Above the limit, the least recently played are removed; kept lessons never are.</p>
       <div className="mt-3 flex flex-wrap items-end gap-4">
         <label className="text-xs text-slate-300">

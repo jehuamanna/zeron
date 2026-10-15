@@ -171,11 +171,21 @@ impl PublishJobs {
         Ok((record, published))
     }
 
-    /// Register a new job for a frozen draft snapshot.
+    /// Register a new job for a frozen draft snapshot. Refuses when copying
+    /// the draft's source files into staging would nearly fill the disk.
     ///
     /// # Errors
-    /// Returns [`DraftServiceError::JobActive`] when another job is running.
+    /// Returns [`DraftServiceError::JobActive`] when another job is running,
+    /// or [`DraftServiceError::InsufficientSpace`].
     pub fn begin(&self, draft: &DraftCourse) -> Result<PublishJobSnapshot, DraftServiceError> {
+        let needed: u64 = draft
+            .modules
+            .iter()
+            .flat_map(|module| &module.lessons)
+            .flat_map(|lesson| &lesson.resources)
+            .filter_map(|resource| crate::source_info(resource).byte_length)
+            .sum();
+        crate::check_space(crate::available_bytes(&self.staging_root), needed)?;
         let job_id = opaque_id("job")?;
         let mut registry = self.lock();
         if registry.active.is_some() {

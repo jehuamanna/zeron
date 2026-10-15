@@ -1,6 +1,7 @@
 //! Application use cases shared by Zeron desktop composition roots.
 
 mod cache;
+mod disk;
 mod downloads;
 mod library;
 mod local_import;
@@ -9,6 +10,7 @@ mod streaming;
 mod torrent_import;
 
 pub use cache::{CacheError, CourseCache, RemovalReport};
+pub use disk::{DISK_RESERVE_BYTES, DiskGuard, DiskState, available_bytes, fits};
 pub use downloads::{Availability, DownloadScope};
 pub use library::{
     CourseImportReceipt, CourseLibrary, LibraryError, LocalResource, TorrentResource,

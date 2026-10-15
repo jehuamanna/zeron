@@ -6,16 +6,17 @@ use std::{
 use course_format::ResourceKind;
 use learning_application::{
     Availability, CacheError, CancellationFlag, CourseImportReceipt, CourseLibrary,
-    CourseSharingStatus, DownloadScope, EngineError, ImportError, InfoHash, LibraryError,
-    LocalResource, NetworkProfile, PeerReachability, RateLimits, SharingError, TorrentEngine,
-    TorrentImportSnapshot, TorrentImportStage, TorrentResource, TorrentSource, TransferState,
+    CourseSharingStatus, DISK_RESERVE_BYTES, DownloadScope, EngineError, ImportError, InfoHash,
+    LibraryError, LocalResource, NetworkProfile, PeerReachability, RateLimits, SharingError,
+    TorrentEngine, TorrentImportSnapshot, TorrentImportStage, TorrentResource, TorrentSource,
+    TransferState, fits,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::{AppState, media::TorrentMedia};
+use crate::{AppState, Router, media::TorrentMedia};
 
 const TORRENT_IMPORT_EVENT: &str = "torrent-import";
 /// Course torrents list a handful of files; anything larger is not a Zeron release.
@@ -176,6 +177,10 @@ pub(crate) struct StorageDto {
     /// Verified bytes of lessons that are not kept offline.
     streamed_bytes: u64,
     cache_limit_bytes: Option<u64>,
+    /// Free bytes on the downloads disk, when the platform can tell.
+    available_bytes: Option<u64>,
+    /// Downloads are paused because the disk is nearly full.
+    low_disk: bool,
 }
 
 /// What a torrent course keeps offline.
@@ -822,6 +827,8 @@ pub(crate) async fn set_course_download(
     state: State<'_, AppState>,
 ) -> Result<CourseDownloadsDto, CommandError> {
     let library = Arc::clone(&state.library);
+    let router = state.torrents.router.clone();
+    let disk = state.torrents.disk.clone();
     let (selection, info_hash, kept) = run_blocking(move || {
         let mut library = lock_library(&library)?;
         let scope = match scope {
@@ -830,6 +837,10 @@ pub(crate) async fn set_course_download(
             DownloadScopeInput::Lesson { id } => DownloadScope::Lesson(id),
         };
         let failed = |error| command_error("library_query_failed", error);
+        let already_kept = library
+            .downloads(&course_id)
+            .map_err(failed)?
+            .contains(&scope);
         if !library
             .set_download(&course_id, &scope, keep)
             .map_err(failed)?
@@ -840,6 +851,16 @@ pub(crate) async fn set_course_download(
                     "only lessons, modules, and courses imported from a torrent can be kept offline"
                         .to_owned(),
             });
+        }
+        if keep && !already_kept {
+            let needed = remaining_kept_bytes(&library, router.as_deref(), &course_id)?;
+            let available = disk.as_ref().and_then(|disk| disk.measure());
+            if !fits(available, needed) {
+                library
+                    .set_download(&course_id, &scope, false)
+                    .map_err(failed)?;
+                return Err(insufficient_space(needed, available));
+            }
         }
         Ok((
             library.download_selection(&course_id).map_err(failed)?,
@@ -886,10 +907,13 @@ pub(crate) async fn remove_downloads(
 #[tauri::command]
 pub(crate) async fn get_storage(state: State<'_, AppState>) -> Result<StorageDto, CommandError> {
     let cache = state.torrents.cache.clone().ok_or_else(cache_unavailable)?;
+    let disk = state.torrents.disk.clone();
     run_blocking(move || {
         Ok(StorageDto {
             streamed_bytes: cache.streamed_bytes().map_err(cache_error)?,
             cache_limit_bytes: cache.limit().map_err(cache_error)?,
+            available_bytes: disk.as_ref().and_then(|disk| disk.measure()),
+            low_disk: disk.is_some_and(|disk| disk.state().low),
         })
     })
     .await
@@ -996,6 +1020,48 @@ pub(crate) async fn set_course_paused(
         downloads(&library, &course_id)
     })
     .await
+}
+
+/// Bytes still to download for every kept lesson of a course.
+fn remaining_kept_bytes(
+    library: &CourseLibrary,
+    engine: Option<&Router>,
+    course_id: &str,
+) -> Result<u64, CommandError> {
+    let failed = |error| command_error("library_query_failed", error);
+    let kept = library.committed_resources(course_id).map_err(failed)?;
+    let resources = library.torrent_resources(course_id).map_err(failed)?;
+    let verified = resources
+        .first()
+        .and_then(|resource| InfoHash::parse(&resource.info_hash).ok())
+        .and_then(|info_hash| engine.and_then(|engine| engine.transfer(&info_hash)))
+        .map(|stats| stats.file_verified_bytes)
+        .unwrap_or_default();
+    Ok(resources
+        .iter()
+        .filter(|resource| kept.contains(&resource.resource_id))
+        .map(|resource| {
+            let done = verified.get(resource.file_index).copied().unwrap_or(0);
+            resource.byte_length.saturating_sub(done)
+        })
+        .sum())
+}
+
+/// Sizes in the message are rounded to tenths of a gigabyte.
+fn insufficient_space(needed: u64, available: Option<u64>) -> CommandError {
+    let gib = |bytes: u64| {
+        let tenths = (bytes.saturating_mul(10).saturating_add(1 << 29)) / (1 << 30);
+        format!("{}.{} GB", tenths / 10, tenths % 10)
+    };
+    CommandError {
+        code: "insufficient_space",
+        message: format!(
+            "keeping this offline needs about {} more, but only {} is free and Zeron leaves {} free",
+            gib(needed),
+            gib(available.unwrap_or(0)),
+            gib(DISK_RESERVE_BYTES)
+        ),
+    }
 }
 
 fn downloads(library: &CourseLibrary, course_id: &str) -> Result<CourseDownloadsDto, CommandError> {
@@ -1285,6 +1351,23 @@ mod tests {
         assert_eq!(
             cache_error(CacheError::NotTorrentCourse).code,
             "not_torrent_course"
+        );
+    }
+
+    #[test]
+    fn insufficient_space_reports_sizes_in_gigabytes() {
+        let error = insufficient_space(3 << 30, Some((3 << 30) / 2));
+        assert_eq!(error.code, "insufficient_space");
+        assert!(error.message.contains("3.0 GB more"), "{}", error.message);
+        assert!(
+            error.message.contains("only 1.5 GB is free"),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("leaves 1.0 GB free"),
+            "{}",
+            error.message
         );
     }
 

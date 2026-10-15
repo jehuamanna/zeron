@@ -80,6 +80,10 @@ export interface StorageUse {
   /** Bytes of streamed lessons that are not kept offline. */
   streamedBytes: number;
   cacheLimitBytes: number | null;
+  /** Free bytes on the downloads disk, when known. */
+  availableBytes: number | null;
+  /** Downloads are paused because the disk is nearly full. */
+  lowDisk: boolean;
 }
 
 export type DownloadScope = { kind: "course" } | { kind: "module"; id: string } | { kind: "lesson"; id: string };

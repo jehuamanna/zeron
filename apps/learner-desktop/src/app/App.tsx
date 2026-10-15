@@ -76,6 +76,13 @@ export function App() {
 
   const availabilityById = new Map((availability.data ?? []).map((item) => [item.resourceId, item]));
   const offline = useCourseDownloads(selectedCourseId ?? "", selectedCourseId !== null && torrentCourse);
+  const storage = useQuery({
+    queryKey: ["storage"],
+    queryFn: libraryApi.storage,
+    enabled: selectedCourseId !== null && torrentCourse,
+    refetchInterval: 10_000,
+  });
+  const lowDisk = storage.data?.lowDisk ?? false;
 
   const leaveCourse = () => {
     setMediaUrl(null);
@@ -151,7 +158,7 @@ export function App() {
                           verifiedPercent={torrentCourse ? (downloaded.get(playing) ?? 0) : null}
                           onRetry={() => openMedia.mutate(playing)}
                           startAt={startAt}
-                          transfersPaused={offline.downloads?.paused ?? false}
+                          transfersPaused={(offline.downloads?.paused ?? false) || lowDisk}
                           onPosition={savePosition(detail.data.courseId, playing)}
                         />
                       ) : (
@@ -201,6 +208,7 @@ export function App() {
                             Freed {formatSize(offline.remove.data.freedBytes)}. Lessons kept offline were not touched.
                           </p>
                         ) : null}
+                        {lowDisk ? <p role="alert" className="text-xs text-amber-200">Downloads are paused because less than 1 GB is free on this disk. Free up space to continue.</p> : null}
                         {offline.downloads?.paused ? <p className="text-xs text-amber-200">Downloads and sharing are paused. Lessons already on this computer still play.</p> : null}
                         <p className="text-xs text-slate-500">Kept lessons download in full. Stopping keeps what is already on this computer.</p>
                         {offline.error ? <p role="alert" className="text-xs text-red-300">{offline.error}</p> : null}

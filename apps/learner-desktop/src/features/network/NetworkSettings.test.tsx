@@ -177,13 +177,14 @@ describe("network settings", () => {
   it("shows streamed-lesson storage and saves a cap in GB", async () => {
     vi.mocked(libraryApi.getNetworkSettings).mockResolvedValue(settings({}));
     let limit: number | null = null;
-    vi.mocked(libraryApi.storage).mockImplementation(async () => ({ streamedBytes: 1.5 * 1024 ** 3, cacheLimitBytes: limit }));
+    vi.mocked(libraryApi.storage).mockImplementation(async () => ({ streamedBytes: 1.5 * 1024 ** 3, cacheLimitBytes: limit, availableBytes: 20 * 1024 ** 3, lowDisk: false }));
     vi.mocked(libraryApi.setCacheLimit).mockImplementation(async (bytes) => {
       limit = bytes;
       return { removed: ["a"], freedBytes: 300 * 1024 ** 2, kept: [] };
     });
     const { view } = renderSettings();
     await waitFor(() => expect(view.container.textContent).toContain("use 1.5 GB"));
+    expect(view.container.textContent).toContain("20.0 GB free on the downloads disk");
     const field = view.getByLabelText("Limit for streamed lessons (GB)") as HTMLInputElement;
     fireEvent.change(field, { target: { value: "0.1" } });
     fireEvent.click(view.getByRole("button", { name: "Save limit" }));

@@ -16,6 +16,9 @@ torrent-metainfo = { path = "../torrent-metainfo" }
 torrent-port = { path = "../torrent-port" }
 url.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
+
 [dev-dependencies]
 learning-application = { path = "../learning-application" }
 sha1.workspace = true

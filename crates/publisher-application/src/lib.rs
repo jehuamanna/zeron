@@ -1,5 +1,6 @@
 //! Admin publisher use cases shared by Zeron composition roots.
 
+mod disk;
 mod drops;
 mod publish_jobs;
 mod releases;
@@ -20,6 +21,7 @@ pub use course_publisher::{FindingSeverity, MediaFinding};
 pub use course_publisher::{
     PackagingCancellation, PackagingError, PackagingLimits, StagingProgress,
 };
+pub use disk::{DISK_RESERVE_BYTES, available_bytes, check_space};
 pub use drops::{
     DropInbox, DropLimits, DropOutcome, DropPlan, PlannedFile, PlannedModule, SkipReason,
     SkippedEntry, clean_title, natural_cmp, plan_drop,
@@ -220,6 +222,18 @@ pub enum DraftServiceError {
     /// The draft has a release preparation that is running or ready to publish.
     #[error("finish or cancel this draft's release preparation first")]
     DraftBusy,
+    /// Staging the release would leave too little free disk space.
+    #[error(
+        "preparing this release needs about {} of free disk space, but only {} is free and 1.0 GB is kept free",
+        gigabytes(*needed_bytes),
+        gigabytes(*available_bytes)
+    )]
+    InsufficientSpace {
+        /// Bytes the staged copy needs.
+        needed_bytes: u64,
+        /// Bytes free on the staging disk.
+        available_bytes: u64,
+    },
     /// Archived releases are kept on disk but never seeded again.
     #[error("archived releases cannot be seeded")]
     ReleaseArchived,
@@ -615,4 +629,10 @@ pub(crate) fn opaque_id(prefix: &str) -> Result<String, DraftServiceError> {
         let _ = write!(id, "{byte:02x}");
     }
     Ok(id)
+}
+
+/// A byte count in gigabytes with one decimal, for messages.
+fn gigabytes(bytes: u64) -> String {
+    let tenths = (bytes.saturating_mul(10).saturating_add(1 << 29)) / (1 << 30);
+    format!("{}.{} GB", tenths / 10, tenths % 10)
 }

@@ -10,8 +10,8 @@ use std::{
 
 use learning_application::TorrentEngine as _;
 use learning_application::{
-    CourseCache, CourseLibrary, CourseSharing, ImportLimits, NetworkProfile, PeerReachability,
-    TorrentImportTimeouts, TorrentImports, TransferRouter,
+    CourseCache, CourseLibrary, CourseSharing, DiskGuard, ImportLimits, NetworkProfile,
+    PeerReachability, TorrentImportTimeouts, TorrentImports, TransferRouter,
 };
 use media_gateway::{GatewayLimits, MediaGateway};
 use tauri::{Manager, RunEvent};
@@ -44,7 +44,12 @@ pub(crate) struct Torrents {
     pub(crate) sharing: Option<Arc<CourseSharing<LibrqbitEngine>>>,
     /// Removes streamed lessons the learner does not keep offline.
     pub(crate) cache: Option<Arc<CourseCache<Router>>>,
+    /// Pauses downloads while the disk is nearly full.
+    pub(crate) disk: Option<Arc<DiskGuard<Router>>>,
 }
+
+/// How often free disk space is checked while downloads may run.
+const DISK_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Start the learner desktop application.
 ///
@@ -81,11 +86,19 @@ pub fn run() {
             }
             if let Some(imports) = torrents.imports.clone() {
                 let cache = torrents.cache.clone();
+                let disk = torrents.disk.clone();
                 tauri::async_runtime::spawn(async move {
                     let _ = imports.restore().await;
                     // Honor the cache cap once restored courses report their bytes.
                     if let Some(cache) = cache {
                         let _ = cache.enforce_limit(None).await;
+                    }
+                    // Keep watching free space for as long as the app runs.
+                    if let Some(disk) = disk {
+                        loop {
+                            disk.check().await;
+                            tokio::time::sleep(DISK_CHECK_INTERVAL).await;
+                        }
                     }
                 });
             }
@@ -207,6 +220,7 @@ fn start_torrents(
             imports: None,
             sharing: None,
             cache: None,
+            disk: None,
         };
     };
     let shared = start("engine-sharing", true);
@@ -221,6 +235,11 @@ fn start_torrents(
         engines: std::iter::once(private).chain(shared).collect(),
         router: Some(Arc::clone(&router)),
         cache: Some(Arc::new(CourseCache::new(
+            Arc::clone(&router),
+            Arc::clone(library),
+            courses_root.clone(),
+        ))),
+        disk: Some(Arc::new(DiskGuard::new(
             Arc::clone(&router),
             Arc::clone(library),
             courses_root.clone(),

@@ -1397,6 +1397,9 @@ pub(crate) fn service_error(code: &'static str, error: DraftServiceError) -> Com
         | DraftServiceError::InvalidAttempt(_) => CommandError::new(code, error),
         DraftServiceError::JobActive => CommandError::new("job_active", error),
         DraftServiceError::DraftBusy => CommandError::new("draft_busy", error),
+        DraftServiceError::InsufficientSpace { .. } => {
+            CommandError::new("insufficient_space", error)
+        }
         DraftServiceError::ReleaseArchived => CommandError::new("release_archived", error),
         DraftServiceError::ReleaseNotArchived => CommandError::new("release_not_archived", error),
         DraftServiceError::Seeding(_) => CommandError::new("seeding_failed", error),
@@ -1865,6 +1868,18 @@ mod tests {
         assert!(!deleted.to_string().contains(&*directory.to_string_lossy()));
         make_writable(&directory);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn insufficient_space_has_its_own_code() {
+        let error = service_error(
+            "publish_failed",
+            DraftServiceError::InsufficientSpace {
+                needed_bytes: 1,
+                available_bytes: 2,
+            },
+        );
+        assert_eq!(error.code, "insufficient_space");
     }
 
     #[test]

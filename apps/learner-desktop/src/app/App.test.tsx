@@ -29,6 +29,7 @@ vi.mock("../services/library", async (importOriginal) => ({
     setDownload: vi.fn(),
     setPaused: vi.fn(),
     removeDownloads: vi.fn(),
+    storage: vi.fn(() => Promise.resolve({ streamedBytes: 0, cacheLimitBytes: null, availableBytes: 50 * 1024 ** 3, lowDisk: false })),
     savePlaybackPosition: vi.fn(() => Promise.resolve(true)),
   },
 }));
@@ -222,6 +223,19 @@ describe("learner library", () => {
     fireEvent.click(view.getByRole("button", { name: "Free up space" }));
     await waitFor(() => expect(libraryApi.removeDownloads).toHaveBeenLastCalledWith("course_torrent", undefined));
     await waitFor(() => expect(view.container.textContent).toContain("Freed 5 MB. Lessons kept offline were not touched."));
+  });
+
+  it("explains that downloads pause when the disk is nearly full", async () => {
+    useLibraryUi.getState().selectCourse("course_torrent");
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "course_torrent", courseVersion: "1.0.0", title: "Torrent Course", description: null,
+      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), modules: [],
+    });
+    vi.mocked(libraryApi.storage).mockResolvedValue({ streamedBytes: 0, cacheLimitBytes: null, availableBytes: 200 * 1024 ** 2, lowDisk: true });
+    const view = renderApp();
+    await waitFor(() => expect(view.container.textContent).toContain("Downloads are paused because less than 1 GB is free"));
   });
 
   it("keeps lessons, modules, and whole courses offline and labels their availability", async () => {

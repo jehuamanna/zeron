@@ -1289,3 +1289,61 @@ async fn links_planted_in_a_course_folder_are_never_followed() {
     course.learner.shutdown().await;
     course.seeder.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn low_disk_space_pauses_downloads_and_recovery_resumes_only_those() {
+    use learning_application::{DISK_RESERVE_BYTES, DiskGuard, available_bytes, fits};
+
+    #[cfg(unix)]
+    assert!(available_bytes(&std::env::temp_dir()).is_some_and(|bytes| bytes > 0));
+    assert!(fits(None, u64::MAX));
+    assert!(fits(Some(2 * DISK_RESERVE_BYTES), DISK_RESERVE_BYTES / 2));
+    assert!(!fits(Some(DISK_RESERVE_BYTES + 10), DISK_RESERVE_BYTES / 2));
+
+    let course = imported_course("disk").await;
+    let state = || course.learner.transfer(&course.info_hash).unwrap().state;
+    let guard = DiskGuard::new(
+        Arc::clone(&course.learner),
+        Arc::clone(&course.library),
+        course.courses.clone(),
+    );
+    assert!(!guard.apply(Some(10 * DISK_RESERVE_BYTES)).await.low);
+    assert_ne!(state(), TransferState::Paused);
+
+    let low = guard.apply(Some(DISK_RESERVE_BYTES / 4)).await;
+    assert!(low.low);
+    assert_eq!(state(), TransferState::Paused);
+    assert!(
+        !course
+            .library
+            .lock()
+            .unwrap()
+            .course_paused(&course.course_id)
+            .unwrap()
+    );
+    // Still within the hysteresis band: stays paused.
+    assert!(
+        guard
+            .apply(Some(DISK_RESERVE_BYTES + DISK_RESERVE_BYTES / 4))
+            .await
+            .low
+    );
+    assert_eq!(state(), TransferState::Paused);
+    assert!(!guard.apply(Some(10 * DISK_RESERVE_BYTES)).await.low);
+    assert_ne!(state(), TransferState::Paused);
+
+    // A course the learner paused is neither paused by the guard nor resumed by it.
+    course
+        .library
+        .lock()
+        .unwrap()
+        .set_course_paused(&course.course_id, true)
+        .unwrap();
+    course.learner.pause(&course.info_hash).await.unwrap();
+    guard.apply(Some(1)).await;
+    guard.apply(Some(10 * DISK_RESERVE_BYTES)).await;
+    assert_eq!(state(), TransferState::Paused);
+    assert!(guard.check().await.available_bytes.is_some() || cfg!(not(unix)));
+    course.learner.shutdown().await;
+    course.seeder.shutdown().await;
+}

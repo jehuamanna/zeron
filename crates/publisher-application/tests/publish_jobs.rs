@@ -297,3 +297,28 @@ fn a_draft_is_in_progress_until_its_job_is_published_failed_or_cancelled() {
     );
     assert!(!jobs.draft_in_progress(&draft.draft_id));
 }
+
+#[test]
+fn preparation_refuses_to_fill_the_disk() {
+    use publisher_application::{DISK_RESERVE_BYTES, available_bytes, check_space};
+
+    #[cfg(unix)]
+    assert!(
+        available_bytes(&std::env::temp_dir().join("missing/child")).is_some_and(|bytes| bytes > 0)
+    );
+    check_space(None, u64::MAX).unwrap();
+    check_space(Some(2 * DISK_RESERVE_BYTES), DISK_RESERVE_BYTES / 2).unwrap();
+    let refused = check_space(
+        Some(DISK_RESERVE_BYTES + DISK_RESERVE_BYTES / 5),
+        DISK_RESERVE_BYTES / 2,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        refused,
+        DraftServiceError::InsufficientSpace { .. }
+    ));
+    assert_eq!(
+        refused.to_string(),
+        "preparing this release needs about 0.5 GB of free disk space, but only 1.2 GB is free and 1.0 GB is kept free"
+    );
+}
