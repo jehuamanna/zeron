@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { libraryApi, type CourseSharing } from "../../services/library";
 import { CourseSharingCard } from "./CourseSharingCard";
@@ -37,6 +37,8 @@ function renderCard() {
 }
 
 const toggle = (container: HTMLElement) => container.querySelector<HTMLButtonElement>('[role="switch"]');
+
+afterEach(cleanup);
 
 describe("course sharing", () => {
   beforeEach(() => vi.clearAllMocks());

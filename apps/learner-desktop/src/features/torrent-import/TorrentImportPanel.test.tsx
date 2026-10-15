@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { libraryApi, type TorrentImport } from "../../services/library";
 import { useLibraryUi } from "../../stores/library";
@@ -54,6 +54,8 @@ async function pasteMagnet(container: HTMLElement) {
   fireEvent.submit(container.querySelector("form")!);
   await waitFor(() => expect(libraryApi.importMagnet).toHaveBeenCalledWith(magnet));
 }
+
+afterEach(cleanup);
 
 describe("torrent import", () => {
   beforeEach(() => {
