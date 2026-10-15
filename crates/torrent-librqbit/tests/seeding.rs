@@ -1080,3 +1080,88 @@ async fn a_stream_survives_losing_one_of_two_seeders() {
     learner.shutdown().await;
     second.shutdown().await;
 }
+
+/// Selecting a lesson downloads it in full without a reader; other lessons
+/// stay unselected apart from shared boundary pieces, and deselecting keeps
+/// what was verified.
+#[tokio::test(flavor = "multi_thread")]
+async fn selected_files_download_in_full_and_stay_after_deselection() {
+    use torrent_port::{ResolveRequest, TorrentSource};
+
+    const LESSON: usize = 6_000_000;
+    let scratch = Scratch::new("select");
+    let release = publish_lessons(&scratch.0, &[LESSON; 3]);
+    let seeder = engine(&scratch.0).await;
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    wait_for_state(&seeder, &info_hash, TransferState::Seeding).await;
+    let learner = loopback(&scratch.0, "learner", false).await;
+    let resolved = learner
+        .resolve(ResolveRequest {
+            source: TorrentSource::Metainfo(release.torrent.clone()),
+            initial_peers: vec![],
+        })
+        .await
+        .unwrap();
+    let index_of = |suffix: &str| {
+        resolved
+            .files
+            .iter()
+            .find(|file| file.path.ends_with(suffix))
+            .unwrap()
+            .index
+    };
+    let (chosen, others) = (
+        index_of("lesson-1.bin"),
+        [index_of("lesson-0.bin"), index_of("lesson-2.bin")],
+    );
+
+    assert!(matches!(
+        learner.select_files(&info_hash, &[0]).await,
+        Err(EngineError::NotActive)
+    ));
+    fetch_manifest(
+        &learner,
+        &release,
+        scratch.0.join("learner-content"),
+        seeder.listen_address().unwrap(),
+    )
+    .await;
+    wait_for_file(&learner, &info_hash, 0, resolved.files[0].length).await;
+    assert!(matches!(
+        learner
+            .select_files(&info_hash, &[resolved.files.len()])
+            .await,
+        Err(EngineError::InvalidTorrent(_))
+    ));
+    assert!(matches!(
+        learner.select_files(&info_hash, &[]).await,
+        Err(EngineError::InvalidTorrent(_))
+    ));
+
+    learner
+        .select_files(&info_hash, &[0, chosen])
+        .await
+        .unwrap();
+    let stats = wait_for_file(&learner, &info_hash, chosen, LESSON as u64).await;
+    for other in others {
+        assert!(
+            stats.file_verified_bytes[other] < LESSON as u64 / 2,
+            "only boundary pieces of unselected lessons: {stats:?}"
+        );
+    }
+
+    learner.select_files(&info_hash, &[0]).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        learner.transfer(&info_hash).unwrap().file_verified_bytes[chosen],
+        LESSON as u64
+    );
+    learner.shutdown().await;
+    seeder.shutdown().await;
+}

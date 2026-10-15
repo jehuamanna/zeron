@@ -296,6 +296,20 @@ pub trait TorrentEngine: Send + Sync {
         request: FetchRequest,
     ) -> impl Future<Output = Result<InfoHash, EngineError>> + Send;
 
+    /// Replace the set of files an active torrent downloads in full. Pieces of
+    /// files removed from the set stay verified on disk; streaming still
+    /// reads any file on demand.
+    ///
+    /// Engines without selection return [`EngineError::UnsupportedCapability`].
+    fn select_files(
+        &self,
+        info_hash: &InfoHash,
+        files: &[usize],
+    ) -> impl Future<Output = Result<(), EngineError>> + Send {
+        let _ = (info_hash, files);
+        async { Err(EngineError::UnsupportedCapability("file selection")) }
+    }
+
     /// Stop serving a torrent. Content files are never deleted.
     fn stop(&self, info_hash: &InfoHash) -> impl Future<Output = Result<(), EngineError>> + Send;
 

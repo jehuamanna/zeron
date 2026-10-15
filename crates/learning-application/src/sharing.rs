@@ -145,6 +145,18 @@ impl<E: TorrentEngine> TorrentEngine for TransferRouter<E> {
         Ok(fetched)
     }
 
+    /// Also updates the remembered request, so moving the torrent between
+    /// engines when sharing changes keeps the selection.
+    async fn select_files(&self, info_hash: &InfoHash, files: &[usize]) -> Result<(), EngineError> {
+        let _changes = self.changes.lock().await;
+        let engine = Arc::clone(self.engine_for(info_hash));
+        engine.select_files(info_hash, files).await?;
+        if let Some(request) = self.routes().requests.get_mut(info_hash) {
+            request.files = files.to_vec();
+        }
+        Ok(())
+    }
+
     async fn stop(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
         let _changes = self.changes.lock().await;
         self.routes().requests.remove(info_hash);

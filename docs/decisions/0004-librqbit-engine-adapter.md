@@ -54,6 +54,8 @@ AGENTS.md requires engine types to stay behind a capability port and every engin
 
    This supersedes the earlier "UPnP off in all profiles" rule. Reaching seeders across the internet behind home routers requires an inbound port, and the user chose an opt-in toggle over manual forwarding alone. The risk is that any LAN device can make the same UPnP request, and the router opens a port to the internet. That is why it is opt-in, scoped to `Internet`, and explained in both apps.
 
+9. **File selection replaces the download set** (added 2026-10-16). `TorrentEngine::select_files(info_hash, files)` maps to `Session::update_only_files` (librqbit 9.0.1, `src/session.rs`). That call re-queues newly selected pieces that are not verified yet and leaves verified pieces of deselected files on disk. The adapter rejects an empty set or out-of-range indices, and waits (bounded) for the initial check first. The port's default implementation returns `UnsupportedCapability`. `TransferRouter` delegates and records the new set, so moving a course between the private and sharing engines keeps it. With persistence off, selections do not survive a restart; the application re-applies them when it restores courses. Integration test: `selected_files_download_in_full_and_stay_after_deselection`.
+
 ## Consequences
 
 - Release immutability (ADR 0003) holds while seeding, at the cost of a small adapter-owned storage implementation (Unix `read_exact_at`, Windows `seek_read`).

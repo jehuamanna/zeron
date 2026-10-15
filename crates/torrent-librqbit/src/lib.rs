@@ -441,6 +441,41 @@ impl TorrentEngine for LibrqbitEngine {
         Ok(info_hash)
     }
 
+    /// Uses `Session::update_only_files` (librqbit 9.0.1 src/session.rs),
+    /// which re-queues newly selected pieces that are not verified yet.
+    /// Session persistence is off (ADR 0004 decision 3), so callers re-apply
+    /// selections after a restart.
+    async fn select_files(&self, info_hash: &InfoHash, files: &[usize]) -> Result<(), EngineError> {
+        let handle = self
+            .lock()
+            .get(info_hash)
+            .map(|active| Arc::clone(&active.handle))
+            .ok_or(EngineError::NotActive)?;
+        let file_count = handle
+            .with_metadata(|metadata| metadata.file_infos.len())
+            .map_err(|error| engine_error(&error))?;
+        if let Some(index) = files.iter().find(|&&index| index >= file_count) {
+            return Err(EngineError::InvalidTorrent(format!(
+                "the torrent has no file {index}"
+            )));
+        }
+        if files.is_empty() {
+            return Err(EngineError::InvalidTorrent(
+                "select at least one file".to_owned(),
+            ));
+        }
+        tokio::time::timeout(INITIALIZE_WAIT, handle.wait_until_initialized())
+            .await
+            .map_err(|_| {
+                EngineError::Engine("the torrent is still checking its local files".to_owned())
+            })?
+            .map_err(|error| engine_error(&error))?;
+        self.session
+            .update_only_files(&handle, &files.iter().copied().collect())
+            .await
+            .map_err(|error| engine_error(&error))
+    }
+
     async fn stop(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
         let active = self
             .lock()
