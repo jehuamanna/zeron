@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
+import { LessonPlayer } from "../features/player/LessonPlayer";
 import { CourseSharingCard } from "../features/sharing/CourseSharingCard";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
 import { asCommandError, libraryApi } from "../services/library";
@@ -127,10 +128,14 @@ export function App() {
                     ) : null}
                     {torrentCourse ? <CourseSharingCard courseId={detail.data.courseId} /> : null}
                     <div className="mt-10 rounded-3xl border border-white/10 bg-black/20 p-8">
-                      {mediaUrl ? (
-                        <video key={mediaUrl} className="aspect-video w-full rounded-2xl bg-black" src={mediaUrl} controls autoPlay preload="metadata">
-                          This system cannot play the selected video format.
-                        </video>
+                      {mediaUrl && playing ? (
+                        <LessonPlayer
+                          key={mediaUrl}
+                          url={mediaUrl}
+                          torrent={torrentCourse}
+                          verifiedPercent={torrentCourse ? (downloaded.get(playing) ?? 0) : null}
+                          onRetry={() => openMedia.mutate(playing)}
+                        />
                       ) : (
                         <div className="grid aspect-video place-items-center rounded-2xl bg-[#03080d] text-slate-500">
                           <div className="text-center">
