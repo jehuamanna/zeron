@@ -11,13 +11,13 @@ const profiles: Array<{ value: NetworkProfile; label: string; description: strin
   {
     value: "local_network",
     label: "Local network",
-    description: "Zeron finds courses shared on your local network. Nothing is announced to the internet.",
+    description: "Zeron finds courses shared on your local network, and learners there find your releases. Nothing is announced to the internet.",
   },
   {
     value: "internet",
     label: "Internet",
     description:
-      "Also uses the public DHT and the trackers a course lists, so Zeron can find courses shared anywhere. Your IP address becomes visible to other DHT and tracker users, and courses you share become reachable from the internet.",
+      "Also uses the public DHT and trackers, so Zeron can find courses shared anywhere and learners anywhere can find your releases. Your IP address becomes visible to other DHT and tracker users, and the courses you share and the releases you seed become reachable from the internet.",
   },
   {
     value: "loopback",
@@ -57,7 +57,7 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
       </Button>
       <section aria-labelledby="network-heading" className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
         <h1 id="network-heading" className="text-2xl font-semibold tracking-tight">Network</h1>
-        <p className="mt-1 text-sm text-slate-400">Where Zeron looks for torrent courses, and who can reach the courses you share.</p>
+        <p className="mt-1 text-sm text-slate-400">Where Zeron looks for torrent courses, and who can reach the courses you share and the releases you publish. One setting covers Library and Publish.</p>
         {settings.isPending ? (
           <p className="mt-5 text-sm text-slate-400">Loading network settings…</p>
         ) : settings.isError || !data ? (
@@ -108,13 +108,13 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
               <p className="mt-4 text-xs text-slate-500">
                 Active now
                 {data.downloadPort ? ` · downloads use port ${data.downloadPort}` : ""}
-                {data.sharingPort ? ` · shared courses are served on port ${data.sharingPort}` : ""}.{" "}
+                {data.sharingPort ? ` · shared courses and releases are served on port ${data.sharingPort}` : ""}.{" "}
                 {data.activePortForwarding ? "Your router is asked to forward these ports with UPnP." : "UPnP is off."}
               </p>
             )}
             {!data.restartRequired && data.torrentEngine === "ready" && data.sharingPort === null ? (
               <p role="alert" className="mt-2 text-xs text-amber-200">
-                Sharing could not start{data.peerPort ? `, possibly because port ${data.peerPort} is in use` : ""}. Downloads still work.
+                Sharing and seeding could not start{data.peerPort ? `, possibly because port ${data.peerPort} is in use` : ""}. Downloads still work.
               </p>
             ) : null}
             {error ? <p role="alert" className="mt-3 text-sm text-red-300">{error}</p> : null}

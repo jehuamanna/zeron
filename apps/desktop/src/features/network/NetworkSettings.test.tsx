@@ -57,7 +57,7 @@ describe("network settings", () => {
     await waitFor(() => expect(radio(view.container, "local_network")?.checked).toBe(true));
     expect(radio(view.container, "internet")?.checked).toBe(false);
     expect(view.container.textContent).toContain("downloads use port 41213");
-    expect(view.container.textContent).toContain("shared courses are served on port 41099");
+    expect(view.container.textContent).toContain("shared courses and releases are served on port 41099");
     expect(view.container.textContent).toContain("UPnP is off.");
     expect(view.container.textContent).not.toContain("Restart Zeron");
   });
@@ -137,7 +137,7 @@ describe("network settings", () => {
     const { view } = renderSettings();
 
     await waitFor(() => expect(view.container.textContent).toContain("Your router is asked to forward these ports with UPnP."));
-    expect(view.container.textContent).toContain("Sharing could not start, possibly because port 51413 is in use");
+    expect(view.container.textContent).toContain("Sharing and seeding could not start, possibly because port 51413 is in use");
   });
 
   it("returns to the previous view", async () => {
@@ -157,7 +157,7 @@ describe("network settings", () => {
     });
     const { view } = renderSettings();
     const download = await waitFor(() => view.getByLabelText("Download limit") as HTMLInputElement);
-    const upload = view.getByLabelText("Upload limit (shared courses)") as HTMLInputElement;
+    const upload = view.getByLabelText("Upload limit (sharing and seeding)") as HTMLInputElement;
     expect(download.value).toBe("");
     expect(upload.value).toBe("256");
 
@@ -171,7 +171,7 @@ describe("network settings", () => {
     fireEvent.click(view.getByRole("button", { name: "Save limits" }));
     await waitFor(() => expect(libraryApi.setRateLimits).toHaveBeenCalledWith(2048, null));
     await waitFor(() => expect((view.getByLabelText("Download limit") as HTMLInputElement).value).toBe("2048"));
-    expect((view.getByLabelText("Upload limit (shared courses)") as HTMLInputElement).value).toBe("");
+    expect((view.getByLabelText("Upload limit (sharing and seeding)") as HTMLInputElement).value).toBe("");
   });
 
   it("shows streamed-lesson storage and saves a cap in GB", async () => {

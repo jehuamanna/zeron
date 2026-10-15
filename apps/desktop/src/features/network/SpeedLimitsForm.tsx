@@ -44,7 +44,7 @@ export function SpeedLimitsForm({ downloadKib, uploadKib, saving, onSave }: {
           <input inputMode="numeric" value={download} onChange={(event) => setDownload(event.target.value)} placeholder="No limit" className={`block ${field}`} />
         </label>
         <label className="text-xs text-slate-300">
-          Upload limit (shared courses)
+          Upload limit (sharing and seeding)
           <input inputMode="numeric" value={upload} onChange={(event) => setUpload(event.target.value)} placeholder="No limit" className={`block ${field}`} />
         </label>
         <Button type="submit" variant="ghost" disabled={saving}>{saving ? "Saving…" : "Save limits"}</Button>
