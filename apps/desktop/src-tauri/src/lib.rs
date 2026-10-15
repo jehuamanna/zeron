@@ -88,6 +88,20 @@ fn spawn_background_work(torrents: &Torrents, library: &Arc<Mutex<CourseLibrary>
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let app_data = app.path().app_data_dir()?;
     std::fs::create_dir_all(&app_data)?;
+    // The separate Learner and Publisher apps' data moves in once, before
+    // anything opens a database here. A failure stops startup rather than
+    // opening empty databases over a half-finished import; the next start
+    // resumes it.
+    match data_import::import_old_data(&data_import::ImportPlan::beside(&app_data)) {
+        Ok(data_import::ImportOutcome::Imported { learner, publisher }) => {
+            eprintln!("imported earlier Zeron data (library: {learner}, publisher: {publisher})");
+        }
+        Ok(_) => {}
+        Err(error) => {
+            eprintln!("importing earlier Zeron data stopped: {error}");
+            return Err(error.into());
+        }
+    }
     let library = CourseLibrary::open(&app_data.join("library.sqlite3"), ImportLimits::default())?;
     let profile = library.network_profile()?;
     let reachability = library.peer_reachability()?;

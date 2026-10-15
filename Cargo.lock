@@ -921,6 +921,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
+name = "data-import"
+version = "0.1.0"
+dependencies = [
+ "course-format",
+ "learning-storage",
+ "publisher-storage",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "dbus"
 version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6552,6 +6565,7 @@ version = "0.1.0"
 dependencies = [
  "course-format",
  "course-publisher",
+ "data-import",
  "futures-util",
  "learning-application",
  "learning-storage",

@@ -1051,6 +1051,46 @@ impl Storage {
             .transpose()
     }
 
+    /// Move every stored course location under `from` to the same place
+    /// under `to`, for when the app-data directory itself moves. Locations
+    /// elsewhere, such as local folder imports, are left as they are.
+    /// Returns how many locations changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query, path-decoding, or write failures;
+    /// nothing changes then.
+    pub fn rebase_locations(&mut self, from: &Path, to: &Path) -> Result<usize, StorageError> {
+        let tx = self.connection.transaction()?;
+        let locations = {
+            let mut statement =
+                tx.prepare("SELECT course_id, path_encoding, path_bytes FROM course_locations")?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut changed = 0;
+        for (course_id, encoding, bytes) in locations {
+            let path = decode_path(&encoding, &bytes)?;
+            let Ok(relative) = path.strip_prefix(from) else {
+                continue;
+            };
+            let (path_encoding, path_bytes) = encode_path(&to.join(relative));
+            tx.execute(
+                "UPDATE course_locations SET path_encoding = ?2, path_bytes = ?3 WHERE course_id = ?1",
+                params![course_id, path_encoding, path_bytes],
+            )?;
+            changed += 1;
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
     /// Search imported course metadata through `SQLite` FTS5.
     ///
     /// # Errors
@@ -2186,6 +2226,54 @@ mod tests {
         storage.delete_note("note_1", 1).unwrap();
         assert_eq!(hits(&storage, "rendezvous").len(), 0);
         assert!(storage.search("\"unbalanced", 5).is_err());
+    }
+
+    #[test]
+    fn locations_under_a_moved_directory_are_rebased() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let local = manifest("Local", "systems");
+        let mut torrent = manifest("Torrent", "systems");
+        torrent.course_id = "course_torrent".to_owned();
+        storage
+            .save_imported_course(&local, 10, Path::new("/home/me/courses/local"))
+            .unwrap();
+        storage
+            .save_torrent_course(
+                &torrent,
+                10,
+                Path::new("/data/app.zeron.learner/courses/abc"),
+                &"a".repeat(40),
+                b"metainfo",
+            )
+            .unwrap();
+        let changed = storage
+            .rebase_locations(
+                Path::new("/data/app.zeron.learner"),
+                Path::new("/data/app.zeron"),
+            )
+            .unwrap();
+        assert_eq!(changed, 1);
+        assert_eq!(
+            storage.course_package_root(&torrent.course_id).unwrap(),
+            Some(PathBuf::from("/data/app.zeron/courses/abc"))
+        );
+        assert_eq!(
+            storage.course_package_root(&local.course_id).unwrap(),
+            Some(PathBuf::from("/home/me/courses/local"))
+        );
+        // A sibling whose name merely starts the same is not under it.
+        assert_eq!(
+            storage
+                .rebase_locations(Path::new("/data/app.zeron"), Path::new("/x"))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            storage
+                .rebase_locations(Path::new("/data/app"), Path::new("/y"))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

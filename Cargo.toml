@@ -4,6 +4,7 @@ members = [
     "apps/desktop/src-tauri",
     "crates/course-format",
     "crates/course-publisher",
+    "crates/data-import",
     "crates/learning-domain",
     "crates/learning-application",
     "crates/learning-storage",

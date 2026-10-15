@@ -1,0 +1,20 @@
+[package]
+name = "data-import"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+learning-storage = { path = "../learning-storage" }
+publisher-storage = { path = "../publisher-storage" }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+course-format = { path = "../course-format" }
+
+[lints]
+workspace = true

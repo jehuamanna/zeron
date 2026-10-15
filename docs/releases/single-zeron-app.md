@@ -6,7 +6,7 @@ Status: in progress. Publisher and Learner are merging into one app, `apps/deskt
 
 ### 1. The Learner becomes `apps/desktop`
 
-The Learner app moved to `apps/desktop` (package `@zeron/desktop`, crate `zeron-desktop`). Its identifier stays `app.zeron.learner` until the data migration lands, so no intermediate build opens an empty library.
+The Learner app moved to `apps/desktop` (package `@zeron/desktop`, crate `zeron-desktop`). Its identifier stayed `app.zeron.learner` until the data migration landed, so no intermediate build opened an empty library.
 
 ### 2. Publish runs inside it, on the public engine
 
@@ -35,6 +35,15 @@ librqbit keeps one torrent per info hash in a session, so if Library shared a co
 - **Distribution:** keeps the trackers and the seeding list; its network profile, port, `UPnP`, and upload-limit forms are gone. A "Network settings" link opens the shared screen.
 - **Network settings:** reworded for both sides. The port is "for sharing and seeding", the upload limit covers "sharing and seeding", and the status line says shared courses and releases are served on the public port.
 
+### 5. Old data moves in once (ADR 0011)
+
+- **Identity:** the identifier is now `app.zeron`, so data lives in `…/app.zeron`. The capability set is renamed `zeron-main`.
+- **Import:** a new crate, `data-import`, runs first at startup. It imports `app.zeron.learner` and `app.zeron.publisher` from beside the new directory.
+  - The databases are copied with `VACUUM INTO`, checked for integrity and schema version, and adjusted. Library locations under the old Learner directory are rebased (`Storage::rebase_locations`), and the Publisher's network choice and upload limit fill only what Library lacks.
+  - A journal records the switch. `courses/`, `releases/`, and `staging/` move with one `rename` each, the databases switch in last, and only then are the old database files removed.
+  - Every step resumes after a crash. A finished import, or a fresh install, does nothing again, and existing data in the new directory is never replaced.
+  - If the import fails, startup stops, and the next start resumes.
+
 ## Acceptance evidence so far
 
 - The Publisher's command tests run in the merged crate.
@@ -46,11 +55,21 @@ librqbit keeps one torrent per info hash in a session, so if Library shared a co
   - The Publish area switches between Courses and Distribution.
   - Distribution offers no network controls, and its link opens Network settings.
   - All moved Admin suites and all Library suites pass: 22 files and 120 tests.
+- **Import tests (`data-import`):**
+  - A fresh install records that there was nothing to import, and later old data is left alone.
+  - With both directories: course files and the read-only release move with their permissions intact, the library points at the new course location, settings merge as decided, old databases are removed, engine state is untouched, and a second run changes nothing.
+  - Library keeps its own network choice over the Publisher's.
+  - Each directory imports on its own. Publisher-only data creates a library that carries its network choice.
+  - **Crashes:** while copying, the copy starts again; part-way through the switch (blocked by a conflict), courses have moved but the databases are not yet switched, and the next run finishes; while cleaning, the cleanup finishes.
+  - Existing data in the new directory is never replaced.
+- **Storage test:** only locations under the moved directory are rebased, and a sibling directory whose name merely starts the same is not.
+- **Real data:** a copy of this machine's `app.zeron.learner` (settings, an empty library, WebKit and engine state), imported in a scratch `XDG_DATA_HOME`. It became `app.zeron` with `courses/`, the library at schema v11, the Internet profile, port 51413 with `UPnP`, and a `done` journal; WebKit and engine directories stayed behind, and the second run reported `AlreadyDone`.
 - **Browser preview** (Vite with faked IPC, 1180×760): Library, Publish (Courses and Distribution), and Network render in the shell; the Distribution link opens Network.
 - All repository gates pass.
 
 ## Limitations so far
 
 - The old Admin app still builds from `apps/admin-desktop` until the last step removes it.
-- The Publisher's stored upload limit is not used; the Library's speed limits govern. The data migration will carry it over when the Library has none.
+- The old apps start empty after the import: their databases are removed. Running an old app while Zeron imports is unsupported.
+- Webview storage (`localStorage` UI choices) is not carried over.
 - A release reserved while Library already shares the same torrent in this session is not moved; it stays shared until restart, and seeding that release is refused meanwhile.

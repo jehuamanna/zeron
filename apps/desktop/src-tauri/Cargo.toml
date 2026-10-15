@@ -15,6 +15,7 @@ tauri-build.workspace = true
 [dependencies]
 course-format = { path = "../../../crates/course-format" }
 course-publisher = { path = "../../../crates/course-publisher" }
+data-import = { path = "../../../crates/data-import" }
 futures-util.workspace = true
 learning-application = { path = "../../../crates/learning-application" }
 media-gateway = { path = "../../../crates/media-gateway" }
