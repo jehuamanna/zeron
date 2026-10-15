@@ -8,6 +8,8 @@ Last pushed commit before this handover: `6c9ad4b build: package the desktop app
 
 This document replaces the 2026-10-15 handover. A fresh Claude Code session on another machine should be able to continue from it alone.
 
+**Updated 2026-10-16 (latest pushed slice: `443ca51` uTP).** Start with [Active plan: one Zeron app, then full port mapping](#active-plan-one-zeron-app-then-full-port-mapping-user-decisions-2026-10-16).
+
 ## Mission
 
 Zeron is an offline-first learning platform made of two separately packaged Tauri apps:
@@ -192,6 +194,90 @@ All four sub-slices are done; see `docs/releases/phase-7-course-management.md`, 
    - All edits go through the existing single-revision `draftWriter` sequence, so the conflict banner keeps working.
 
 Each sub-slice needs its own release note (for example `docs/releases/phase-7-course-management.md`), acceptance evidence, limitations, a focused commit, and a push. This work pulls part of Phase 7 forward at the user's request.
+
+## Active plan: one Zeron app, then full port mapping (user decisions 2026-10-16)
+
+Read this section first. It supersedes the "two separately packaged apps" framing in the Mission above and in the architecture docs. Those docs change as part of slice A.
+
+### State at handoff
+
+- **Pushed and green:**
+  - peer reachability and UPnP forwarding, now on by default (`07f1164`, ADR 0004 decision 8);
+  - followed tracker lists plus additional trackers (`bc5ec94`);
+  - uTP alongside TCP (`443ca51`, `docs/releases/phase-3-utp.md`).
+- **Real internet test (2026-10-16):**
+  - **Setup:** the Admin seeded the systems-design fixture under Internet on fixed port 51413 with 70 public trackers. A Learner on a different network never connected.
+  - **Admin's router:** answers no UPnP (SSDP), NAT-PMP, or PCP. The address is public IPv4, not carrier-grade NAT, but trackers see a different egress address in the same /16 than `api.ipify.org` does, so the provider may NAT through a pool.
+  - **What the trackers show:** they list the seeder on 51413, and a TCP probe to it from outside is dropped. The other machine's Learner ports were dropped too. Neither side accepted connections, so no client could connect.
+  - **Ways out:** a manual TCP 51413 forward on the publisher's router, a learner network that accepts connections (UPnP, NAT-PMP, or PCP), or the Phase 8 seed server.
+  - **Scratch-only state:** the scratch Publisher data (`publisher-run`) and the public magnet live only in that session's scratchpad. The user asked that the magnet be shared only with the Learner and destroyed afterwards. Stop that seeding and archive or delete its release when the test ends.
+
+### Slice A: merge Publisher and Learner into one app `apps/desktop`
+
+User decisions:
+
+1. **Identity and data:**
+   - One app, product name "Zeron", identifier `app.zeron`.
+   - On first start, import old data once from `app.zeron.learner` and `app.zeron.publisher`.
+2. **Navigation:** top-level Library (learning) and Publish (courses, builder, distribution) side by side, always visible.
+3. **Engines:**
+   - One network setting for the whole app: profile, fixed port, UPnP, rate limits.
+   - Two engines:
+     - a **private** engine for downloads, with uploads off;
+     - a **public** engine, uploads on, seeding published releases and the courses the learner shares, on the one fixed port.
+4. **Repository:** replace `apps/admin-desktop` and `apps/learner-desktop` with `apps/desktop`. Package `@zeron/desktop`, one AppImage (`bundleMediaFramework: true` stays).
+
+Facts gathered for the merge:
+
+- **Command collisions:** `set_network_profile` and `set_peer_reachability` exist in both apps. The Admin has 26 other commands and the Learner 33. Keep one network command set; the Admin's Distribution page uses the Learner's network commands. Rate limits: the Learner has `set_rate_limits`, and the Admin applies limits to its engine in `lib.rs`; unify them.
+- **Settings ownership:** network settings live in `library.sqlite3` (`CourseLibrary`). Migrate the Publisher's `network_profile`, `peer_port`, and `port_forwarding` only if the Learner has none. Tracker settings (`trackers`, `tracker_lists`, `tracker_list:*`) stay in `publisher.sqlite3`.
+- **Stored paths:** the Learner DB stores absolute torrent `content_root` paths (`learning-storage`, `TorrentCourseSource`, encoded with `decode_path`), for example `…/app.zeron.learner/courses/<id>`. Rewrite these with the prefix swap from the old to the new app-data directory. Local-folder imports and draft sources point outside app data and are unaffected. Publisher releases are derived from `releases_root` and need no rewrite.
+- **What moves, using `rename` on the same filesystem:**
+  - Learner: `library.sqlite3` and `courses/`.
+  - Publisher: `publisher.sqlite3`, `releases/` (read-only directories; keep their permissions), and `staging/`.
+  - `engine*` state directories hold no persistent state; do not move them.
+  - The migration needs a marker file and must be crash-safe and idempotent: copy, verify, switch, then remove. Write an ADR for it (path handling is a security-review trigger).
+- **Same course on both sides:** a release the user both seeds and has imported has the same info hash in the public engine. `SeedingService` and `TransferRouter` must not fight over it: refuse or redirect importing your own release, or let seeding take precedence. Decide, test, and document.
+- **Frontend:**
+  - The Learner app is the base (more features). Move the Admin's `features/{builder,courses,distribution,publish}`, `services/publisher.ts`, `stores`, and their tests under a Publish area. Add top-level navigation.
+  - The Distribution page's Network and reachability forms become the shared Network settings, so remove the duplicate Learner/Admin forms.
+  - Merge the CSPs. The Learner's `media-src` already allows the HTTPS gateway; nothing new from the Admin needs to be added.
+- **Rust:**
+  - Move the Admin's `commands.rs`, `drops.rs`, and `tracker_lists.rs` into the merged crate as a `publish` module.
+  - Merge `AppState` (library, gateway, torrents, plus drafts, publish jobs, drops, distribution).
+  - One composition root starts the gateway (HTTPS on Linux), the two engines, `SeedingService` on the public engine, the router, imports, sharing, the startup tracker-list refresh, and seeding restore.
+  - Shutdown stops both engines and the gateway.
+- **Docs:**
+  - A new ADR, "Single desktop app", superseding the separate-packaging decision.
+  - Update `system-overview.md`, `distribution.md`, `admin-publisher.md`, `roadmap.md`, this handover's Mission, the root `package.json` scripts, and the AppImage memory note.
+  - `AGENTS.md` is user-owned: suggest wording changes to the user, never commit them.
+- **Acceptance:**
+  - All gates pass.
+  - Vitest for navigation, plus the moved suites.
+  - Rust tests for migration: fresh install, both old directories, one old directory, a crash part-way through, and a second run that does nothing.
+  - **Real-window check:** start the merged app with copies of both old data directories. Library, drafts, and releases appear; a published release seeds from the public engine; a magnet import streams on the private engine; a shared course seeds on the public engine; one port is shown in Network.
+
+Suggested order (keep every commit green): scaffold `apps/desktop` from the Learner (git mv, rename identity) → move the Publisher backend in, behind the merged state → unify the network settings and the two engines → move the Publisher frontend and navigation → data migration with its ADR → delete the old apps and update scripts and docs.
+
+### Slice B: Zeron port mapper (UPnP for TCP and UDP, NAT-PMP, PCP), as in Deluge
+
+- **Why:** librqbit's UPnP maps TCP only (`librqbit-upnp` 9.0.1 `forward_port` hard-codes `TCP`), so uTP cannot be reached from outside. It has no NAT-PMP or PCP, and it reports nothing back. Deluge (libtorrent) has UPnP and NAT-PMP on by default.
+- **Plan:**
+  - A new crate, `port-mapping`, with no torrent dependency.
+  - **UPnP IGD:** SSDP discovery, the description document, then SOAP `AddPortMapping` and `DeletePortMapping` over `reqwest`, which is already compiled in.
+  - **NAT-PMP** (RFC 6886) and **PCP** (RFC 6887): MAP requests for TCP and UDP to the default gateway.
+  - **Gateway discovery:** `/proc/net/route` on Linux. Other platforms need a small crate such as `netdev`; confirm with the user before adding it.
+  - Lease renewal at half-life, removal on shutdown, and a status per protocol and transport (mapped, external port, error).
+  - Turn off librqbit's `enable_upnp_port_forwarding` and drive the mapper from the composition root for the public and private engine ports.
+  - Show the status in Network: "Router: port 51413 open via NAT-PMP (TCP and UDP)", or "No router answered UPnP, NAT-PMP, or PCP. Forward TCP and UDP 51413 by hand."
+- **Tests:** fake IGD, NAT-PMP, and PCP servers on loopback (unit and integration), plus lease-renewal and shutdown-removal tests.
+- **Real check:** this user's router answers none of the three protocols, so verify against a router that does, and record which protocols were tested.
+
+### Later (record only)
+
+- **Hole punching (BEP 55, `ut_holepunch`) and protocol encryption (MSE/PE):** Deluge has both; librqbit 9.0.1 has neither. Each is a substantial engine change; propose it as an upstream contribution or a fork, and ask the user first.
+- **Phase 8 seed server:** the reliable way for publishers whose router cannot be opened.
+- **Paid or private courses:** parked by the user; needs encryption, key delivery, accounts, and payments. See the conversation summary in `phase-3-trackers.md` limitations.
 
 ## Remaining phases (5–10)
 
