@@ -5,11 +5,11 @@ use std::{
 
 use course_format::ResourceKind;
 use learning_application::{
-    Availability, CacheError, CancellationFlag, CourseImportReceipt, CourseLibrary,
+    Anchor, Availability, CacheError, CancellationFlag, CourseImportReceipt, CourseLibrary,
     CourseSharingStatus, DISK_RESERVE_BYTES, DownloadScope, EngineError, ImportError, InfoHash,
-    LibraryError, LocalResource, NetworkProfile, PeerReachability, RateLimits, SharingError,
-    TorrentEngine, TorrentImportSnapshot, TorrentImportStage, TorrentResource, TorrentSource,
-    TransferState, fits,
+    LibraryError, LocalResource, NetworkProfile, Note, NoteChange, PeerReachability, RateLimits,
+    SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage, TorrentResource,
+    TorrentSource, TransferState, fits,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::{Deserialize, Serialize};
@@ -46,6 +46,59 @@ pub(crate) struct CourseSummaryDto {
     sharing: bool,
     completed_lessons: usize,
     total_lessons: usize,
+}
+
+/// A learner note. `body` is the Tiptap document as JSON text.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NoteDto {
+    note_id: String,
+    lesson_id: String,
+    anchor: Anchor,
+    body: String,
+    text: String,
+    revision: u64,
+    created_at_unix_seconds: u64,
+    updated_at_unix_seconds: u64,
+}
+
+/// Result of changing an existing note; a conflict overwrites nothing.
+#[derive(Debug, Serialize)]
+#[serde(tag = "outcome", rename_all = "camelCase")]
+pub(crate) enum NoteChangeDto {
+    Saved {
+        note: NoteDto,
+    },
+    #[serde(rename_all = "camelCase")]
+    Conflict {
+        current_revision: u64,
+    },
+    NotFound,
+}
+
+impl From<Note> for NoteDto {
+    fn from(note: Note) -> Self {
+        Self {
+            note_id: note.note_id,
+            lesson_id: note.lesson_id,
+            anchor: note.anchor,
+            body: note.body_json,
+            text: note.text,
+            revision: note.revision,
+            created_at_unix_seconds: note.created_at,
+            updated_at_unix_seconds: note.updated_at,
+        }
+    }
+}
+
+impl From<NoteChange> for NoteChangeDto {
+    fn from(change: NoteChange) -> Self {
+        match change {
+            NoteChange::Saved(note) => Self::Saved { note: note.into() },
+            NoteChange::Conflict { current_revision } => Self::Conflict { current_revision },
+            NoteChange::NotFound => Self::NotFound,
+        }
+    }
 }
 
 /// Progress of a course and of each of its lessons.
@@ -377,7 +430,10 @@ fn local_import_error(error: LibraryError) -> CommandError {
         // Remaining import failures name only manifest-relative paths, which
         // `course.json` validation keeps relative.
         LibraryError::Import(_) => command_error("course_import_failed", error),
-        LibraryError::InvalidPlaybackTime(_) => command_error("invalid_input", error),
+        LibraryError::InvalidPlaybackTime(_) | LibraryError::Note(_) => {
+            command_error("invalid_input", error)
+        }
+        LibraryError::NoteTarget(_) => command_error("note_target_invalid", error),
     }
 }
 
@@ -1012,6 +1068,92 @@ fn cache_error(error: CacheError) -> CommandError {
     }
 }
 
+/// Notes of a course, or of one lesson, oldest first.
+#[tauri::command]
+pub(crate) async fn list_notes(
+    course_id: String,
+    lesson_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<NoteDto>, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        Ok(lock_library(&library)?
+            .notes(&course_id, lesson_id.as_deref())
+            .map_err(note_error)?
+            .into_iter()
+            .map(NoteDto::from)
+            .collect())
+    })
+    .await
+}
+
+/// Create a note in a lesson at `anchor`.
+#[tauri::command]
+pub(crate) async fn create_note(
+    course_id: String,
+    lesson_id: String,
+    anchor: Anchor,
+    body: String,
+    state: State<'_, AppState>,
+) -> Result<NoteDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .create_note(&course_id, &lesson_id, &anchor, &body)
+            .map(NoteDto::from)
+            .map_err(note_error)
+    })
+    .await
+}
+
+/// Replace a note if it is still at `expectedRevision`.
+#[tauri::command]
+pub(crate) async fn update_note(
+    note_id: String,
+    expected_revision: u64,
+    anchor: Anchor,
+    body: String,
+    state: State<'_, AppState>,
+) -> Result<NoteChangeDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .update_note(&note_id, expected_revision, &anchor, &body)
+            .map(NoteChangeDto::from)
+            .map_err(note_error)
+    })
+    .await
+}
+
+/// Delete a note if it is still at `expectedRevision`.
+#[tauri::command]
+pub(crate) async fn delete_note(
+    note_id: String,
+    expected_revision: u64,
+    state: State<'_, AppState>,
+) -> Result<NoteChangeDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .delete_note(&note_id, expected_revision)
+            .map(NoteChangeDto::from)
+            .map_err(note_error)
+    })
+    .await
+}
+
+fn note_error(error: LibraryError) -> CommandError {
+    match error {
+        LibraryError::Note(_) => command_error("invalid_input", error),
+        LibraryError::NoteTarget(_) => command_error("note_target_invalid", error),
+        // Storage errors can name the database location; keep them in Rust.
+        _ => CommandError {
+            code: "library_write_failed",
+            message: "the note could not be saved".to_owned(),
+        },
+    }
+}
+
 /// Progress of a course and its lessons.
 #[tauri::command]
 pub(crate) async fn get_course_progress(
@@ -1471,6 +1613,38 @@ mod tests {
         assert_eq!(
             progress(&library, "course").unwrap_err().code,
             "course_not_found"
+        );
+    }
+
+    #[test]
+    fn note_dtos_are_tagged_and_anchors_parse_strictly() {
+        let conflict = serde_json::to_value(NoteChangeDto::Conflict {
+            current_revision: 4,
+        })
+        .unwrap();
+        assert_eq!(
+            conflict,
+            serde_json::json!({ "outcome": "conflict", "currentRevision": 4 })
+        );
+        assert_eq!(
+            serde_json::to_value(NoteChangeDto::NotFound).unwrap(),
+            serde_json::json!({ "outcome": "notFound" })
+        );
+        assert!(
+            serde_json::from_value::<Anchor>(
+                serde_json::json!({ "kind": "videoTime", "resourceId": "r", "seconds": 3 })
+            )
+            .is_ok()
+        );
+        assert!(
+            serde_json::from_value::<Anchor>(
+                serde_json::json!({ "kind": "lesson", "path": "/etc" })
+            )
+            .is_err()
+        );
+        assert_eq!(
+            note_error(LibraryError::NoteTarget("x")).code,
+            "note_target_invalid"
         );
     }
 

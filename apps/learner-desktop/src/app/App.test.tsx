@@ -31,6 +31,7 @@ vi.mock("../services/library", async (importOriginal) => ({
     removeDownloads: vi.fn(),
     progress: vi.fn(() => Promise.resolve({ completedLessons: 0, totalLessons: 0, percent: 0, lessons: [] })),
     setLessonCompleted: vi.fn(),
+    notes: vi.fn(() => Promise.resolve([])),
     storage: vi.fn(() => Promise.resolve({ streamedBytes: 0, cacheLimitBytes: null, availableBytes: 50 * 1024 ** 3, lowDisk: false })),
     savePlaybackPosition: vi.fn(() => Promise.resolve(true)),
   },
@@ -346,6 +347,11 @@ describe("learner library", () => {
     await waitFor(() => expect(libraryApi.setLessonCompleted).toHaveBeenCalledWith("course_one", "lesson_b", true));
     await waitFor(() => expect(view.container.textContent).toContain("2 of 2 lessons complete"));
     expect(statuses()).toEqual(["completed", "completed"]);
+
+    fireEvent.click(view.getByRole("button", { name: "Notes for Second" }));
+    await waitFor(() => expect(view.getByRole("region", { name: "Notes for Second" })).toBeTruthy());
+    expect(libraryApi.notes).toHaveBeenCalledWith("course_one", "lesson_b");
+    expect(view.queryByRole("button", { name: /Add note at/ })).toBeNull();
   });
 
   it("opens network settings from the header and returns to the library", async () => {

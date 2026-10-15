@@ -1,10 +1,18 @@
 import { AlertTriangle, Loader2, RotateCcw } from "lucide-react";
-import { useEffect, useReducer, useRef, useState, type SyntheticEvent } from "react";
+import { useEffect, useImperativeHandle, useReducer, useRef, useState, type Ref, type SyntheticEvent } from "react";
 
 import { Button } from "../../components/ui/button";
 import { describePlayback, initialPlayback, playbackReducer } from "./playbackState";
 
+/** What other panels may ask of the player. */
+export interface PlayerHandle {
+  currentTime: () => number;
+  seek: (seconds: number) => void;
+}
+
 interface LessonPlayerProps {
+  /** Lets notes read the current time and jump to a timestamp. */
+  handle?: Ref<PlayerHandle>;
   url: string;
   /** Torrent lessons stream verified data and can stall waiting for peers. */
   torrent: boolean;
@@ -41,7 +49,7 @@ function bufferedAhead(video: HTMLVideoElement): number {
   return 0;
 }
 
-export function LessonPlayer({ url, torrent, verifiedPercent, onRetry, startAt = null, onPosition, transfersPaused = false }: LessonPlayerProps) {
+export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, startAt = null, onPosition, transfersPaused = false }: LessonPlayerProps) {
   const [playback, dispatch] = useReducer(playbackReducer, initialPlayback);
   const [ahead, setAhead] = useState(0);
   const [resumedAt, setResumedAt] = useState<number | null>(null);
@@ -50,6 +58,14 @@ export function LessonPlayer({ url, torrent, verifiedPercent, onRetry, startAt =
   const latest = useRef<{ position: number; duration: number } | null>(null);
   const report = useRef(onPosition);
   report.current = onPosition;
+  useImperativeHandle(handle, () => ({
+    currentTime: () => video.current?.currentTime ?? 0,
+    seek: (seconds: number) => {
+      if (!video.current) return;
+      video.current.currentTime = seconds;
+      void video.current.play().catch(() => undefined);
+    },
+  }), []);
 
   useEffect(() => {
     const timer = window.setInterval(() => dispatch({ type: "tick", at: Date.now() }), 1000);

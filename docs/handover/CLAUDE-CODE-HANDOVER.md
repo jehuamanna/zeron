@@ -24,7 +24,7 @@ Continue through the dependency-ordered roadmap ([docs/roadmap.md](../roadmap.md
 - a destructive action outside the approved scope;
 - an architectural blocker you can show evidence for.
 
-Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0008), and [phase-0 spike results](../research/phase-0-spike-results.md).
+Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0009), and [phase-0 spike results](../research/phase-0-spike-results.md).
 
 ## Start-of-session checklist
 
@@ -209,7 +209,7 @@ Done so far: engine file selection (`phase-5-file-selection.md`, ADR 0004 decisi
 
 ### Phase 6 — learning workspace
 
-Done so far: lesson and course progress (`phase-6-progress.md`, new `learning-domain` crate, learner schema v8). Remaining below.
+Done so far: lesson and course progress (`phase-6-progress.md`, new `learning-domain` crate, learner schema v8) and Tiptap notes with typed anchors (`phase-6-notes.md`, ADR 0009, learner schema v9). Remaining below.
 
 - Progress tracking per lesson and course.
 - Tiptap notes with typed anchors: a video timestamp or a PDF page and region.

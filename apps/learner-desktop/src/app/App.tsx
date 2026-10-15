@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, ChevronLeft, Download, File, HardDrive, Magnet, Network, Play, Search } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
 import { AvailabilityLabel, formatSize, KeepOfflineToggle, PauseTransfersButton, useCourseDownloads } from "../features/downloads/downloads";
-import { LessonPlayer } from "../features/player/LessonPlayer";
+import { NotesPanel } from "../features/notes/NotesPanel";
+import { LessonPlayer, type PlayerHandle } from "../features/player/LessonPlayer";
 import { LessonStatusIcon, MarkCompleteButton, ProgressBar, useCourseProgress } from "../features/progress/progress";
 import { CourseSharingCard } from "../features/sharing/CourseSharingCard";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
@@ -23,6 +24,10 @@ export function App() {
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [playing, setPlaying] = useState<string | null>(null);
   const [startAt, setStartAt] = useState<number | null>(null);
+  const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
+  const player = useRef<PlayerHandle>(null);
+  // A note's timestamp to start at when it opens a video that is not playing.
+  const pendingSeek = useRef<number | null>(null);
   const readiness = useQuery({ queryKey: ["readiness"], queryFn: libraryApi.readiness });
   const courses = useQuery({
     queryKey: ["courses"],
@@ -49,9 +54,11 @@ export function App() {
       return { registration, position };
     },
     onSuccess: ({ registration, position }, resourceId) => {
-      setStartAt(position);
+      setStartAt(pendingSeek.current ?? position);
+      pendingSeek.current = null;
       setMediaUrl(registration.url);
       setPlaying(resourceId);
+      setActiveLessonId(lessonOf(resourceId)?.id ?? null);
     },
   });
   const savePosition = (courseId: string, resourceId: string) => (positionSeconds: number, durationSeconds: number) => {
@@ -90,9 +97,23 @@ export function App() {
   });
   const lowDisk = storage.data?.lowDisk ?? false;
 
+  const lessonOf = (resourceId: string) =>
+    detail.data?.modules.flatMap((module) => module.lessons).find((lesson) => lesson.resources.some((resource) => resource.id === resourceId));
+  const activeLesson = detail.data?.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === activeLessonId) ?? null;
+  const playingInActiveLesson = playing !== null && activeLesson?.resources.some((resource) => resource.id === playing) ? playing : null;
+  const seekTo = (resourceId: string, seconds: number) => {
+    if (playing === resourceId) {
+      player.current?.seek(seconds);
+      return;
+    }
+    pendingSeek.current = seconds;
+    openMedia.mutate(resourceId);
+  };
+
   const leaveCourse = () => {
     setMediaUrl(null);
     setPlaying(null);
+    setActiveLessonId(null);
     selectCourse(null);
   };
 
@@ -163,6 +184,7 @@ export function App() {
                     <div className="mt-10 rounded-3xl border border-white/10 bg-black/20 p-8">
                       {mediaUrl && playing ? (
                         <LessonPlayer
+                          handle={player}
                           key={mediaUrl}
                           url={mediaUrl}
                           torrent={torrentCourse}
@@ -188,6 +210,17 @@ export function App() {
                         </p>
                       ) : null}
                     </div>
+                    {activeLesson ? (
+                      <NotesPanel
+                        key={activeLesson.id}
+                        courseId={detail.data.courseId}
+                        lessonId={activeLesson.id}
+                        lessonTitle={activeLesson.title}
+                        videoResourceId={playingInActiveLesson}
+                        currentTime={() => player.current?.currentTime() ?? 0}
+                        onSeek={seekTo}
+                      />
+                    ) : null}
                   </div>
                   <aside aria-label="Course contents" className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
                     <h2 className="mb-3 font-semibold">Course contents</h2>
@@ -249,6 +282,15 @@ export function App() {
                                     {lesson.title}
                                   </p>
                                   <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                                  <button
+                                    type="button"
+                                    aria-label={`Notes for ${lesson.title}`}
+                                    aria-pressed={activeLessonId === lesson.id}
+                                    onClick={() => setActiveLessonId(lesson.id)}
+                                    className={`rounded-md px-2 py-1 text-[11px] ${activeLessonId === lesson.id ? "bg-cyan-300/20 text-cyan-100" : "bg-white/5 text-slate-300 hover:bg-white/10"}`}
+                                  >
+                                    Notes
+                                  </button>
                                   <MarkCompleteButton
                                     lessonTitle={lesson.title}
                                     completed={lessonProgress.statusOf(lesson.id) === "completed"}

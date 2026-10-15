@@ -13,8 +13,45 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 8;
+const CURRENT_SCHEMA_VERSION: i64 = 9;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
+
+/// A stored learner note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteRecord {
+    /// Opaque note ID.
+    pub note_id: String,
+    /// Course the note belongs to.
+    pub course_id: String,
+    /// Lesson the note belongs to.
+    pub lesson_id: String,
+    /// Serialized anchor.
+    pub anchor_json: String,
+    /// Serialized note document.
+    pub body_json: String,
+    /// Plain text of the document.
+    pub body_text: String,
+    /// Increases with every saved change.
+    pub revision: u64,
+    /// Creation time in Unix seconds.
+    pub created_at: u64,
+    /// Last change in Unix seconds.
+    pub updated_at: u64,
+}
+
+/// Outcome of a compare-and-swap note write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoteWrite {
+    /// Saved; carries the stored note (for deletes, the note as it was).
+    Saved(NoteRecord),
+    /// The note changed since the caller read it.
+    Conflict {
+        /// Current revision.
+        current_revision: u64,
+    },
+    /// No such note.
+    Missing,
+}
 
 /// What is recorded about one lesson.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -503,6 +540,161 @@ impl Storage {
         rows.collect::<Result<_, _>>().map_err(StorageError::from)
     }
 
+    /// Store a new note at revision 0.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock or `SQLite` failures, including an
+    /// unknown course or a reused note ID.
+    pub fn insert_note(
+        &mut self,
+        note_id: &str,
+        course_id: &str,
+        lesson_id: &str,
+        anchor_json: &str,
+        body_json: &str,
+        body_text: &str,
+    ) -> Result<NoteRecord, StorageError> {
+        let now = unix_now()?;
+        self.connection.execute(
+            "INSERT INTO notes (note_id, course_id, lesson_id, anchor_json, body_json, body_text, revision, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?7)",
+            params![note_id, course_id, lesson_id, anchor_json, body_json, body_text, now],
+        )?;
+        self.note(note_id)?
+            .ok_or(StorageError::Sqlite(rusqlite::Error::QueryReturnedNoRows))
+    }
+
+    /// Replace a note's anchor and body only if it is still at
+    /// `expected_revision`; the revision then advances by one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock or `SQLite` failures.
+    pub fn update_note(
+        &mut self,
+        note_id: &str,
+        expected_revision: u64,
+        anchor_json: &str,
+        body_json: &str,
+        body_text: &str,
+    ) -> Result<NoteWrite, StorageError> {
+        let now = unix_now()?;
+        let changed = self.connection.execute(
+            "UPDATE notes SET anchor_json = ?3, body_json = ?4, body_text = ?5, revision = revision + 1, updated_at = ?6
+             WHERE note_id = ?1 AND revision = ?2",
+            params![
+                note_id,
+                sqlite_integer(expected_revision, "note revision")?,
+                anchor_json,
+                body_json,
+                body_text,
+                now
+            ],
+        )?;
+        self.note_write(note_id, changed)
+    }
+
+    /// Delete a note only if it is still at `expected_revision`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for `SQLite` failures.
+    pub fn delete_note(
+        &mut self,
+        note_id: &str,
+        expected_revision: u64,
+    ) -> Result<NoteWrite, StorageError> {
+        let Some(existing) = self.note(note_id)? else {
+            return Ok(NoteWrite::Missing);
+        };
+        let deleted = self.connection.execute(
+            "DELETE FROM notes WHERE note_id = ?1 AND revision = ?2",
+            params![note_id, sqlite_integer(expected_revision, "note revision")?],
+        )?;
+        Ok(if deleted == 1 {
+            NoteWrite::Saved(existing)
+        } else {
+            NoteWrite::Conflict {
+                current_revision: existing.revision,
+            }
+        })
+    }
+
+    /// One note.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn note(&self, note_id: &str) -> Result<Option<NoteRecord>, StorageError> {
+        Ok(self
+            .query_notes("WHERE note_id = ?1", [note_id])?
+            .into_iter()
+            .next())
+    }
+
+    /// Notes of a course, or of one of its lessons, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn notes(
+        &self,
+        course_id: &str,
+        lesson_id: Option<&str>,
+    ) -> Result<Vec<NoteRecord>, StorageError> {
+        match lesson_id {
+            Some(lesson_id) => self.query_notes(
+                "WHERE course_id = ?1 AND lesson_id = ?2 ORDER BY created_at, rowid",
+                [course_id, lesson_id],
+            ),
+            None => self.query_notes(
+                "WHERE course_id = ?1 ORDER BY lesson_id, created_at, rowid",
+                [course_id],
+            ),
+        }
+    }
+
+    fn note_write(&self, note_id: &str, changed: usize) -> Result<NoteWrite, StorageError> {
+        Ok(match (changed, self.note(note_id)?) {
+            (_, None) => NoteWrite::Missing,
+            (1, Some(note)) => NoteWrite::Saved(note),
+            (_, Some(note)) => NoteWrite::Conflict {
+                current_revision: note.revision,
+            },
+        })
+    }
+
+    fn query_notes(
+        &self,
+        filter: &str,
+        parameters: impl rusqlite::Params,
+    ) -> Result<Vec<NoteRecord>, StorageError> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT note_id, course_id, lesson_id, anchor_json, body_json, body_text, revision, created_at, updated_at
+             FROM notes {filter}"
+        ))?;
+        let rows = statement.query_map(parameters, |row| {
+            let unsigned = |index: usize| -> rusqlite::Result<u64> {
+                let value: i64 = row.get(index)?;
+                u64::try_from(value)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(index, value))
+            };
+            Ok(NoteRecord {
+                note_id: row.get(0)?,
+                course_id: row.get(1)?,
+                lesson_id: row.get(2)?,
+                anchor_json: row.get(3)?,
+                body_json: row.get(4)?,
+                body_text: row.get(5)?,
+                revision: unsigned(6)?,
+                created_at: unsigned(7)?,
+                updated_at: unsigned(8)?,
+            })
+        })?;
+        rows.collect::<Result<_, _>>().map_err(StorageError::from)
+    }
+
     /// Read a learner setting.
     ///
     /// # Errors
@@ -814,11 +1006,12 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         found = 4;
     }
     // Later versions each add one table or column; they run in order.
-    let steps: [(i64, Migration); 4] = [
+    let steps: [(i64, Migration); 5] = [
         (4, add_playback_positions),
         (5, add_download_commitments),
         (6, add_pause_flag),
         (7, add_lesson_progress),
+        (8, add_notes),
     ];
     for (from, step) in steps {
         if found == from {
@@ -891,6 +1084,29 @@ fn add_lesson_progress(connection: &mut Connection) -> Result<(), StorageError> 
            PRIMARY KEY(course_id, lesson_id)
          ) STRICT;
          PRAGMA user_version = 8;",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Schema 9. Learner notes, each anchored to a lesson or a place in one of
+/// its resources. Updates are compare-and-swap on `revision`.
+fn add_notes(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE notes (
+           note_id TEXT PRIMARY KEY NOT NULL,
+           course_id TEXT NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+           lesson_id TEXT NOT NULL,
+           anchor_json TEXT NOT NULL,
+           body_json TEXT NOT NULL,
+           body_text TEXT NOT NULL,
+           revision INTEGER NOT NULL CHECK(revision >= 0),
+           created_at INTEGER NOT NULL CHECK(created_at >= 0),
+           updated_at INTEGER NOT NULL CHECK(updated_at >= 0)
+         ) STRICT;
+         CREATE INDEX notes_by_lesson ON notes (course_id, lesson_id, created_at);
+         PRAGMA user_version = 9;",
     )?;
     tx.commit()?;
     Ok(())
@@ -1214,7 +1430,7 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE lesson_progress;
+                    "DROP TABLE notes; DROP TABLE lesson_progress;
                      ALTER TABLE course_torrent_sources DROP COLUMN paused;
                      DROP TABLE download_commitments; DROP TABLE playback_positions;
                      PRAGMA user_version = 4;",
@@ -1317,6 +1533,63 @@ mod tests {
             storage.lesson_progress(&id).unwrap(),
             [record("l1", true), record("l2", false)]
         );
+    }
+
+    #[test]
+    fn notes_are_saved_only_from_their_current_revision() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Rust", "systems");
+        let id = course.course_id.clone();
+        assert!(
+            storage
+                .insert_note("n1", &id, "l1", "{}", "{}", "")
+                .is_err()
+        );
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/rust"))
+            .unwrap();
+        let note = storage
+            .insert_note("n1", &id, "l1", "a0", "b0", "t0")
+            .unwrap();
+        assert_eq!(note.revision, 0);
+        assert!(storage.insert_note("n1", &id, "l1", "a", "b", "t").is_err());
+        storage.insert_note("n2", &id, "l2", "a", "b", "t").unwrap();
+
+        let NoteWrite::Saved(saved) = storage.update_note("n1", 0, "a1", "b1", "t1").unwrap()
+        else {
+            panic!("saved");
+        };
+        assert_eq!((saved.revision, saved.body_json.as_str()), (1, "b1"));
+        assert_eq!(
+            storage
+                .update_note("n1", 0, "lost", "lost", "lost")
+                .unwrap(),
+            NoteWrite::Conflict {
+                current_revision: 1
+            }
+        );
+        assert_eq!(storage.note("n1").unwrap().unwrap().body_json, "b1");
+        assert_eq!(
+            storage.update_note("missing", 0, "a", "b", "t").unwrap(),
+            NoteWrite::Missing
+        );
+        assert_eq!(
+            storage.delete_note("n1", 0).unwrap(),
+            NoteWrite::Conflict {
+                current_revision: 1
+            }
+        );
+        assert_eq!(storage.notes(&id, Some("l1")).unwrap().len(), 1);
+        assert_eq!(storage.notes(&id, None).unwrap().len(), 2);
+        assert!(matches!(
+            storage.delete_note("n1", 1).unwrap(),
+            NoteWrite::Saved(_)
+        ));
+        assert_eq!(storage.delete_note("n1", 1).unwrap(), NoteWrite::Missing);
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/rust"))
+            .unwrap();
+        assert_eq!(storage.notes(&id, None).unwrap().len(), 1);
     }
 
     #[test]

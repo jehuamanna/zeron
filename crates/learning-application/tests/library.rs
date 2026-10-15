@@ -322,3 +322,147 @@ fn progress_follows_opening_watching_and_manual_marks_across_restarts() {
     );
     assert_eq!(status(&library).0, LessonStatus::Completed);
 }
+
+fn notes_fixture() -> (TempRoot, CourseLibrary) {
+    let root = TempRoot::new();
+    let course_root = create_course(root.path());
+    let mut library = CourseLibrary::open(
+        &root.path().join("library.sqlite3"),
+        ImportLimits::default(),
+    )
+    .unwrap();
+    library
+        .import_local_folder(&course_root, &CancellationFlag::default())
+        .unwrap();
+    (root, library)
+}
+
+fn note_doc(text: &str) -> String {
+    json!({ "type": "doc", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": text }] }] })
+        .to_string()
+}
+
+fn video_at(seconds: f64) -> learning_application::Anchor {
+    learning_application::Anchor::VideoTime {
+        resource_id: "resource_video".to_owned(),
+        seconds,
+    }
+}
+
+#[test]
+fn notes_are_anchored_only_to_real_targets() {
+    use learning_application::Anchor;
+
+    let (_root, mut library) = notes_fixture();
+    let (body, at) = (note_doc, video_at);
+    let note = library
+        .create_note(
+            "course_recovery",
+            "lesson_one",
+            &at(75.0),
+            &body("Caching tiers"),
+        )
+        .unwrap();
+    assert_eq!((note.revision, note.text.as_str()), (0, "Caching tiers"));
+    library
+        .create_note(
+            "course_recovery",
+            "lesson_one",
+            &Anchor::Lesson {},
+            &body("Overview"),
+        )
+        .unwrap();
+    for (lesson, anchor) in [
+        ("lesson_missing", Anchor::Lesson {}),
+        (
+            "lesson_one",
+            Anchor::PdfPage {
+                resource_id: "resource_video".to_owned(),
+                page: 1,
+                region: None,
+            },
+        ),
+        (
+            "lesson_one",
+            Anchor::VideoTime {
+                resource_id: "resource_other".to_owned(),
+                seconds: 1.0,
+            },
+        ),
+    ] {
+        assert!(matches!(
+            library.create_note("course_recovery", lesson, &anchor, &body("x")),
+            Err(LibraryError::NoteTarget(_))
+        ));
+    }
+    assert!(matches!(
+        library.create_note("course_recovery", "lesson_one", &at(-1.0), &body("x")),
+        Err(LibraryError::Note(_))
+    ));
+    assert!(matches!(
+        library.create_note("course_recovery", "lesson_one", &at(1.0), "{}"),
+        Err(LibraryError::Note(_))
+    ));
+}
+
+#[test]
+fn notes_change_only_from_their_current_revision() {
+    use learning_application::NoteChange;
+
+    let (_root, mut library) = notes_fixture();
+    let (body, at) = (note_doc, video_at);
+    let note = library
+        .create_note(
+            "course_recovery",
+            "lesson_one",
+            &at(75.0),
+            &body("Caching tiers"),
+        )
+        .unwrap();
+    library
+        .create_note(
+            "course_recovery",
+            "lesson_one",
+            &learning_application::Anchor::Lesson {},
+            &body("Overview"),
+        )
+        .unwrap();
+    let NoteChange::Saved(updated) = library
+        .update_note(&note.note_id, 0, &at(80.0), &body("Caching tiers and TTLs"))
+        .unwrap()
+    else {
+        panic!("saved");
+    };
+    assert_eq!(updated.revision, 1);
+    assert_eq!(
+        library
+            .update_note(&note.note_id, 0, &at(90.0), &body("stale edit"))
+            .unwrap(),
+        NoteChange::Conflict {
+            current_revision: 1
+        }
+    );
+    let notes = library
+        .notes("course_recovery", Some("lesson_one"))
+        .unwrap();
+    assert_eq!(notes.len(), 2);
+    assert_eq!(notes[0].text, "Caching tiers and TTLs");
+    assert_eq!(notes[0].anchor, at(80.0));
+    assert_eq!(
+        library.delete_note(&note.note_id, 0).unwrap(),
+        NoteChange::Conflict {
+            current_revision: 1
+        }
+    );
+    assert!(matches!(
+        library.delete_note(&note.note_id, 1).unwrap(),
+        NoteChange::Saved(_)
+    ));
+    assert_eq!(
+        library
+            .update_note("note_missing", 0, &at(1.0), &body("x"))
+            .unwrap(),
+        NoteChange::NotFound
+    );
+    assert_eq!(library.notes("course_recovery", None).unwrap().len(), 1);
+}

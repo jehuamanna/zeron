@@ -38,6 +38,25 @@ export interface CourseSummary {
   totalLessons: number;
 }
 
+export type NoteAnchor =
+  | { kind: "lesson" }
+  | { kind: "videoTime"; resourceId: string; seconds: number }
+  | { kind: "pdfPage"; resourceId: string; page: number; region: { x: number; y: number; width: number; height: number } | null };
+
+export interface Note {
+  noteId: string;
+  lessonId: string;
+  anchor: NoteAnchor;
+  /** Tiptap document as JSON text. */
+  body: string;
+  text: string;
+  revision: number;
+  createdAtUnixSeconds: number;
+  updatedAtUnixSeconds: number;
+}
+
+export type NoteChange = { outcome: "saved"; note: Note } | { outcome: "conflict"; currentRevision: number } | { outcome: "notFound" };
+
 export type LessonStatus = "not_started" | "in_progress" | "completed";
 
 export interface CourseProgress {
@@ -213,6 +232,13 @@ export const libraryApi = {
   storage: () => invoke<StorageUse>("get_storage"),
   /** Caps streamed lessons; null for no cap. Applies at once. */
   setCacheLimit: (limitBytes: number | null) => invoke<RemovalReport>("set_cache_limit", { limitBytes }),
+  notes: (courseId: string, lessonId: string | null) => invoke<Note[]>("list_notes", { courseId, lessonId }),
+  createNote: (courseId: string, lessonId: string, anchor: NoteAnchor, body: string) =>
+    invoke<Note>("create_note", { courseId, lessonId, anchor, body }),
+  /** Saves only if the note is still at `expectedRevision`; never overwrites a newer note. */
+  updateNote: (noteId: string, expectedRevision: number, anchor: NoteAnchor, body: string) =>
+    invoke<NoteChange>("update_note", { noteId, expectedRevision, anchor, body }),
+  deleteNote: (noteId: string, expectedRevision: number) => invoke<NoteChange>("delete_note", { noteId, expectedRevision }),
   progress: (courseId: string) => invoke<CourseProgress>("get_course_progress", { courseId }),
   setLessonCompleted: (courseId: string, lessonId: string, completed: boolean) =>
     invoke<CourseProgress>("set_lesson_completed", { courseId, lessonId, completed }),

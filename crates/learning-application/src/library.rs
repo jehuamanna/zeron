@@ -72,6 +72,12 @@ pub enum LibraryError {
     /// The selected package root cannot be resolved for durable recovery.
     #[error("cannot resolve the local course package root: {0}")]
     PackageLocation(#[source] std::io::Error),
+    /// A note's anchor or document is not valid.
+    #[error(transparent)]
+    Note(#[from] learning_domain::NoteError),
+    /// A note points at a lesson or resource the course does not have.
+    #[error("{0}")]
+    NoteTarget(&'static str),
     /// A playback position or duration is not a usable number of seconds.
     #[error("{0} must be a finite number of seconds within the lesson")]
     InvalidPlaybackTime(&'static str),
