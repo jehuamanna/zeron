@@ -4601,6 +4601,7 @@ dependencies = [
 name = "zeron-learner-desktop"
 version = "0.1.0"
 dependencies = [
+ "course-format",
  "learning-application",
  "serde",
  "tauri",

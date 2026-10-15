@@ -12,6 +12,7 @@ The initial Rust workspace contains `course-format`, the framework-independent o
 - generated JSON Schema and a checked-in valid fixture.
 - bounded and cancellable local import with symlink rejection, containment checks, and exact length/SHA-256 verification.
 - bundled SQLite migrations, foreign-key enforcement, WAL negotiation, FTS5 capability checks, transactional course snapshots, and local metadata search.
+- backend-only package-location recovery and a path-free course/module/lesson/resource navigation interface.
 
 ## Development
 

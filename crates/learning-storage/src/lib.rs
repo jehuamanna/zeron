@@ -5,7 +5,7 @@
 //! composition root.
 
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -13,7 +13,7 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 1;
+const CURRENT_SCHEMA_VERSION: i64 = 2;
 
 /// Durable course metadata returned to application use cases.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,12 +123,13 @@ impl Storage {
         &mut self,
         manifest: &CourseManifest,
         total_resource_bytes: u64,
+        package_root: &Path,
     ) -> Result<StoredCourseSummary, StorageError> {
         let imported_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| StorageError::InvalidSystemClock)?
             .as_secs();
-        self.save_imported_course_at(manifest, total_resource_bytes, imported_at)
+        self.save_imported_course_at(manifest, total_resource_bytes, package_root, imported_at)
     }
 
     /// Fetch one course summary by stable logical ID.
@@ -181,6 +182,28 @@ impl Storage {
             .map_err(StorageError::from)
     }
 
+    /// Resolve the backend-only package root for a local course.
+    ///
+    /// This value must not cross the IPC boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures or a path encoding that is
+    /// incompatible with the current operating system.
+    pub fn course_package_root(&self, course_id: &str) -> Result<Option<PathBuf>, StorageError> {
+        let encoded: Option<(String, Vec<u8>)> = self
+            .connection
+            .query_row(
+                "SELECT path_encoding, path_bytes FROM course_locations WHERE course_id = ?1",
+                [course_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        encoded
+            .map(|(encoding, bytes)| decode_path(&encoding, &bytes))
+            .transpose()
+    }
+
     /// Search imported course metadata through `SQLite` FTS5.
     ///
     /// # Errors
@@ -203,6 +226,7 @@ impl Storage {
         &mut self,
         manifest: &CourseManifest,
         total_resource_bytes: u64,
+        package_root: &Path,
         imported_at: u64,
     ) -> Result<StoredCourseSummary, StorageError> {
         let total_bytes = sqlite_integer(total_resource_bytes, "total resource bytes")?;
@@ -256,6 +280,21 @@ impl Storage {
                 ],
             )?;
         }
+        let (path_encoding, path_bytes) = encode_path(package_root);
+        tx.execute(
+            "INSERT INTO course_locations (course_id, path_encoding, path_bytes, verified_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(course_id) DO UPDATE SET
+               path_encoding=excluded.path_encoding,
+               path_bytes=excluded.path_bytes,
+               verified_at=excluded.verified_at",
+            params![
+                manifest.course_id,
+                path_encoding,
+                path_bytes,
+                imported_at_i64
+            ],
+        )?;
         refresh_search_row(&tx, manifest)?;
         tx.commit()?;
 
@@ -272,7 +311,7 @@ impl Storage {
 }
 
 fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
-    let found: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    let mut found: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if found > CURRENT_SCHEMA_VERSION {
         return Err(StorageError::FutureSchema {
             found,
@@ -312,6 +351,20 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                tokenize = 'unicode61'
              );
              PRAGMA user_version = 1;",
+        )?;
+        tx.commit()?;
+        found = 1;
+    }
+    if found == 1 {
+        let tx = connection.transaction()?;
+        tx.execute_batch(
+            "CREATE TABLE course_locations (
+               course_id TEXT PRIMARY KEY NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+               path_encoding TEXT NOT NULL,
+               path_bytes BLOB NOT NULL,
+               verified_at INTEGER NOT NULL CHECK(verified_at >= 0)
+             ) STRICT;
+             PRAGMA user_version = 2;",
         )?;
         tx.commit()?;
     }
@@ -384,6 +437,60 @@ fn sqlite_integer(value: u64, name: &'static str) -> Result<i64, StorageError> {
     i64::try_from(value).map_err(|_| StorageError::IntegerOverflow(name))
 }
 
+#[cfg(unix)]
+fn encode_path(path: &Path) -> (&'static str, Vec<u8>) {
+    use std::os::unix::ffi::OsStrExt;
+    ("unix", path.as_os_str().as_bytes().to_vec())
+}
+
+#[cfg(windows)]
+fn encode_path(path: &Path) -> (&'static str, Vec<u8>) {
+    use std::os::windows::ffi::OsStrExt;
+    let bytes = path
+        .as_os_str()
+        .encode_wide()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    ("windows-utf16le", bytes)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn encode_path(path: &Path) -> (&'static str, Vec<u8>) {
+    ("utf8", path.to_string_lossy().into_owned().into_bytes())
+}
+
+#[cfg(unix)]
+fn decode_path(encoding: &str, bytes: &[u8]) -> Result<PathBuf, StorageError> {
+    use std::os::unix::ffi::OsStrExt;
+    if encoding != "unix" {
+        return Err(StorageError::MissingCapability("stored path encoding"));
+    }
+    Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+}
+
+#[cfg(windows)]
+fn decode_path(encoding: &str, bytes: &[u8]) -> Result<PathBuf, StorageError> {
+    use std::os::windows::ffi::OsStringExt;
+    if encoding != "windows-utf16le" || !bytes.len().is_multiple_of(2) {
+        return Err(StorageError::MissingCapability("stored path encoding"));
+    }
+    let wide = bytes
+        .chunks_exact(2)
+        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect::<Vec<_>>();
+    Ok(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn decode_path(encoding: &str, bytes: &[u8]) -> Result<PathBuf, StorageError> {
+    if encoding != "utf8" {
+        return Err(StorageError::MissingCapability("stored path encoding"));
+    }
+    String::from_utf8(bytes.to_vec())
+        .map(PathBuf::from)
+        .map_err(|_| StorageError::MissingCapability("stored path encoding"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,7 +513,9 @@ mod tests {
     fn saves_loads_and_replaces_course_atomically() {
         let mut storage = Storage::open_in_memory().unwrap();
         let original = manifest("Distributed Systems", "networks");
-        storage.save_imported_course_at(&original, 128, 10).unwrap();
+        storage
+            .save_imported_course_at(&original, 128, Path::new("/course/original"), 10)
+            .unwrap();
         assert_eq!(
             storage.course(&original.course_id).unwrap().unwrap().title,
             "Distributed Systems"
@@ -417,11 +526,17 @@ mod tests {
         );
 
         let updated = manifest("Distributed Systems Updated", "consensus");
-        storage.save_imported_course_at(&updated, 256, 20).unwrap();
+        storage
+            .save_imported_course_at(&updated, 256, Path::new("/course/updated"), 20)
+            .unwrap();
         let summary = storage.course(&updated.course_id).unwrap().unwrap();
         assert_eq!(summary.title, "Distributed Systems Updated");
         assert_eq!(summary.total_resource_bytes, 256);
         assert_eq!(summary.imported_at_unix_seconds, 20);
+        assert_eq!(
+            storage.course_package_root(&updated.course_id).unwrap(),
+            Some(PathBuf::from("/course/updated"))
+        );
         assert!(storage.search_courses("networks").unwrap().is_empty());
         assert_eq!(storage.search_courses("consensus").unwrap().len(), 1);
     }
@@ -441,7 +556,7 @@ mod tests {
         let mut storage = Storage::open_in_memory().unwrap();
         let manifest = manifest("Course", "tag");
         assert!(matches!(
-            storage.save_imported_course_at(&manifest, u64::MAX, 1),
+            storage.save_imported_course_at(&manifest, u64::MAX, Path::new("/course"), 1),
             Err(StorageError::IntegerOverflow("total resource bytes"))
         ));
     }
@@ -450,7 +565,9 @@ mod tests {
     fn rejects_corrupt_stored_manifest_snapshots() {
         let mut storage = Storage::open_in_memory().unwrap();
         let manifest = manifest("Course", "tag");
-        storage.save_imported_course_at(&manifest, 128, 1).unwrap();
+        storage
+            .save_imported_course_at(&manifest, 128, Path::new("/course"), 1)
+            .unwrap();
         storage
             .connection
             .execute(

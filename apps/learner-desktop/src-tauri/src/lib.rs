@@ -34,6 +34,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::readiness,
             commands::list_courses,
+            commands::get_course_detail,
             commands::choose_and_import_course,
         ])
         .run(tauri::generate_context!())

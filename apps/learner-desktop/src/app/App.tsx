@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Download, HardDrive, Search } from "lucide-react";
+import { BookOpen, ChevronLeft, Download, File, HardDrive, Play, Search } from "lucide-react";
 
 import { Button } from "../components/ui/button";
 import { libraryApi } from "../services/library";
+import { useLibraryUi } from "../stores/library";
 
 const formatBytes = (bytes: number) =>
   new Intl.NumberFormat(undefined, { style: "unit", unit: "megabyte", maximumFractionDigits: 1 }).format(
@@ -11,6 +12,7 @@ const formatBytes = (bytes: number) =>
 
 export function App() {
   const queryClient = useQueryClient();
+  const { selectedCourseId, selectCourse } = useLibraryUi();
   const readiness = useQuery({ queryKey: ["readiness"], queryFn: libraryApi.readiness });
   const courses = useQuery({
     queryKey: ["courses"],
@@ -22,6 +24,11 @@ export function App() {
     onSuccess: async (receipt) => {
       if (receipt) await queryClient.invalidateQueries({ queryKey: ["courses"] });
     },
+  });
+  const detail = useQuery({
+    queryKey: ["course-detail", selectedCourseId],
+    queryFn: () => libraryApi.detail(selectedCourseId!),
+    enabled: selectedCourseId !== null,
   });
 
   return (
@@ -44,6 +51,61 @@ export function App() {
         </header>
 
         <section className="py-10">
+          {selectedCourseId ? (
+            <div>
+              <Button variant="ghost" onClick={() => selectCourse(null)} className="mb-7">
+                <ChevronLeft size={17} /> Back to library
+              </Button>
+              {detail.isPending ? (
+                <p className="text-slate-400">Opening course…</p>
+              ) : detail.isError || !detail.data ? (
+                <div role="alert" className="rounded-2xl border border-red-400/30 bg-red-400/10 p-5 text-red-100">
+                  This course could not be recovered from the local library.
+                </div>
+              ) : (
+                <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
+                  <div>
+                    <p className="mb-2 text-xs font-bold uppercase tracking-[0.24em] text-cyan-300">Course workspace</p>
+                    <h1 className="text-4xl font-semibold tracking-tight">{detail.data.title}</h1>
+                    <p className="mt-3 max-w-2xl text-slate-400">{detail.data.description ?? `Published by ${detail.data.publisherName}`}</p>
+                    <div className="mt-10 rounded-3xl border border-white/10 bg-black/20 p-8">
+                      <div className="grid aspect-video place-items-center rounded-2xl bg-[#03080d] text-slate-500">
+                        <div className="text-center">
+                          <Play className="mx-auto mb-3" size={30} />
+                          <p>Choose a video lesson to begin</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <aside aria-label="Course contents" className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+                    <h2 className="mb-5 font-semibold">Course contents</h2>
+                    <div className="space-y-6">
+                      {detail.data.modules.map((module) => (
+                        <section key={module.id}>
+                          <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">{module.title}</h3>
+                          <div className="space-y-2">
+                            {module.lessons.map((lesson) => (
+                              <div key={lesson.id} className="rounded-xl border border-white/10 bg-black/10 p-3">
+                                <p className="text-sm font-medium">{lesson.title}</p>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {lesson.resources.map((resource) => (
+                                    <span key={resource.id} className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-400">
+                                      <File size={12} /> {resource.kind}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  </aside>
+                </div>
+              )}
+            </div>
+          ) : (
+          <>
           <div className="mb-8 flex items-end justify-between gap-6">
             <div>
               <p className="mb-2 text-xs font-bold uppercase tracking-[0.24em] text-cyan-300">Library</p>
@@ -64,7 +126,7 @@ export function App() {
           ) : courses.data?.length ? (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {courses.data.map((course) => (
-                <article key={course.courseId} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-2xl shadow-black/10">
+                <button type="button" onClick={() => selectCourse(course.courseId)} key={course.courseId} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-left shadow-2xl shadow-black/10 transition hover:-translate-y-0.5 hover:border-cyan-300/40">
                   <div className="mb-8 grid size-11 place-items-center rounded-xl bg-cyan-300/10 text-cyan-300">
                     <HardDrive size={20} />
                   </div>
@@ -74,7 +136,7 @@ export function App() {
                     <span>Version {course.courseVersion}</span>
                     <span>{formatBytes(course.totalResourceBytes)}</span>
                   </div>
-                </article>
+                </button>
               ))}
             </div>
           ) : (
@@ -85,6 +147,8 @@ export function App() {
               <h2 className="text-xl font-semibold">Your library is ready</h2>
               <p className="mx-auto mt-2 max-w-md text-slate-400">Import a verified local course folder to begin. Torrent courses join this same library in Phase 3.</p>
             </div>
+          )}
+          </>
           )}
         </section>
       </div>

@@ -1,15 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { libraryApi } from "../services/library";
 import { App } from "./App";
+import { useLibraryUi } from "../stores/library";
 
 vi.mock("../services/library", () => ({
   libraryApi: {
     readiness: vi.fn(),
     list: vi.fn(),
     chooseAndImport: vi.fn(),
+    detail: vi.fn(),
   },
 }));
 
@@ -25,6 +27,8 @@ function renderApp() {
 }
 
 describe("learner library", () => {
+  beforeEach(() => useLibraryUi.getState().selectCourse(null));
+
   it("shows a durable course summary without a filesystem path", async () => {
     vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready" });
     vi.mocked(libraryApi.list).mockResolvedValue([
@@ -51,5 +55,61 @@ describe("learner library", () => {
 
     const view = renderApp();
     await waitFor(() => expect(view.container.textContent).toContain("Your library is ready"));
+  });
+
+  it("opens a path-free course outline", async () => {
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([
+      {
+        courseId: "course_one",
+        courseVersion: "1.0.0",
+        title: "Distributed Systems",
+        publisherName: "Zeron Tests",
+        language: "en",
+        totalResourceBytes: 2_000_000,
+        importedAtUnixSeconds: 1,
+      },
+    ]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "course_one",
+      courseVersion: "1.0.0",
+      title: "Distributed Systems",
+      description: "Course detail",
+      publisherName: "Zeron Tests",
+      modules: [
+        {
+          id: "module_one",
+          title: "Foundations",
+          lessons: [
+            {
+              id: "lesson_one",
+              title: "Introduction",
+              resources: [
+                {
+                  id: "resource_video",
+                  kind: "video",
+                  mediaType: "video/mp4",
+                  byteLength: 2_000_000,
+                  durationSeconds: 60,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    const view = renderApp();
+    const course = await waitFor(() => {
+      const button = Array.from(view.container.querySelectorAll("button")).find((candidate) =>
+        candidate.textContent?.includes("Distributed Systems"),
+      );
+      expect(button).toBeDefined();
+      return button!;
+    });
+    fireEvent.click(course);
+    await waitFor(() => expect(view.container.textContent).toContain("Foundations"));
+    expect(view.container.textContent).toContain("Introduction");
+    expect(view.container.textContent).not.toContain("/course/");
   });
 });

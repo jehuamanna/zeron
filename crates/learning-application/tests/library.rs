@@ -100,6 +100,18 @@ fn verified_import_survives_database_restart() {
         library.manifest("course_recovery").unwrap().unwrap().title,
         "Recovery Course"
     );
+    assert_eq!(
+        library
+            .resource_path("course_recovery", "resource_video")
+            .unwrap(),
+        Some(course_root.join("lesson.mp4"))
+    );
+    assert_eq!(
+        library
+            .resource_path("course_recovery", "missing_resource")
+            .unwrap(),
+        None
+    );
 }
 
 #[test]

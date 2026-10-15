@@ -13,6 +13,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build.workspace = true
 
 [dependencies]
+course-format = { path = "../../../crates/course-format" }
 learning-application = { path = "../../../crates/learning-application" }
 serde.workspace = true
 tauri.workspace = true

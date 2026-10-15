@@ -30,6 +30,9 @@ pub enum LibraryError {
     /// Durable storage failed.
     #[error(transparent)]
     Storage(#[from] StorageError),
+    /// The selected package root cannot be resolved for durable recovery.
+    #[error("cannot resolve the local course package root: {0}")]
+    PackageLocation(#[source] std::io::Error),
 }
 
 /// Ready local course-library application service.
@@ -81,6 +84,7 @@ impl CourseLibrary {
         cancellation: &CancellationFlag,
     ) -> Result<CourseImportReceipt, LibraryError> {
         let imported = import_local_course(root, self.import_limits, cancellation)?;
+        let package_root = std::fs::canonicalize(root).map_err(LibraryError::PackageLocation)?;
         let receipt = CourseImportReceipt {
             course_id: imported.manifest.course_id.clone(),
             course_version: imported.manifest.version.clone(),
@@ -88,8 +92,11 @@ impl CourseLibrary {
             verified_resource_count: imported.resources.len(),
             total_resource_bytes: imported.total_resource_bytes,
         };
-        self.storage
-            .save_imported_course(&imported.manifest, imported.total_resource_bytes)?;
+        self.storage.save_imported_course(
+            &imported.manifest,
+            imported.total_resource_bytes,
+            &package_root,
+        )?;
         Ok(receipt)
     }
 
@@ -124,5 +131,34 @@ impl CourseLibrary {
         self.storage
             .course_manifest(course_id)
             .map_err(LibraryError::from)
+    }
+
+    /// Resolve a verified resource to a backend-only local path.
+    ///
+    /// This method is for media registration inside the Rust process. Its
+    /// result must never be serialized over IPC.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] if the stored manifest or package
+    /// location cannot be recovered.
+    pub fn resource_path(
+        &self,
+        course_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<std::path::PathBuf>, LibraryError> {
+        let Some(manifest) = self.storage.course_manifest(course_id)? else {
+            return Ok(None);
+        };
+        let Some(root) = self.storage.course_package_root(course_id)? else {
+            return Ok(None);
+        };
+        let resource = manifest
+            .modules
+            .iter()
+            .flat_map(|module| &module.lessons)
+            .flat_map(|lesson| &lesson.resources)
+            .find(|resource| resource.id == resource_id);
+        Ok(resource.map(|resource| root.join(&resource.path)))
     }
 }
