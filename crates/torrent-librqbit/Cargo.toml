@@ -1,0 +1,19 @@
+[package]
+name = "torrent-librqbit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+librqbit.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+torrent-port = { path = "../torrent-port" }
+
+[dev-dependencies]
+publisher-application = { path = "../publisher-application" }
+tokio = { workspace = true, features = ["io-util", "macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
