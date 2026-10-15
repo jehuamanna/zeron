@@ -84,6 +84,8 @@ pub fn run() {
             commands::cancel_publish_job,
             commands::activate_release,
             commands::list_releases,
+            commands::get_release_details,
+            commands::export_release_torrent,
             commands::validate_draft,
             commands::get_distribution,
             commands::start_seeding,

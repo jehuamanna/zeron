@@ -5,8 +5,8 @@ use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
     DistributionOptions, DraftServiceError, DraftSummary, FindingSeverity, MetadataEdit,
     PeerReachability, PublishJobSnapshot, PublishStage, PublisherDrafts, ReleaseRecord,
-    ReleaseSeedingStatus, StoredDraft, StructureEdit, TransferState, inspect_draft_media,
-    network_profile_name, parse_network_profile, source_info,
+    ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit, TransferState,
+    inspect_draft_media, network_profile_name, parse_network_profile, source_info,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -166,6 +166,21 @@ pub(crate) struct PublishJobDto {
     prepared: Option<PreparedReleaseDto>,
     failure: Option<JobFailureDto>,
     release_id: Option<String>,
+}
+
+/// A release plus the package-relative files its torrent declares.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReleaseDetailsDto {
+    release: ReleaseDto,
+    files: Vec<ReleaseFileDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleaseFileDto {
+    path: String,
+    byte_length: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -455,6 +470,111 @@ pub(crate) async fn list_releases(
             .map_err(|error| service_error("release_list_failed", error))
     })
     .await
+}
+
+#[tauri::command]
+pub(crate) async fn get_release_details(
+    release_id: String,
+    state: State<'_, AppState>,
+) -> Result<ReleaseDetailsDto, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    let releases_root = state.releases_root.clone();
+    run_blocking(move || {
+        release_torrent(&*lock_drafts(&drafts)?, &releases_root, &release_id)
+            .map(ReleaseDetailsDto::from)
+    })
+    .await
+}
+
+/// Save a copy of a release's `.torrent` where the publisher chooses.
+///
+/// Only the release id crosses IPC; the destination comes from a native save
+/// dialog and stays in Rust. Returns `false` when the dialog is cancelled.
+#[tauri::command]
+pub(crate) async fn export_release_torrent(
+    app: AppHandle,
+    release_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    let releases_root = state.releases_root.clone();
+    let torrent =
+        run_blocking(move || release_torrent(&*lock_drafts(&drafts)?, &releases_root, &release_id))
+            .await?;
+    let file_name = torrent_file_name(
+        &torrent.record.release.title,
+        &torrent.record.release.course_version,
+    );
+    let selected = run_blocking(move || {
+        Ok(app
+            .dialog()
+            .file()
+            .set_file_name(file_name)
+            .add_filter("BitTorrent file", &["torrent"])
+            .blocking_save_file())
+    })
+    .await?;
+    let Some(selected) = selected else {
+        return Ok(false);
+    };
+    let destination = selected.into_path().map_err(|_| {
+        CommandError::new(
+            "unsupported_file_location",
+            "the selected file location is not supported",
+        )
+    })?;
+    run_blocking(move || write_export(&destination, &torrent.bytes)).await?;
+    Ok(true)
+}
+
+fn release_torrent(
+    drafts: &PublisherDrafts,
+    releases_root: &std::path::Path,
+    release_id: &str,
+) -> Result<ReleaseTorrent, CommandError> {
+    drafts
+        .release_torrent(releases_root, release_id)
+        .map_err(|error| service_error("release_unavailable", error))
+}
+
+/// Write a fresh, writable file rather than copying the read-only original.
+fn write_export(destination: &std::path::Path, bytes: &[u8]) -> Result<(), CommandError> {
+    std::fs::write(destination, bytes).map_err(|_| {
+        CommandError::new(
+            "export_failed",
+            "the torrent file could not be written to the chosen location",
+        )
+    })
+}
+
+/// A portable suggested name such as `rust-systems-1.2.0.torrent`.
+fn torrent_file_name(title: &str, course_version: &str) -> String {
+    let slug = |value: &str| {
+        let mut slug = String::new();
+        for character in value.chars() {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_') {
+                slug.push(character.to_ascii_lowercase());
+            } else if !slug.is_empty() && !slug.ends_with('-') {
+                slug.push('-');
+            }
+        }
+        slug.trim_matches(|character| matches!(character, '-' | '.'))
+            .chars()
+            .take(64)
+            .collect::<String>()
+    };
+    let title = slug(title);
+    let title = if title.is_empty() {
+        "course".to_owned()
+    } else {
+        title
+    };
+    let version = slug(course_version);
+    if version.is_empty() {
+        format!("{title}.torrent")
+    } else {
+        format!("{title}-{version}.torrent")
+    }
 }
 
 #[tauri::command]
@@ -769,6 +889,22 @@ impl From<ReleaseSeedingStatus> for SeedingStatusDto {
             failure: transfer
                 .and_then(|transfer| transfer.failure)
                 .or(status.start_error),
+        }
+    }
+}
+
+impl From<ReleaseTorrent> for ReleaseDetailsDto {
+    fn from(torrent: ReleaseTorrent) -> Self {
+        Self {
+            release: ReleaseDto::from(torrent.record),
+            files: torrent
+                .files
+                .into_iter()
+                .map(|file| ReleaseFileDto {
+                    path: file.path,
+                    byte_length: file.length,
+                })
+                .collect(),
         }
     }
 }
@@ -1202,10 +1338,10 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 
-    #[test]
-    fn publish_job_dto_uses_screaming_stages_and_hides_paths() {
+    /// A temporary directory and a draft with one attached PDF, ready to publish.
+    fn publishable_draft(name: &str) -> (PathBuf, PublisherDrafts, course_publisher::DraftCourse) {
         let directory =
-            std::env::temp_dir().join(format!("zeron-admin-publish-{}", std::process::id()));
+            std::env::temp_dir().join(format!("zeron-admin-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).unwrap();
         let source = directory.join("notes.pdf");
@@ -1239,6 +1375,12 @@ mod tests {
             .attach_source(&draft_id, 3, &lesson_id, &source)
             .unwrap();
         let draft = drafts.draft(&draft_id).unwrap().unwrap().draft;
+        (directory, drafts, draft)
+    }
+
+    #[test]
+    fn publish_job_dto_uses_screaming_stages_and_hides_paths() {
+        let (directory, mut drafts, draft) = publishable_draft("publish");
         let jobs = publisher_application::PublishJobs::new(&directory.join("staging"));
         let job = jobs.begin(&draft).unwrap();
         let mut stages = Vec::new();
@@ -1291,6 +1433,51 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 
+    #[test]
+    fn release_details_and_torrent_exports_are_path_free() {
+        let (directory, mut drafts, draft) = publishable_draft("export");
+        let jobs = publisher_application::PublishJobs::new(&directory.join("staging"));
+        let job = jobs.begin(&draft).unwrap();
+        jobs.run(
+            &job.job_id,
+            &draft,
+            &DistributionOptions::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+        let (record, _) = jobs
+            .activate(&job.job_id, &mut drafts, &directory.join("releases"))
+            .unwrap();
+        let release = serde_json::to_value(ReleaseDto::from(record)).unwrap();
+        let release_id = release["releaseId"].as_str().unwrap().to_owned();
+        let releases_root = directory.join("releases");
+        let details = release_torrent(&drafts, &releases_root, &release_id).unwrap();
+        let exported = directory.join("exported.torrent");
+        write_export(&exported, &details.bytes).unwrap();
+        assert_eq!(std::fs::read(&exported).unwrap(), details.bytes);
+        assert!(
+            !std::fs::metadata(&exported)
+                .unwrap()
+                .permissions()
+                .readonly()
+        );
+        let details = serde_json::to_value(ReleaseDetailsDto::from(details)).unwrap();
+        assert_eq!(details["release"], release);
+        assert_eq!(details["files"].as_array().unwrap().len(), 2);
+        assert!(
+            details["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| file["path"] == "course.json")
+        );
+        assert!(!details.to_string().contains(&*directory.to_string_lossy()));
+        let missing = release_torrent(&drafts, &releases_root, "../releases").unwrap_err();
+        assert_eq!(missing.code, "release_unavailable");
+        make_writable(&directory);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     fn make_writable(path: &std::path::Path) {
         for entry in std::fs::read_dir(path).unwrap() {
             let path = entry.unwrap().path();
@@ -1303,6 +1490,21 @@ mod tests {
                 std::fs::set_permissions(&path, permissions).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn suggested_torrent_names_are_portable() {
+        assert_eq!(
+            torrent_file_name("Rust Systems: Part 1", "1.2.0"),
+            "rust-systems-part-1-1.2.0.torrent"
+        );
+        assert_eq!(
+            torrent_file_name("../../etc/passwd", "1.0.0"),
+            "etc-passwd-1.0.0.torrent"
+        );
+        assert_eq!(torrent_file_name("Ünïcode ✓", ""), "n-code.torrent");
+        assert_eq!(torrent_file_name("///", "2.0.0"), "course-2.0.0.torrent");
+        assert!(torrent_file_name(&"x".repeat(500), "1.0.0").len() < 90);
     }
 
     #[test]

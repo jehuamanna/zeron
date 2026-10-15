@@ -5,8 +5,8 @@ import { useCallback, useState } from "react";
 import { Builder } from "../features/builder/Builder";
 import { ReadinessPanel } from "../features/builder/ReadinessPanel";
 import { PublishPanel } from "../features/publish/PublishPanel";
+import { CourseList } from "../features/courses/CourseList";
 import { DistributionPage } from "../features/distribution/DistributionPage";
-import { ReleaseList } from "../features/releases/ReleaseList";
 import { publisherApi, type DraftDetail } from "../services/publisher";
 import { useBuilderUi } from "../stores/builder";
 
@@ -14,7 +14,6 @@ export function App() {
   const queryClient = useQueryClient();
   const { selectedDraftId, selectDraft, workspace, showWorkspace } = useBuilderUi();
   const [reloadCount, setReloadCount] = useState(0);
-  const drafts = useQuery({ queryKey: ["publisher-drafts"], queryFn: publisherApi.listDrafts });
   const draft = useQuery({
     queryKey: ["publisher-draft", selectedDraftId],
     queryFn: () => publisherApi.getDraft(selectedDraftId!),
@@ -85,18 +84,8 @@ export function App() {
               </div>
             ) : (
               <>
-                {drafts.isPending ? <p className="text-slate-400">Loading publisher drafts…</p> : drafts.isError || createDraft.isError ? (
-              <p role="alert" className="rounded-2xl border border-red-400/30 bg-red-400/10 p-5 text-red-200">Publisher storage is unavailable.</p>
-            ) : drafts.data?.length ? (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{drafts.data.map((item) => (
-                <button type="button" key={item.draftId} onClick={() => selectDraft(item.draftId)} className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-left hover:border-amber-300/40">
-                  <p className="text-xs text-amber-300">DRAFT · r{item.revision}</p><h2 className="mt-4 text-lg font-semibold">{item.title}</h2><p className="mt-1 text-sm text-slate-500">Version {item.courseVersion}</p>
-                </button>
-              ))}</div>
-            ) : (
-              <div className="rounded-3xl border border-dashed border-white/15 py-20 text-center"><BookPlus className="mx-auto mb-4 text-amber-300" size={30} /><h2 className="text-xl font-semibold">Create your first course</h2><p className="mt-2 text-slate-400">Drafts stay editable and separate from immutable published releases.</p></div>
-            )}
-                <ReleaseList />
+                {createDraft.isError ? <p role="alert" className="mb-5 rounded-2xl border border-red-400/30 bg-red-400/10 p-5 text-red-200">The course could not be created.</p> : null}
+                <CourseList onOpenDraft={selectDraft} />
               </>
             )}
           </div>

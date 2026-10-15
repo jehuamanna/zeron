@@ -5,7 +5,9 @@ use std::{
 
 use course_publisher::PackagingCancellation;
 use publisher_storage::{NewRelease, ReleaseRecord};
-use torrent_metainfo::{HashProgress, TorrentError, inspect_torrent, verify_torrent};
+use torrent_metainfo::{
+    HashProgress, PackageFile, TorrentError, file_table, info_hash, inspect_torrent, verify_torrent,
+};
 
 use crate::{
     DraftServiceError, PreparedRelease, PublisherDrafts, opaque_id,
@@ -159,6 +161,37 @@ impl PublisherDrafts {
         Ok(record)
     }
 
+    /// The torrent of a recorded release and the files it declares.
+    ///
+    /// The bytes are read with a size bound and their info hash must match
+    /// the record, so an export never hands out a torrent that differs from
+    /// what was published. Declared paths are package-relative.
+    ///
+    /// # Errors
+    /// Returns [`DraftServiceError::InvalidAttempt`] for unknown releases, a
+    /// missing torrent, or one that no longer matches its record.
+    pub fn release_torrent(
+        &self,
+        releases_root: &Path,
+        release_id: &str,
+    ) -> Result<ReleaseTorrent, DraftServiceError> {
+        let unknown = || DraftServiceError::InvalidAttempt("unknown release");
+        let directory = release_directory(releases_root, release_id).ok_or_else(unknown)?;
+        let record = self.storage.release(release_id)?.ok_or_else(unknown)?;
+        let bytes = read_torrent(&directory.join(RELEASE_TORRENT_FILE))?;
+        if info_hash(&bytes).map_err(DraftServiceError::Torrent)? != record.release.info_hash {
+            return Err(DraftServiceError::InvalidAttempt(
+                "the released torrent differs from its record",
+            ));
+        }
+        let files = file_table(&bytes).map_err(DraftServiceError::Torrent)?;
+        Ok(ReleaseTorrent {
+            record,
+            bytes,
+            files,
+        })
+    }
+
     /// Finish activations interrupted by a crash and discard ones that never
     /// reached their durable record. Call once at startup.
     ///
@@ -199,6 +232,17 @@ impl PublisherDrafts {
         }
         Ok(recovered)
     }
+}
+
+/// A recorded release's verified torrent, for export and display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseTorrent {
+    /// The release the torrent belongs to.
+    pub record: ReleaseRecord,
+    /// Exact `.torrent` bytes as published.
+    pub bytes: Vec<u8>,
+    /// Declared files in torrent order, with package-relative paths.
+    pub files: Vec<PackageFile>,
 }
 
 /// Location of a recorded release's package, for later seeding.

@@ -47,9 +47,12 @@ Required:
 
 Optional, for real-window checks:
 
-- `webkit2gtk-driver` (WebKitWebDriver);
-- `cargo install tauri-driver` (v2.1.0 was used);
-- `xdotool` for native GTK file dialogs.
+- WebKitWebDriver. Debian and Ubuntu package it as `webkit2gtk-driver`. Arch does not ship it, so on Arch (the current machine) build only that target from the matching `webkitgtk-<version>.tar.xz` from webkitgtk.org. This needs `cmake`, `ninja`, `gperf`, `unifdef`, and `ruby-getoptlong`. Configure with `-DPORT=GTK -DUSE_GTK4=OFF -DENABLE_WEBDRIVER=ON`, run `ninja bin/WebKitWebDriver`, and install the binary to `~/.local/bin`. The build sources live in `~/.cache/zeron-webdriver`;
+- `cargo install tauri-driver --version 2.1.0 --locked`.
+
+Native GTK dialogs cannot be driven by WebDriver. Seed fixtures through the application API, for example with a throwaway example program, into an isolated `XDG_DATA_HOME`. Treat dialog completion as a manual check. Drive the session with plain W3C HTTP calls; the element key is `element-6066-11e4-a52e-4f735466cecf`.
+
+On Node 26 corepack is not bundled. Install pnpm into a scratch directory with `npm install --prefix <dir> pnpm@11.25.0` and prepend `<dir>/node_modules/.bin` to `PATH`.
 
 Build an app with `pnpm --filter @zeron/<app> tauri build --debug --no-bundle` so the frontend is embedded (plain `cargo build` debug binaries load the Vite dev URL). Run one tauri-driver per app with distinct `--port` / `--native-port`.
 
@@ -148,12 +151,12 @@ The user reported these Publisher gaps:
 - files and folders cannot be added by drag and drop;
 - courses and releases cannot be edited, removed, or deleted.
 
-Nothing for this slice is implemented yet. The working tree is clean apart from `AGENTS.md`.
+Sub-slice 1 (course management view, release details, and `.torrent` export) is done; see `docs/releases/phase-7-course-management.md`. Continue with sub-slice 2.
 
 ### What exists today
 
 - Builder structure editing already adds, renames, removes, and reorders modules, lessons, and resources (`StructureEditor.tsx`, `StructureEdit` commands). Removing a resource detaches it and never touches the source file.
-- `Release` DTOs already carry `magnet` and `infoHash`, but `ReleaseList.tsx` shows only a shortened hash. Each release lives at `<app_data>/releases/<release_id>/`, holding `package/` and `release.torrent` (constants `RELEASE_PACKAGE_DIRECTORY` and `RELEASE_TORRENT_FILE` in `crates/publisher-application/src/releases.rs`). Both are read-only on disk.
+- `features/courses/CourseList.tsx` groups drafts and releases by `course_id`. `ReleaseDetailsPanel.tsx` shows the magnet with Copy (`navigator.clipboard` works on WebKitGTK), the info hash, files (`get_release_details`), and `export_release_torrent`. Each release lives at `<app_data>/releases/<release_id>/`, holding `package/` and `release.torrent` (constants `RELEASE_PACKAGE_DIRECTORY` and `RELEASE_TORRENT_FILE` in `crates/publisher-application/src/releases.rs`). Both are read-only on disk.
 - `tauri-plugin-dialog` is already a dependency. `choose_and_attach_resource` opens the native picker in Rust (`commands.rs`).
 - Publisher schema is v3 (tables `drafts`, `releases`, `seeding_intents`, `settings`). `releases.status` is one of `published`, `superseded`, or `archived`; archiving is not wired up yet. `seeding_intents.release_id` references `releases`.
 - The Courses page (`App.tsx`) shows draft cards and a flat "Releases" list. Drafts and releases share `course_id`.

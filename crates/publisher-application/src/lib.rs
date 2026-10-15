@@ -23,14 +23,16 @@ use publisher_storage::PublisherStorage;
 pub use publisher_storage::{
     DraftSummary, NewRelease, PublisherStorageError, ReleaseRecord, ReleaseStatus, StoredDraft,
 };
-pub use releases::{RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE, release_directory};
+pub use releases::{
+    RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE, ReleaseTorrent, release_directory,
+};
 pub use seeding::{
     ReleaseSeedingStatus, SeedingService, network_profile_name, parse_network_profile,
 };
 pub use sources::{ResourceMediaFindings, SourceInfo, inspect_draft_media, source_info};
 pub use staging::{StagingReceipt, discard_abandoned_staging, discard_all_attempts, stage_draft};
 use thiserror::Error;
-pub use torrent_metainfo::{HashProgress, TorrentError};
+pub use torrent_metainfo::{HashProgress, PackageFile, TorrentError};
 pub use torrent_port::{
     EngineError, InfoHash, NetworkProfile, PeerReachability, TorrentEngine, TransferState,
     TransferStats,

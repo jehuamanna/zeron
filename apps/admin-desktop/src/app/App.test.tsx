@@ -35,13 +35,13 @@ function renderApp() {
 beforeEach(() => {
   useBuilderUi.setState({ selectedDraftId: null, workspace: "courses" });
   vi.mocked(publisherApi.listReleases).mockResolvedValue([]);
+  vi.mocked(publisherApi.getDistribution).mockResolvedValue({ configuredProfile: "local_network", activeProfile: "local_network", listenPort: null, peerPort: null, portForwarding: false, activePortForwarding: false, restartRequired: false, engineError: null, releases: [] });
 });
 afterEach(cleanup);
 
 describe("publisher courses", () => {
   it("switches between the courses and distribution workspaces", async () => {
     vi.mocked(publisherApi.listDrafts).mockResolvedValue([]);
-    vi.mocked(publisherApi.getDistribution).mockResolvedValue({ configuredProfile: "local_network", activeProfile: "local_network", listenPort: null, peerPort: null, portForwarding: false, activePortForwarding: false, restartRequired: false, engineError: null, releases: [] });
     const view = renderApp();
     fireEvent.click(view.getByRole("button", { name: "Distribution" }));
     await waitFor(() => expect(view.container.textContent).toContain("Publish a release to seed it."));
@@ -56,6 +56,9 @@ describe("publisher courses", () => {
     const view = renderApp();
     await waitFor(() => expect(view.container.textContent).toContain("Systems Course"));
     expect(view.container.textContent).not.toContain("/home/");
+    vi.mocked(publisherApi.getDraft).mockResolvedValue(null);
+    fireEvent.click(view.getByRole("button", { name: /Edit draft/ }));
+    expect(useBuilderUi.getState().selectedDraftId).toBe("draft_one");
   });
 
   it("creates and opens a durable draft with readiness issues", async () => {

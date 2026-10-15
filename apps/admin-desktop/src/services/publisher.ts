@@ -118,6 +118,17 @@ export interface Release {
   status: "published" | "superseded" | "archived";
 }
 
+export interface ReleaseFile {
+  /** Package-relative path as declared in the release torrent. */
+  path: string;
+  byteLength: number;
+}
+
+export interface ReleaseDetails {
+  release: Release;
+  files: ReleaseFile[];
+}
+
 export const finishedPublishStages: ReadonlySet<PublishStage> = new Set(["READY_TO_PUBLISH", "PUBLISHED", "FAILED", "CANCELLED"]);
 
 export type NetworkProfile = "loopback" | "local_network" | "internet";
@@ -183,6 +194,9 @@ export const publisherApi = {
   onPublishJob: (handler: (job: PublishJob) => void) => listen<PublishJob>("publish-job", (event) => handler(event.payload)),
   activateRelease: (jobId: string) => invoke<Release>("activate_release", { jobId }),
   listReleases: () => invoke<Release[]>("list_releases"),
+  getReleaseDetails: (releaseId: string) => invoke<ReleaseDetails>("get_release_details", { releaseId }),
+  /** Opens a native save dialog; resolves `false` when the publisher cancels. */
+  exportReleaseTorrent: (releaseId: string) => invoke<boolean>("export_release_torrent", { releaseId }),
   getDistribution: () => invoke<Distribution>("get_distribution"),
   startSeeding: (releaseId: string) => invoke<void>("start_seeding", { releaseId }),
   stopSeeding: (releaseId: string) => invoke<void>("stop_seeding", { releaseId }),

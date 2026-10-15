@@ -419,3 +419,72 @@ fn recorded_releases_can_be_fully_reverified() {
         ))
     ));
 }
+
+#[test]
+fn recorded_release_torrents_are_read_back_only_while_they_match_the_record() {
+    let mut fixture = Fixture::new("export");
+    let job_id = fixture.prepare();
+    let (record, _) = fixture
+        .jobs
+        .activate(&job_id, &mut fixture.drafts, &fixture.scratch.releases())
+        .unwrap();
+    let release_id = record.release.release_id.clone();
+    let torrent_path = fixture
+        .scratch
+        .releases()
+        .join(&release_id)
+        .join(RELEASE_TORRENT_FILE);
+
+    let exported = fixture
+        .drafts
+        .release_torrent(&fixture.scratch.releases(), &release_id)
+        .unwrap();
+    assert_eq!(exported.record, record);
+    assert_eq!(exported.bytes, fs::read(&torrent_path).unwrap());
+    assert_eq!(exported.files.len() as u64, record.release.file_count);
+    assert_eq!(
+        exported.files.iter().map(|file| file.length).sum::<u64>(),
+        record.release.total_bytes
+    );
+    assert!(exported.files.iter().any(|file| file.path == "course.json"));
+    assert!(
+        exported
+            .files
+            .iter()
+            .all(|file| !file.path.starts_with('/') && !file.path.contains(".."))
+    );
+
+    for id in [
+        "release_missing",
+        "../releases",
+        "release_0123456789abcdef0123456789abcdef",
+    ] {
+        assert!(matches!(
+            fixture
+                .drafts
+                .release_torrent(&fixture.scratch.releases(), id),
+            Err(DraftServiceError::InvalidAttempt(_))
+        ));
+    }
+
+    let mut permissions = fs::metadata(&torrent_path).unwrap().permissions();
+    #[expect(
+        clippy::permissions_set_readonly_false,
+        reason = "simulating tampering"
+    )]
+    permissions.set_readonly(false);
+    fs::set_permissions(&torrent_path, permissions).unwrap();
+    let mut tampered = exported.bytes.clone();
+    let position = tampered
+        .windows(b"course.json".len())
+        .position(|window| window == b"course.json")
+        .unwrap();
+    tampered[position] = b'C';
+    fs::write(&torrent_path, tampered).unwrap();
+    assert!(matches!(
+        fixture
+            .drafts
+            .release_torrent(&fixture.scratch.releases(), &release_id),
+        Err(DraftServiceError::InvalidAttempt(_))
+    ));
+}
