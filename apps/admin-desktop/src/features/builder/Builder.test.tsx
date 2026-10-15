@@ -157,9 +157,9 @@ describe("course structure builder", () => {
 
   it("attaches files through the backend picker and shows path-free summaries", async () => {
     const picks: Array<ResourceSummary | null> = [
-      { id: "resource_a", kind: "video", fileName: "intro.mp4", mediaType: "video/mp4", byteLength: 2_500_000 },
+      { id: "resource_a", kind: "video", fileName: "intro.mp4", mediaType: "video/mp4", byteLength: 2_500_000, durationSeconds: 125 },
       null,
-      { id: "resource_b", kind: "subtitle", fileName: "intro.vtt", mediaType: "text/vtt", byteLength: null },
+      { id: "resource_b", kind: "subtitle", fileName: "intro.vtt", mediaType: "text/vtt", byteLength: null, durationSeconds: null },
     ];
     vi.mocked(publisherApi.chooseAndAttachResource).mockImplementation(async (_id, revision, lessonId) => {
       const pick = picks.shift();
@@ -175,6 +175,7 @@ describe("course structure builder", () => {
     const resources = await waitFor(() => view.getByRole("list", { name: "Resources of lesson 1 in module 1" }));
     expect(resources.textContent).toContain("intro.mp4");
     expect(resources.textContent).toContain("2.4 MB");
+    expect(resources.textContent).toContain("2:05");
     expect(resources.textContent).toContain("Video");
     expect(publisherApi.chooseAndAttachResource).toHaveBeenLastCalledWith("draft_one", 2, "lesson_2");
 

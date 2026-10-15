@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use course_format::ResourceKind;
 use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
-    DraftServiceError, DraftSummary, MetadataEdit, PublisherDrafts, StoredDraft, StructureEdit,
-    source_info,
+    DraftServiceError, DraftSummary, FindingSeverity, MetadataEdit, PublisherDrafts, StoredDraft,
+    StructureEdit, inspect_draft_media, source_info,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -66,6 +66,18 @@ struct ResourceDto {
     file_name: String,
     media_type: String,
     byte_length: Option<u64>,
+    duration_seconds: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MediaFindingDto {
+    resource_id: String,
+    field: String,
+    file_name: String,
+    code: &'static str,
+    severity: &'static str,
+    message: &'static str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -241,6 +253,23 @@ pub(crate) async fn choose_and_attach_resource(
 }
 
 #[tauri::command]
+pub(crate) async fn inspect_media(
+    draft_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<MediaFindingDto>, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || {
+        let snapshot = lock_drafts(&drafts)?
+            .draft(&draft_id)
+            .map_err(|error| service_error("draft_lookup_failed", error))?
+            .ok_or_else(|| CommandError::new("draft_not_found", "the draft was not found"))?
+            .draft;
+        Ok(media_findings(&snapshot))
+    })
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn validate_draft(
     draft_id: String,
     state: State<'_, AppState>,
@@ -305,6 +334,28 @@ fn validate(
         .validate(draft_id)
         .map(|issues| issues.into_iter().map(ValidationIssueDto::from).collect())
         .map_err(|error| service_error("draft_validation_failed", error))
+}
+
+fn media_findings(draft: &course_publisher::DraftCourse) -> Vec<MediaFindingDto> {
+    inspect_draft_media(draft)
+        .into_iter()
+        .flat_map(|resource| {
+            resource
+                .findings
+                .into_iter()
+                .map(move |finding| MediaFindingDto {
+                    resource_id: resource.resource_id.clone(),
+                    field: resource.field.clone(),
+                    file_name: resource.file_name.clone(),
+                    code: finding.code,
+                    severity: match finding.severity {
+                        FindingSeverity::Warning => "warning",
+                        FindingSeverity::Advice => "advice",
+                    },
+                    message: finding.message,
+                })
+        })
+        .collect()
 }
 
 impl From<DraftMetadataInput> for MetadataEdit {
@@ -440,6 +491,7 @@ impl From<&DraftResource> for ResourceDto {
             file_name: source.file_name,
             media_type: resource.media_type.clone(),
             byte_length: source.byte_length,
+            duration_seconds: resource.duration_seconds,
         }
     }
 }
@@ -663,6 +715,48 @@ mod tests {
         .unwrap();
         assert!(removed.modules[0].lessons[0].resources.is_empty());
         assert!(source.is_file());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn media_findings_flatten_per_resource_with_display_severity() {
+        let directory =
+            std::env::temp_dir().join(format!("zeron-admin-media-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let subtitles = directory.join("captions.srt");
+        std::fs::write(&subtitles, b"1\n00:00:01,000 --> 00:00:02,000\nHi\n").unwrap();
+        let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+        let mut stored = drafts.create().unwrap();
+        stored.draft.modules.push(DraftModule {
+            id: "module_one".to_owned(),
+            title: "Module".to_owned(),
+            lessons: vec![DraftLesson {
+                id: "lesson_one".to_owned(),
+                title: "Lesson".to_owned(),
+                estimated_duration_seconds: None,
+                resources: vec![DraftResource {
+                    id: "subs_one".to_owned(),
+                    kind: ResourceKind::Subtitle,
+                    source_path: subtitles,
+                    package_path: "resources/subs_one/captions.srt".to_owned(),
+                    media_type: "application/x-subrip".to_owned(),
+                    duration_seconds: Some(42),
+                    language: None,
+                }],
+            }],
+        });
+        let json = serde_json::to_value(media_findings(&stored.draft)).unwrap();
+        assert_eq!(json[0]["resourceId"], "subs_one");
+        assert_eq!(json[0]["field"], "modules[0].lessons[0].resources[0]");
+        assert_eq!(json[0]["fileName"], "captions.srt");
+        assert_eq!(json[0]["code"], "subtitle_format");
+        assert_eq!(json[0]["severity"], "advice");
+        assert!(!json.to_string().contains(&*directory.to_string_lossy()));
+        let detail = serde_json::to_value(DraftDetailDto::from(stored)).unwrap();
+        assert_eq!(
+            detail["modules"][0]["lessons"][0]["resources"][0]["durationSeconds"],
+            42
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 

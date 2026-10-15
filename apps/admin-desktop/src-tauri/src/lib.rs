@@ -37,6 +37,7 @@ pub fn run() {
             commands::update_draft_metadata,
             commands::edit_draft_structure,
             commands::choose_and_attach_resource,
+            commands::inspect_media,
             commands::validate_draft,
         ])
         .run(tauri::generate_context!())

@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, BookPlus, Boxes, CheckCircle2, Network, Settings2 } from "lucide-react";
+import { ArrowLeft, BookPlus, Boxes, Network, Settings2 } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { Builder } from "../features/builder/Builder";
+import { ReadinessPanel } from "../features/builder/ReadinessPanel";
 import { publisherApi, type DraftDetail } from "../services/publisher";
 import { useBuilderUi } from "../stores/builder";
 
@@ -14,11 +15,6 @@ export function App() {
   const draft = useQuery({
     queryKey: ["publisher-draft", selectedDraftId],
     queryFn: () => publisherApi.getDraft(selectedDraftId!),
-    enabled: selectedDraftId !== null,
-  });
-  const validation = useQuery({
-    queryKey: ["publisher-draft-validation", selectedDraftId],
-    queryFn: () => publisherApi.validateDraft(selectedDraftId!),
     enabled: selectedDraftId !== null,
   });
   const createDraft = useMutation({
@@ -38,7 +34,7 @@ export function App() {
     [queryClient],
   );
   const reloadDraft = async () => {
-    await Promise.all([draft.refetch(), validation.refetch()]);
+    await Promise.all([draft.refetch(), queryClient.invalidateQueries({ queryKey: ["publisher-draft-validation", selectedDraftId] })]);
     setReloadCount((count) => count + 1);
   };
 
@@ -77,23 +73,7 @@ export function App() {
                 {draft.isPending ? <p className="text-slate-400">Opening draft…</p> : draft.data ? (
                   <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
                     <Builder key={`${draft.data.draftId}:${reloadCount}`} draft={draft.data} onSaved={handleSaved} onReload={() => void reloadDraft()} />
-                    <aside className="h-fit rounded-3xl border border-white/10 bg-black/20 p-6">
-                      <h2 className="font-semibold">Publishing readiness</h2>
-                      {validation.isPending ? <p className="mt-5 text-sm text-slate-400">Checking draft…</p> : validation.isError ? (
-                        <p role="alert" className="mt-5 text-sm text-red-300">Validation is unavailable.</p>
-                      ) : validation.data?.length ? (
-                        <ul aria-label="Blocking issues" className="mt-5 space-y-3 text-sm">
-                          {validation.data.map((issue) => (
-                            <li key={`${issue.field}:${issue.code}`} className="flex gap-3 text-slate-300">
-                              <AlertCircle className="mt-0.5 shrink-0 text-amber-300" size={16} />
-                              <span><span className="block font-mono text-xs text-slate-500">{issue.field}</span>{issue.message}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <div className="mt-5 flex gap-3 text-sm text-slate-400"><CheckCircle2 className="shrink-0 text-emerald-300" size={18} /><span>No blocking draft issues. Packaging checks run when publishing.</span></div>
-                      )}
-                    </aside>
+                    <ReadinessPanel draftId={draft.data.draftId} revision={draft.data.revision} />
                   </div>
                 ) : <p role="alert" className="text-red-300">This draft could not be recovered.</p>}
               </div>

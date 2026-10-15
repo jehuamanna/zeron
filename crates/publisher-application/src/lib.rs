@@ -9,12 +9,13 @@ use course_publisher::{
     DraftCourse, DraftLesson, DraftMetadata, DraftModule, DraftResource, DraftValidationIssue,
     EditError,
 };
+pub use course_publisher::{FindingSeverity, MediaFinding};
 pub use course_publisher::{
     PackagingCancellation, PackagingError, PackagingLimits, StagingProgress,
 };
 use publisher_storage::PublisherStorage;
 pub use publisher_storage::{DraftSummary, PublisherStorageError, StoredDraft};
-pub use sources::{SourceInfo, source_info};
+pub use sources::{ResourceMediaFindings, SourceInfo, inspect_draft_media, source_info};
 pub use staging::{StagingReceipt, discard_abandoned_staging, stage_draft};
 use thiserror::Error;
 
@@ -371,6 +372,8 @@ impl PublisherDrafts {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         let (kind, media_type) = sources::classify(&source);
+        let duration_seconds =
+            course_publisher::inspect_media(&source, media_type).duration_seconds;
         let id = opaque_id("resource")?;
         let package_path = format!("resources/{id}/{}", sources::package_file_name(&file_name));
         draft
@@ -383,7 +386,7 @@ impl PublisherDrafts {
                     source_path: source,
                     package_path,
                     media_type: media_type.to_owned(),
-                    duration_seconds: None,
+                    duration_seconds,
                     language: None,
                 },
             )

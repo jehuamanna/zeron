@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use course_format::ResourceKind;
-use course_publisher::DraftResource;
+use course_publisher::{DraftCourse, DraftResource, MediaFinding, inspect_media};
 
 const MAX_FILE_NAME_BYTES: usize = 120;
 
@@ -29,6 +29,46 @@ pub fn source_info(resource: &DraftResource) -> SourceInfo {
         file_name,
         byte_length,
     }
+}
+
+/// Media compatibility findings for one resource.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceMediaFindings {
+    /// Stable resource ID.
+    pub resource_id: String,
+    /// Draft field path of the resource, for focusing the editor.
+    pub field: String,
+    /// Display-safe file name.
+    pub file_name: String,
+    /// Non-empty list of findings.
+    pub findings: Vec<MediaFinding>,
+}
+
+/// Inspect every resource of a draft snapshot; resources without findings are omitted.
+///
+/// Inspection reads only container headers, so callers may run it on a
+/// snapshot without holding draft storage locks.
+#[must_use]
+pub fn inspect_draft_media(draft: &DraftCourse) -> Vec<ResourceMediaFindings> {
+    let mut results = Vec::new();
+    for (module_index, module) in draft.modules.iter().enumerate() {
+        for (lesson_index, lesson) in module.lessons.iter().enumerate() {
+            for (resource_index, resource) in lesson.resources.iter().enumerate() {
+                let findings = inspect_media(&resource.source_path, &resource.media_type).findings;
+                if !findings.is_empty() {
+                    results.push(ResourceMediaFindings {
+                        resource_id: resource.id.clone(),
+                        field: format!(
+                            "modules[{module_index}].lessons[{lesson_index}].resources[{resource_index}]"
+                        ),
+                        file_name: source_info(resource).file_name,
+                        findings,
+                    });
+                }
+            }
+        }
+    }
+    results
 }
 
 /// Infer the logical kind and declared media type from a file extension.

@@ -234,6 +234,13 @@ function formatBytes(bytes: number) {
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
+function formatDuration(totalSeconds: number) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}` : `${minutes}:${seconds}`;
+}
+
 function ResourceLine({ resource }: { resource: ResourceSummary }) {
   return (
     <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -244,6 +251,7 @@ function ResourceLine({ resource }: { resource: ResourceSummary }) {
       ) : (
         <span className="shrink-0 text-slate-500">{formatBytes(resource.byteLength)}</span>
       )}
+      {resource.durationSeconds === null ? null : <span className="shrink-0 text-slate-500">{formatDuration(resource.durationSeconds)}</span>}
     </span>
   );
 }

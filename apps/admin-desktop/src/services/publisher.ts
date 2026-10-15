@@ -29,6 +29,16 @@ export interface ResourceSummary {
   fileName: string;
   mediaType: string;
   byteLength: number | null;
+  durationSeconds: number | null;
+}
+
+export interface MediaFinding {
+  resourceId: string;
+  field: string;
+  fileName: string;
+  code: string;
+  severity: "warning" | "advice";
+  message: string;
 }
 
 export interface DraftDetail extends DraftSummary, DraftMetadata {
@@ -78,5 +88,6 @@ export const publisherApi = {
     invoke<DraftDetail>("edit_draft_structure", { draftId, expectedRevision, edit }),
   chooseAndAttachResource: (draftId: string, expectedRevision: number, lessonId: string) =>
     invoke<DraftDetail | null>("choose_and_attach_resource", { draftId, expectedRevision, lessonId }),
+  inspectMedia: (draftId: string) => invoke<MediaFinding[]>("inspect_media", { draftId }),
   validateDraft: (draftId: string) => invoke<ValidationIssue[]>("validate_draft", { draftId }),
 };
