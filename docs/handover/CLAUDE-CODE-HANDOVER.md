@@ -24,7 +24,7 @@ Continue through the dependency-ordered roadmap ([docs/roadmap.md](../roadmap.md
 - a destructive action outside the approved scope;
 - an architectural blocker you can show evidence for.
 
-Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0007), and [phase-0 spike results](../research/phase-0-spike-results.md).
+Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0008), and [phase-0 spike results](../research/phase-0-spike-results.md).
 
 ## Start-of-session checklist
 
@@ -199,7 +199,7 @@ Each phase is broken into slices in the same style, ordered by dependency.
 
 ### Phase 5 — offline availability and transfer controls
 
-Done so far: engine file selection (`phase-5-file-selection.md`, ADR 0004 decision 9) and lesson/module/course download commitments with availability labels (`phase-5-download-commitments.md`, learner schema v6), per-course pause/resume (`phase-5-pause-and-resume.md`, learner schema v7, ADR 0004 decision 10), and speed limits in both apps (`phase-5-speed-limits.md`, ADR 0004 decision 11). Remaining below.
+Done so far: engine file selection (`phase-5-file-selection.md`, ADR 0004 decision 9) and lesson/module/course download commitments with availability labels (`phase-5-download-commitments.md`, learner schema v6), per-course pause/resume (`phase-5-pause-and-resume.md`, learner schema v7, ADR 0004 decision 10), speed limits in both apps (`phase-5-speed-limits.md`, ADR 0004 decision 11), and streamed-lesson removal with a cache cap (`phase-5-cache-eviction.md`, ADR 0008). Remaining below.
 
 - Download commitments for a lesson, a module, or a whole course, persisted and recovered after restart.
 - Accurate availability labels: online-only, downloading, partially available, available offline.

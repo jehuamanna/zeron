@@ -406,6 +406,30 @@ impl Storage {
         Ok(changed == 1)
     }
 
+    /// When each lesson resource of a course was last played, as Unix
+    /// seconds, for resources with a recorded position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures or corrupt values.
+    pub fn playback_recency(
+        &self,
+        course_id: &str,
+    ) -> Result<std::collections::HashMap<String, u64>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT resource_id, updated_at FROM playback_positions WHERE course_id = ?1",
+        )?;
+        let rows = statement.query_map([course_id], |row| {
+            let updated_at: i64 = row.get(1)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                u64::try_from(updated_at)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(1, updated_at))?,
+            ))
+        })?;
+        rows.collect::<Result<_, _>>().map_err(StorageError::from)
+    }
+
     /// Read a learner setting.
     ///
     /// # Errors
@@ -1060,6 +1084,15 @@ mod tests {
             storage
                 .set_playback_position(&course_id, "res", position(u64::MAX, 1))
                 .is_err()
+        );
+        let recency = storage.playback_recency(&course_id).unwrap();
+        assert_eq!(recency.len(), 2);
+        assert!(recency["res"] > 0);
+        assert!(
+            storage
+                .playback_recency("course_missing")
+                .unwrap()
+                .is_empty()
         );
     }
 

@@ -28,6 +28,7 @@ vi.mock("../services/library", async (importOriginal) => ({
     downloads: vi.fn(() => Promise.resolve({ paused: false, course: false, modules: [], lessons: [] })),
     setDownload: vi.fn(),
     setPaused: vi.fn(),
+    removeDownloads: vi.fn(),
     savePlaybackPosition: vi.fn(() => Promise.resolve(true)),
   },
 }));
@@ -194,6 +195,33 @@ describe("learner library", () => {
     expect(libraryApi.registerMedia).toHaveBeenCalledWith("course_torrent", "video");
     expect(view.container.querySelector('[aria-current="true"]')?.textContent).toContain("Playing");
     expect(view.container.querySelector("[data-availability]")?.textContent).toBe("Partly on this computer");
+    expect(view.queryByRole("button", { name: "Remove download of Lesson" })).toBeNull();
+  });
+
+  it("removes streamed lessons that are not kept, one at a time or for the whole course", async () => {
+    useLibraryUi.getState().selectCourse("course_torrent");
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "course_torrent", courseVersion: "1.0.0", title: "Torrent Course", description: null,
+      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), modules: [{ id: "module", title: "Module", lessons: [
+        { id: "lesson_a", title: "First", resources: [{ id: "video_a", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }] },
+        { id: "lesson_b", title: "Second", resources: [{ id: "video_b", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }] },
+      ] }],
+    });
+    vi.mocked(libraryApi.availability).mockResolvedValue([
+      { resourceId: "video_a", verifiedBytes: 120, byteLength: 200, kept: false, state: "partially_available" },
+      { resourceId: "video_b", verifiedBytes: 200, byteLength: 200, kept: true, state: "available_offline" },
+    ]);
+    vi.mocked(libraryApi.removeDownloads).mockResolvedValue({ removed: ["video_a"], freedBytes: 5 * 1024 ** 2, kept: [] });
+    const view = renderApp();
+    const remove = await waitFor(() => view.getByRole("button", { name: "Remove download of First" }));
+    expect(view.queryByRole("button", { name: "Remove download of Second" })).toBeNull();
+    fireEvent.click(remove);
+    await waitFor(() => expect(libraryApi.removeDownloads).toHaveBeenCalledWith("course_torrent", ["video_a"]));
+    fireEvent.click(view.getByRole("button", { name: "Free up space" }));
+    await waitFor(() => expect(libraryApi.removeDownloads).toHaveBeenLastCalledWith("course_torrent", undefined));
+    await waitFor(() => expect(view.container.textContent).toContain("Freed 5 MB. Lessons kept offline were not touched."));
   });
 
   it("keeps lessons, modules, and whole courses offline and labels their availability", async () => {

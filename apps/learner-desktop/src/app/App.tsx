@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
-import { AvailabilityLabel, KeepOfflineToggle, PauseTransfersButton, useCourseDownloads } from "../features/downloads/downloads";
+import { AvailabilityLabel, formatSize, KeepOfflineToggle, PauseTransfersButton, useCourseDownloads } from "../features/downloads/downloads";
 import { LessonPlayer } from "../features/player/LessonPlayer";
 import { CourseSharingCard } from "../features/sharing/CourseSharingCard";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
@@ -188,6 +188,19 @@ export function App() {
                           onToggle={(keep) => offline.change.mutate({ scope: { kind: "course" }, keep })}
                         />
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => offline.remove.mutate(undefined)}
+                          disabled={offline.remove.isPending}
+                          className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-300 hover:bg-white/10 disabled:opacity-60"
+                        >
+                          {offline.remove.isPending ? "Freeing space…" : "Free up space"}
+                        </button>
+                        {offline.remove.isSuccess ? (
+                          <p role="status" className="text-xs text-slate-400">
+                            Freed {formatSize(offline.remove.data.freedBytes)}. Lessons kept offline were not touched.
+                          </p>
+                        ) : null}
                         {offline.downloads?.paused ? <p className="text-xs text-amber-200">Downloads and sharing are paused. Lessons already on this computer still play.</p> : null}
                         <p className="text-xs text-slate-500">Kept lessons download in full. Stopping keeps what is already on this computer.</p>
                         {offline.error ? <p role="alert" className="text-xs text-red-300">{offline.error}</p> : null}
@@ -237,6 +250,17 @@ export function App() {
                                       {torrentCourse ? <span className="text-cyan-200/70">· {downloaded.get(resource.id) ?? 0}% downloaded</span> : null}
                                     </button>
                                     {torrentCourse ? <AvailabilityLabel item={availabilityById.get(resource.id)} /> : null}
+                                    {torrentCourse && availabilityById.get(resource.id)?.kept === false && (availabilityById.get(resource.id)?.verifiedBytes ?? 0) > 0 && playing !== resource.id ? (
+                                      <button
+                                        type="button"
+                                        aria-label={`Remove download of ${lesson.title}`}
+                                        onClick={() => offline.remove.mutate([resource.id])}
+                                        disabled={offline.remove.isPending}
+                                        className="text-[11px] text-slate-400 underline-offset-2 hover:text-red-200 hover:underline disabled:opacity-60"
+                                      >
+                                        Remove download
+                                      </button>
+                                    ) : null}
                                     </span>
                                   ) : (
                                     <span key={resource.id} className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-400">

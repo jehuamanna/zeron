@@ -5,6 +5,7 @@ import { Button } from "../../components/ui/button";
 import { asCommandError, libraryApi, type NetworkProfile } from "../../services/library";
 import { PeerReachabilityForm } from "./PeerReachabilityForm";
 import { SpeedLimitsForm } from "./SpeedLimitsForm";
+import { StorageSettings } from "./StorageSettings";
 
 const profiles: Array<{ value: NetworkProfile; label: string; description: string }> = [
   {
@@ -91,6 +92,7 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
               saving={saveReachability.isPending}
               onSave={(peerPort, portForwarding) => saveReachability.mutate({ peerPort, portForwarding })}
             />
+            <StorageSettings />
             <SpeedLimitsForm
               key={`${data.downloadLimitKib}-${data.uploadLimitKib}`}
               downloadKib={data.downloadLimitKib}

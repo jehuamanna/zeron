@@ -12,6 +12,8 @@ vi.mock("../../services/library", async (importOriginal) => ({
     setNetworkProfile: vi.fn(),
     setPeerReachability: vi.fn(),
     setRateLimits: vi.fn(),
+    storage: vi.fn(),
+    setCacheLimit: vi.fn(),
   },
 }));
 
@@ -170,5 +172,26 @@ describe("network settings", () => {
     await waitFor(() => expect(libraryApi.setRateLimits).toHaveBeenCalledWith(2048, null));
     await waitFor(() => expect((view.getByLabelText("Download limit") as HTMLInputElement).value).toBe("2048"));
     expect((view.getByLabelText("Upload limit (shared courses)") as HTMLInputElement).value).toBe("");
+  });
+
+  it("shows streamed-lesson storage and saves a cap in GB", async () => {
+    vi.mocked(libraryApi.getNetworkSettings).mockResolvedValue(settings({}));
+    let limit: number | null = null;
+    vi.mocked(libraryApi.storage).mockImplementation(async () => ({ streamedBytes: 1.5 * 1024 ** 3, cacheLimitBytes: limit }));
+    vi.mocked(libraryApi.setCacheLimit).mockImplementation(async (bytes) => {
+      limit = bytes;
+      return { removed: ["a"], freedBytes: 300 * 1024 ** 2, kept: [] };
+    });
+    const { view } = renderSettings();
+    await waitFor(() => expect(view.container.textContent).toContain("use 1.5 GB"));
+    const field = view.getByLabelText("Limit for streamed lessons (GB)") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "0.1" } });
+    fireEvent.click(view.getByRole("button", { name: "Save limit" }));
+    expect(view.getByRole("alert").textContent).toContain("at least 0.25 GB");
+    expect(libraryApi.setCacheLimit).not.toHaveBeenCalled();
+    fireEvent.change(field, { target: { value: "2" } });
+    fireEvent.click(view.getByRole("button", { name: "Save limit" }));
+    await waitFor(() => expect(libraryApi.setCacheLimit).toHaveBeenCalledWith(2 * 1024 ** 3));
+    await waitFor(() => expect((view.getByLabelText("Limit for streamed lessons (GB)") as HTMLInputElement).value).toBe("2"));
   });
 });

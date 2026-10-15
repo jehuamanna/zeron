@@ -10,7 +10,7 @@ use std::{
 
 use learning_application::TorrentEngine as _;
 use learning_application::{
-    CourseLibrary, CourseSharing, ImportLimits, NetworkProfile, PeerReachability,
+    CourseCache, CourseLibrary, CourseSharing, ImportLimits, NetworkProfile, PeerReachability,
     TorrentImportTimeouts, TorrentImports, TransferRouter,
 };
 use media_gateway::{GatewayLimits, MediaGateway};
@@ -42,6 +42,8 @@ pub(crate) struct Torrents {
     pub(crate) router: Option<Arc<Router>>,
     pub(crate) imports: Option<Arc<TorrentImports<Router>>>,
     pub(crate) sharing: Option<Arc<CourseSharing<LibrqbitEngine>>>,
+    /// Removes streamed lessons the learner does not keep offline.
+    pub(crate) cache: Option<Arc<CourseCache<Router>>>,
 }
 
 /// Start the learner desktop application.
@@ -78,8 +80,13 @@ pub fn run() {
                 sharing.load()?;
             }
             if let Some(imports) = torrents.imports.clone() {
+                let cache = torrents.cache.clone();
                 tauri::async_runtime::spawn(async move {
                     let _ = imports.restore().await;
+                    // Honor the cache cap once restored courses report their bytes.
+                    if let Some(cache) = cache {
+                        let _ = cache.enforce_limit(None).await;
+                    }
                 });
             }
             app.manage(AppState {
@@ -108,6 +115,9 @@ pub fn run() {
             commands::get_course_downloads,
             commands::set_course_download,
             commands::set_course_paused,
+            commands::remove_downloads,
+            commands::get_storage,
+            commands::set_cache_limit,
             commands::get_playback_position,
             commands::set_network_profile,
             commands::set_peer_reachability,
@@ -196,6 +206,7 @@ fn start_torrents(
             router: None,
             imports: None,
             sharing: None,
+            cache: None,
         };
     };
     let shared = start("engine-sharing", true);
@@ -209,6 +220,11 @@ fn start_torrents(
         sharing_port: shared.as_ref().and_then(port),
         engines: std::iter::once(private).chain(shared).collect(),
         router: Some(Arc::clone(&router)),
+        cache: Some(Arc::new(CourseCache::new(
+            Arc::clone(&router),
+            Arc::clone(library),
+            courses_root.clone(),
+        ))),
         imports: Some(Arc::new(TorrentImports::new(
             Arc::clone(&router),
             Arc::clone(library),

@@ -43,9 +43,16 @@ export function useCourseDownloads(courseId: string, enabled: boolean) {
       void queryClient.invalidateQueries({ queryKey: ["availability", courseId] });
     },
   });
-  const failed = change.isError ? change.error : pause.isError ? pause.error : null;
+  const remove = useMutation({
+    mutationFn: (resourceIds?: string[]) => libraryApi.removeDownloads(courseId, resourceIds),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["availability", courseId] });
+      void queryClient.invalidateQueries({ queryKey: ["storage"] });
+    },
+  });
+  const failed = change.isError ? change.error : pause.isError ? pause.error : remove.isError ? remove.error : null;
   const error = failed ? (asCommandError(failed)?.message ?? "The download choice could not be saved.") : null;
-  return { downloads: downloads.data, change, pause, error };
+  return { downloads: downloads.data, change, pause, remove, error };
 }
 
 /** A pressed-state toggle for keeping a course, module, or lesson offline. */
@@ -87,4 +94,9 @@ export function PauseTransfersButton({ paused, disabled, onToggle }: { paused: b
       {paused ? "Resume downloads" : "Pause downloads"}
     </button>
   );
+}
+
+export function formatSize(bytes: number) {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  return `${Math.max(0, Math.round(bytes / 1024 ** 2))} MB`;
 }

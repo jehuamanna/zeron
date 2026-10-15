@@ -1052,3 +1052,240 @@ async fn paused_courses_are_restored_paused() {
     restarted.shutdown().await;
     course.seeder.shutdown().await;
 }
+
+/// Re-add the course with the seeder's address (loopback has no discovery)
+/// and download one lesson in full.
+async fn download_fully(course: &Imported, index: usize, length: u64) {
+    let (engine, info_hash) = (&course.learner, &course.info_hash);
+    let source = course
+        .library
+        .lock()
+        .unwrap()
+        .torrent_source(&course.course_id)
+        .unwrap()
+        .unwrap();
+    let _ = engine.stop(info_hash).await;
+    engine
+        .fetch(FetchRequest {
+            metainfo: source.metainfo,
+            content_root: source.content_root,
+            files: vec![0, index],
+            initial_peers: vec![course.seeder.listen_address().unwrap()],
+        })
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while engine
+        .transfer(info_hash)
+        .and_then(|stats| stats.file_verified_bytes.get(index).copied())
+        .unwrap_or(0)
+        < length
+    {
+        assert!(Instant::now() < deadline, "the lesson downloads");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+struct CacheFixture {
+    course: Imported,
+    cache: learning_application::CourseCache<LibrqbitEngine>,
+    course_id: String,
+    resource: learning_application::TorrentResource,
+    content: PathBuf,
+    lesson_file: Option<PathBuf>,
+}
+
+async fn cache_fixture(name: &str) -> CacheFixture {
+    use learning_application::CourseCache;
+
+    let course = imported_course(name).await;
+    let course_id = course.course_id.clone();
+    let resource = course
+        .library
+        .lock()
+        .unwrap()
+        .torrent_resources(&course_id)
+        .unwrap()
+        .remove(0);
+    let cache = CourseCache::new(
+        Arc::clone(&course.learner),
+        Arc::clone(&course.library),
+        course.courses.clone(),
+    );
+    let content = course.courses.join(course.info_hash.as_str());
+    let lesson_file = std::fs::read_dir(content.join("resources"))
+        .unwrap()
+        .flat_map(|entry| std::fs::read_dir(entry.unwrap().path()).unwrap())
+        .map(|entry| entry.unwrap().path())
+        .next();
+    CacheFixture {
+        course,
+        cache,
+        course_id,
+        resource,
+        content,
+        lesson_file,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn streamed_lessons_are_removed_and_the_transfer_goes_on() {
+    use learning_application::CacheError;
+
+    let CacheFixture {
+        course,
+        cache,
+        course_id,
+        resource,
+        content,
+        lesson_file,
+    } = cache_fixture("cache-remove").await;
+    assert!(matches!(
+        cache.remove("course_unknown", None).await,
+        Err(CacheError::NotTorrentCourse)
+    ));
+
+    // A streamed lesson that is not kept is removed and the transfer goes on.
+    download_fully(&course, resource.file_index, resource.byte_length).await;
+    assert_eq!(cache.streamed_bytes().unwrap(), resource.byte_length);
+    let report = cache.remove(&course_id, None).await.unwrap();
+    assert_eq!(report.removed, std::slice::from_ref(&resource.resource_id));
+    assert_eq!(report.freed_bytes, resource.byte_length);
+    // librqbit may re-create the file, empty or sparse, when the transfer is
+    // added again; the disk space is what must be gone.
+    #[cfg(unix)]
+    if let Some(path) = &lesson_file {
+        use std::os::unix::fs::MetadataExt;
+        let allocated = std::fs::metadata(path).map_or(0, |metadata| metadata.blocks() * 512);
+        assert!(
+            allocated < resource.byte_length / 2,
+            "space freed: {allocated}"
+        );
+    }
+    assert!(content.join("course.json").is_file());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let stats = course
+            .learner
+            .transfer(&course.info_hash)
+            .expect("the transfer is back");
+        if stats.state != TransferState::Checking {
+            assert_eq!(
+                stats
+                    .file_verified_bytes
+                    .get(resource.file_index)
+                    .copied()
+                    .unwrap_or(0),
+                0
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    course.learner.shutdown().await;
+    course.seeder.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn kept_lessons_are_never_removed_and_the_cap_spares_the_playing_course() {
+    use learning_application::DownloadScope;
+
+    let CacheFixture {
+        course,
+        cache,
+        course_id,
+        resource,
+        content,
+        lesson_file,
+    } = cache_fixture("cache-cap").await;
+    let _ = (&content, &lesson_file);
+    // Kept lessons are never removed, by request or by the cap.
+    course
+        .library
+        .lock()
+        .unwrap()
+        .set_download(&course_id, &DownloadScope::Course, true)
+        .unwrap();
+    download_fully(&course, resource.file_index, resource.byte_length).await;
+    let report = cache
+        .remove(
+            &course_id,
+            Some(std::slice::from_ref(&resource.resource_id)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.kept, std::slice::from_ref(&resource.resource_id));
+    assert_eq!(report.removed.len(), 0);
+    course
+        .library
+        .lock()
+        .unwrap()
+        .set_cache_limit(Some(1))
+        .unwrap();
+    assert_eq!(cache.streamed_bytes().unwrap(), 0);
+    assert_eq!(cache.enforce_limit(None).await.unwrap().removed.len(), 0);
+
+    // The cap removes streamed lessons, except in the course being played.
+    course
+        .library
+        .lock()
+        .unwrap()
+        .set_download(&course_id, &DownloadScope::Course, false)
+        .unwrap();
+    assert_eq!(
+        cache
+            .enforce_limit(Some(&course_id))
+            .await
+            .unwrap()
+            .removed
+            .len(),
+        0
+    );
+    let report = cache.enforce_limit(None).await.unwrap();
+    assert_eq!(report.removed, std::slice::from_ref(&resource.resource_id));
+    course
+        .library
+        .lock()
+        .unwrap()
+        .set_cache_limit(None)
+        .unwrap();
+    assert_eq!(cache.limit().unwrap(), None);
+
+    course.learner.shutdown().await;
+    course.seeder.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn links_planted_in_a_course_folder_are_never_followed() {
+    let CacheFixture {
+        course,
+        cache,
+        course_id,
+        resource,
+        content,
+        lesson_file,
+    } = cache_fixture("cache-links").await;
+    let _ = (&content, &resource);
+    // A link planted in place of a lesson file is left alone, and so is its target.
+    #[cfg(unix)]
+    if let Some(lesson_file) = lesson_file {
+        let outside = course.scratch.0.join("outside.bin");
+        std::fs::write(&outside, b"keep").unwrap();
+        course.learner.stop(&course.info_hash).await.unwrap();
+        let _ = std::fs::remove_file(&lesson_file);
+        std::os::unix::fs::symlink(&outside, &lesson_file).unwrap();
+        let report = cache.remove(&course_id, None).await.unwrap();
+        assert_eq!(report.removed.len(), 0);
+        assert_eq!(std::fs::read(&outside).unwrap(), b"keep");
+        assert!(
+            std::fs::symlink_metadata(&lesson_file)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+    course.learner.shutdown().await;
+    course.seeder.shutdown().await;
+}

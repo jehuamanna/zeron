@@ -69,6 +69,19 @@ export interface CourseDownloads {
   lessons: string[];
 }
 
+export interface RemovalReport {
+  removed: string[];
+  freedBytes: number;
+  /** Requested lessons left alone because they are kept offline. */
+  kept: string[];
+}
+
+export interface StorageUse {
+  /** Bytes of streamed lessons that are not kept offline. */
+  streamedBytes: number;
+  cacheLimitBytes: number | null;
+}
+
 export type DownloadScope = { kind: "course" } | { kind: "module"; id: string } | { kind: "lesson"; id: string };
 
 export interface CourseSharing {
@@ -179,6 +192,12 @@ export const libraryApi = {
     invoke<CourseDownloads>("set_course_download", { courseId, scope, keep }),
   /** Pausing stops downloading and sharing; verified lessons still play. */
   setPaused: (courseId: string, paused: boolean) => invoke<CourseDownloads>("set_course_paused", { courseId, paused }),
+  /** Removes downloaded lessons that are not kept offline; all of the course when no IDs are given. */
+  removeDownloads: (courseId: string, resourceIds?: string[]) =>
+    invoke<RemovalReport>("remove_downloads", { courseId, resourceIds: resourceIds ?? null }),
+  storage: () => invoke<StorageUse>("get_storage"),
+  /** Caps streamed lessons; null for no cap. Applies at once. */
+  setCacheLimit: (limitBytes: number | null) => invoke<RemovalReport>("set_cache_limit", { limitBytes }),
   availability: (courseId: string) => invoke<ResourceAvailability[]>("get_course_availability", { courseId }),
   getCourseSharing: (courseId: string) => invoke<CourseSharing | null>("get_course_sharing", { courseId }),
   setCourseSharing: (courseId: string, sharing: boolean) =>

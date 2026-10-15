@@ -17,6 +17,7 @@ const PEER_PORT_KEY: &str = "peer_port";
 const PORT_FORWARDING_KEY: &str = "port_forwarding";
 const DOWNLOAD_LIMIT_KEY: &str = "download_limit_kib";
 const UPLOAD_LIMIT_KEY: &str = "upload_limit_kib";
+const CACHE_LIMIT_KEY: &str = "cache_limit_bytes";
 
 /// Result of a verified and durably persisted local course import.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -303,6 +304,68 @@ impl CourseLibrary {
         let (download, upload) = limits.to_settings();
         self.storage.set_setting(DOWNLOAD_LIMIT_KEY, &download)?;
         Ok(self.storage.set_setting(UPLOAD_LIMIT_KEY, &upload)?)
+    }
+
+    /// The stored torrent source of one course.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on query failure.
+    pub fn torrent_source(
+        &self,
+        course_id: &str,
+    ) -> Result<Option<TorrentCourseSource>, LibraryError> {
+        Ok(self
+            .storage
+            .torrent_course_sources()?
+            .into_iter()
+            .find(|source| source.course_id == course_id))
+    }
+
+    /// Every stored torrent course source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on query failure.
+    pub fn torrent_sources(&self) -> Result<Vec<TorrentCourseSource>, LibraryError> {
+        Ok(self.storage.torrent_course_sources()?)
+    }
+
+    /// When each lesson resource of a course was last played, in Unix seconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on query failure.
+    pub fn playback_recency(
+        &self,
+        course_id: &str,
+    ) -> Result<std::collections::HashMap<String, u64>, LibraryError> {
+        Ok(self.storage.playback_recency(course_id)?)
+    }
+
+    /// The cap on streamed lessons that are not kept offline, in bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on query failure.
+    pub fn cache_limit(&self) -> Result<Option<u64>, LibraryError> {
+        Ok(self
+            .storage
+            .setting(CACHE_LIMIT_KEY)?
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|&bytes| bytes > 0))
+    }
+
+    /// Persist the cap on streamed lessons; `None` removes it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on write failure.
+    pub fn set_cache_limit(&mut self, bytes: Option<u64>) -> Result<(), LibraryError> {
+        let value = bytes
+            .filter(|&bytes| bytes > 0)
+            .map_or_else(String::new, |bytes| bytes.to_string());
+        Ok(self.storage.set_setting(CACHE_LIMIT_KEY, &value)?)
     }
 
     /// List durably imported courses.

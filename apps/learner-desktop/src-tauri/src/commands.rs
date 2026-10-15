@@ -5,10 +5,10 @@ use std::{
 
 use course_format::ResourceKind;
 use learning_application::{
-    Availability, CancellationFlag, CourseImportReceipt, CourseLibrary, CourseSharingStatus,
-    DownloadScope, EngineError, ImportError, InfoHash, LibraryError, LocalResource, NetworkProfile,
-    PeerReachability, RateLimits, SharingError, TorrentEngine, TorrentImportSnapshot,
-    TorrentImportStage, TorrentResource, TorrentSource, TransferState,
+    Availability, CacheError, CancellationFlag, CourseImportReceipt, CourseLibrary,
+    CourseSharingStatus, DownloadScope, EngineError, ImportError, InfoHash, LibraryError,
+    LocalResource, NetworkProfile, PeerReachability, RateLimits, SharingError, TorrentEngine,
+    TorrentImportSnapshot, TorrentImportStage, TorrentResource, TorrentSource, TransferState,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::{Deserialize, Serialize};
@@ -157,6 +157,25 @@ pub(crate) struct ResourceAvailabilityDto {
     kept: bool,
     /// `online_only`, `downloading`, `partially_available`, or `available_offline`.
     state: &'static str,
+}
+
+/// What a removal freed.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RemovalDto {
+    removed: Vec<String>,
+    freed_bytes: u64,
+    /// Requested lessons left alone because they are kept offline.
+    kept: Vec<String>,
+}
+
+/// Disk use of streamed lessons and the learner's cap on it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StorageDto {
+    /// Verified bytes of lessons that are not kept offline.
+    streamed_bytes: u64,
+    cache_limit_bytes: Option<u64>,
 }
 
 /// What a torrent course keeps offline.
@@ -631,6 +650,7 @@ pub(crate) async fn register_media(
     state: State<'_, AppState>,
 ) -> Result<MediaRegistrationDto, CommandError> {
     let library = Arc::clone(&state.library);
+    let playing = course_id.clone();
     let media = run_blocking(move || {
         let library = lock_library(&library)?;
         let failed = |error| command_error("media_lookup_failed", error);
@@ -690,6 +710,13 @@ pub(crate) async fn register_media(
         }
     }
     .map_err(|error| command_error("media_registration_failed", error))?;
+    // Keep the streamed-lesson cache within its cap, sparing the course being
+    // played so its transfer is not restarted under the player.
+    if let Some(cache) = state.torrents.cache.clone() {
+        tauri::async_runtime::spawn(async move {
+            let _ = cache.enforce_limit(Some(&playing)).await;
+        });
+    }
     // Only one lesson plays at a time: revoking the previous one stops its pending reads.
     if let Ok(mut current) = state.current_media.lock()
         && let Some(previous) = current.replace(registration.url.clone())
@@ -833,6 +860,97 @@ pub(crate) async fn set_course_download(
         }
     }
     Ok(kept)
+}
+
+/// Remove downloaded lessons that are not kept offline: the given resources,
+/// or every lesson of the course when `resourceIds` is omitted.
+#[tauri::command]
+pub(crate) async fn remove_downloads(
+    course_id: String,
+    resource_ids: Option<Vec<String>>,
+    state: State<'_, AppState>,
+) -> Result<RemovalDto, CommandError> {
+    let cache = state.torrents.cache.clone().ok_or_else(cache_unavailable)?;
+    let report = cache
+        .remove(&course_id, resource_ids.as_deref())
+        .await
+        .map_err(cache_error)?;
+    Ok(RemovalDto {
+        removed: report.removed,
+        freed_bytes: report.freed_bytes,
+        kept: report.kept,
+    })
+}
+
+/// How much space streamed lessons take, and the stored cap.
+#[tauri::command]
+pub(crate) async fn get_storage(state: State<'_, AppState>) -> Result<StorageDto, CommandError> {
+    let cache = state.torrents.cache.clone().ok_or_else(cache_unavailable)?;
+    run_blocking(move || {
+        Ok(StorageDto {
+            streamed_bytes: cache.streamed_bytes().map_err(cache_error)?,
+            cache_limit_bytes: cache.limit().map_err(cache_error)?,
+        })
+    })
+    .await
+}
+
+/// Store the cap on streamed lessons (`None` for no cap) and apply it now.
+#[tauri::command]
+pub(crate) async fn set_cache_limit(
+    limit_bytes: Option<u64>,
+    state: State<'_, AppState>,
+) -> Result<RemovalDto, CommandError> {
+    let limit_bytes = parse_cache_limit(limit_bytes)?;
+    let cache = state.torrents.cache.clone().ok_or_else(cache_unavailable)?;
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .set_cache_limit(limit_bytes)
+            .map_err(|error| command_error("settings_failed", error))
+    })
+    .await?;
+    let report = cache.enforce_limit(None).await.map_err(cache_error)?;
+    Ok(RemovalDto {
+        removed: report.removed,
+        freed_bytes: report.freed_bytes,
+        kept: report.kept,
+    })
+}
+
+const MIN_CACHE_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
+
+/// A cap of at least 256 MiB, or `None` (also for 0) for no cap.
+fn parse_cache_limit(limit_bytes: Option<u64>) -> Result<Option<u64>, CommandError> {
+    match limit_bytes {
+        None | Some(0) => Ok(None),
+        Some(bytes) if bytes >= MIN_CACHE_LIMIT_BYTES => Ok(Some(bytes)),
+        Some(_) => Err(CommandError {
+            code: "invalid_input",
+            message: "choose at least 256 MB, or no limit".to_owned(),
+        }),
+    }
+}
+
+fn cache_unavailable() -> CommandError {
+    CommandError {
+        code: "torrent_engine_unavailable",
+        message: "downloads cannot be managed because the torrent engine could not start"
+            .to_owned(),
+    }
+}
+
+fn cache_error(error: CacheError) -> CommandError {
+    match error {
+        CacheError::NotTorrentCourse => command_error("not_torrent_course", error),
+        CacheError::Engine(_) => command_error("engine_failed", error),
+        CacheError::Io(_) => command_error("removal_failed", error),
+        // Library errors can name the database location; keep them in Rust.
+        CacheError::Library(_) => CommandError {
+            code: "library_query_failed",
+            message: "the library could not be read".to_owned(),
+        },
+    }
 }
 
 /// Pause or resume a torrent course's transfer. Verified lessons keep
@@ -1149,6 +1267,24 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({ "paused": false, "course": false, "modules": [], "lessons": [] })
+        );
+    }
+
+    #[test]
+    fn cache_limits_are_validated_and_cache_errors_name_no_paths() {
+        assert_eq!(parse_cache_limit(None).unwrap(), None);
+        assert_eq!(parse_cache_limit(Some(0)).unwrap(), None);
+        assert_eq!(parse_cache_limit(Some(1 << 30)).unwrap(), Some(1 << 30));
+        assert_eq!(
+            parse_cache_limit(Some(1024)).unwrap_err().code,
+            "invalid_input"
+        );
+        let io = cache_error(CacheError::Io(std::io::ErrorKind::PermissionDenied));
+        assert_eq!(io.code, "removal_failed");
+        assert!(!io.message.contains('/'));
+        assert_eq!(
+            cache_error(CacheError::NotTorrentCourse).code,
+            "not_torrent_course"
         );
     }
 
