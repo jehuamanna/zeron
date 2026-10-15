@@ -35,6 +35,21 @@ pub struct LocalResource {
     pub byte_length: u64,
 }
 
+/// Where a torrent-sourced resource lives in its torrent. Backend-only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TorrentResource {
+    /// Stable resource ID from the manifest.
+    pub resource_id: String,
+    /// Info hash of the course torrent.
+    pub info_hash: String,
+    /// Engine file index of the resource.
+    pub file_index: usize,
+    /// Manifest-declared media type.
+    pub media_type: String,
+    /// Manifest-declared byte length, equal to the torrent file length.
+    pub byte_length: u64,
+}
+
 /// Course-library startup and use-case failures.
 #[derive(Debug, Error)]
 pub enum LibraryError {
@@ -291,5 +306,47 @@ impl CourseLibrary {
                 media_type: resource.media_type.clone(),
                 byte_length: resource.byte_length,
             }))
+    }
+
+    /// Every resource of a torrent-sourced course with its torrent file.
+    /// Empty for local courses. Resources whose path or length disagrees with
+    /// the stored torrent are left out; import already rejects such courses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on query or decoding failure.
+    pub fn torrent_resources(&self, course_id: &str) -> Result<Vec<TorrentResource>, LibraryError> {
+        let Some(source) = self
+            .storage
+            .torrent_course_sources()?
+            .into_iter()
+            .find(|source| source.course_id == course_id)
+        else {
+            return Ok(Vec::new());
+        };
+        let Some(manifest) = self.storage.course_manifest(course_id)? else {
+            return Ok(Vec::new());
+        };
+        let Ok(files) = torrent_metainfo::file_table(&source.metainfo) else {
+            return Ok(Vec::new());
+        };
+        Ok(manifest
+            .modules
+            .iter()
+            .flat_map(|module| &module.lessons)
+            .flat_map(|lesson| &lesson.resources)
+            .filter_map(|resource| {
+                let file_index = files.iter().position(|file| {
+                    file.path == resource.path && file.length == resource.byte_length
+                })?;
+                Some(TorrentResource {
+                    resource_id: resource.id.clone(),
+                    info_hash: source.info_hash.clone(),
+                    file_index,
+                    media_type: resource.media_type.clone(),
+                    byte_length: resource.byte_length,
+                })
+            })
+            .collect())
     }
 }

@@ -5,7 +5,9 @@ mod local_import;
 mod sharing;
 mod torrent_import;
 
-pub use library::{CourseImportReceipt, CourseLibrary, LibraryError, LocalResource};
+pub use library::{
+    CourseImportReceipt, CourseLibrary, LibraryError, LocalResource, TorrentResource,
+};
 pub use local_import::{
     CancellationFlag, ImportError, ImportLimits, ImportedCourse, VerifiedResource,
     import_local_course,

@@ -1,10 +1,13 @@
 //! Authenticated loopback delivery for explicitly registered media resources.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     net::{Ipv4Addr, SocketAddr},
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -16,11 +19,11 @@ use axum::{
     response::Response,
     routing::get,
 };
-use futures_util::StreamExt;
+use futures_util::{StreamExt, future::BoxFuture};
 use thiserror::Error;
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncSeekExt, SeekFrom},
+    io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, SeekFrom},
     net::TcpListener,
     sync::Semaphore,
     task::JoinHandle,
@@ -29,6 +32,33 @@ use tokio_util::{io::ReaderStream, sync::CancellationToken};
 use tower_http::timeout::ResponseBodyTimeoutLayer;
 
 const READ_CHUNK_BYTES: usize = 64 * 1024;
+/// Response bodies kept per resource. A newer request (for example after a
+/// seek) cancels the oldest, so abandoned waits do not pile up.
+const MAX_BODIES_PER_RESOURCE: usize = 2;
+
+/// Seekable reader over a registered resource. Reads may wait, for example
+/// until torrent pieces are verified.
+pub trait MediaReader: AsyncRead + AsyncSeek + Send + Unpin {}
+
+impl<T: AsyncRead + AsyncSeek + Send + Unpin> MediaReader for T {}
+
+/// Opens a fresh reader for every response. The reader is dropped when the
+/// response ends, is cancelled, or the client disconnects.
+pub trait MediaSource: Send + Sync + 'static {
+    /// Open a reader positioned at the start of the resource.
+    fn open(&self) -> BoxFuture<'static, std::io::Result<Box<dyn MediaReader>>>;
+}
+
+/// A resource served from a [`MediaSource`] instead of a local file.
+#[derive(Clone)]
+pub struct StreamResource {
+    /// Application-provided reader factory. It must never return unverified bytes.
+    pub source: Arc<dyn MediaSource>,
+    /// Manifest-declared media type.
+    pub media_type: String,
+    /// Exact resource length.
+    pub byte_length: u64,
+}
 
 /// Resource metadata accepted by the gateway after application-level lookup.
 #[derive(Debug, Clone)]
@@ -93,11 +123,67 @@ impl Default for GatewayLimits {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+enum Origin {
+    File(PathBuf),
+    Source(Arc<dyn MediaSource>),
+}
+
+#[derive(Clone)]
 struct RegisteredResource {
-    path: PathBuf,
+    origin: Origin,
     media_type: String,
     byte_length: u64,
+    bodies: Arc<Bodies>,
+}
+
+/// In-flight response bodies of one resource, oldest first.
+#[derive(Default)]
+struct Bodies {
+    next: AtomicU64,
+    active: Mutex<VecDeque<(u64, CancellationToken)>>,
+}
+
+impl Bodies {
+    fn start(self: &Arc<Self>) -> BodyGuard {
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let token = CancellationToken::new();
+        if let Ok(mut active) = self.active.lock() {
+            active.push_back((id, token.clone()));
+            while active.len() > MAX_BODIES_PER_RESOURCE {
+                if let Some((_, oldest)) = active.pop_front() {
+                    oldest.cancel();
+                }
+            }
+        }
+        BodyGuard {
+            bodies: Arc::clone(self),
+            id,
+            token,
+        }
+    }
+
+    fn cancel_all(&self) {
+        if let Ok(mut active) = self.active.lock() {
+            for (_, token) in active.drain(..) {
+                token.cancel();
+            }
+        }
+    }
+}
+
+struct BodyGuard {
+    bodies: Arc<Bodies>,
+    id: u64,
+    token: CancellationToken,
+}
+
+impl Drop for BodyGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.bodies.active.lock() {
+            active.retain(|(id, _)| *id != self.id);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -169,11 +255,58 @@ impl MediaGateway {
         if !metadata.is_file() || metadata.len() != resource.byte_length {
             return Err(GatewayError::ResourceChanged);
         }
+        self.insert(
+            Origin::File(resource.path),
+            resource.media_type,
+            resource.byte_length,
+        )
+    }
+
+    /// Register a reader-backed resource, such as a file streamed from a
+    /// torrent, and return an opaque capability URL.
+    ///
+    /// # Errors
+    ///
+    /// Rejects random failures and a full registry.
+    pub fn register_stream(
+        &self,
+        resource: StreamResource,
+    ) -> Result<MediaRegistration, GatewayError> {
+        self.insert(
+            Origin::Source(resource.source),
+            resource.media_type,
+            resource.byte_length,
+        )
+    }
+
+    /// Revoke one capability URL and cancel its in-flight responses.
+    pub fn revoke(&self, url: &str) {
+        let Some(handle) = url
+            .split("/v1/media/")
+            .nth(1)
+            .and_then(|rest| rest.split('/').next())
+        else {
+            return;
+        };
+        if let Ok(mut resources) = self.state.resources.write()
+            && let Some(resource) = resources.remove(handle)
+        {
+            resource.bodies.cancel_all();
+        }
+    }
+
+    fn insert(
+        &self,
+        origin: Origin,
+        media_type: String,
+        byte_length: u64,
+    ) -> Result<MediaRegistration, GatewayError> {
         let handle = random_hex(16)?;
         let registered = RegisteredResource {
-            path: resource.path,
-            media_type: resource.media_type.clone(),
-            byte_length: resource.byte_length,
+            origin,
+            media_type: media_type.clone(),
+            byte_length,
+            bodies: Arc::new(Bodies::default()),
         };
         let mut resources = self
             .state
@@ -191,14 +324,17 @@ impl MediaGateway {
                 self.address.port(),
                 self.state.secret
             ),
-            media_type: resource.media_type,
-            byte_length: resource.byte_length,
+            media_type,
+            byte_length,
         })
     }
 
     /// Revoke every issued resource handle and request graceful server shutdown.
     pub fn shutdown(&self) {
         if let Ok(mut resources) = self.state.resources.write() {
+            for resource in resources.values() {
+                resource.bodies.cancel_all();
+            }
             resources.clear();
         }
         self.shutdown.cancel();
@@ -287,18 +423,27 @@ async fn serve_media(
     let Ok(permit) = state.streams.clone().try_acquire_owned() else {
         return empty_response(StatusCode::SERVICE_UNAVAILABLE);
     };
-    let Ok(mut file) = File::open(&resource.path).await else {
-        return empty_response(StatusCode::NOT_FOUND);
+    let mut reader: Box<dyn MediaReader> = match &resource.origin {
+        Origin::File(path) => match File::open(path).await {
+            Ok(file) => Box::new(file),
+            Err(_) => return empty_response(StatusCode::NOT_FOUND),
+        },
+        Origin::Source(source) => match source.open().await {
+            Ok(reader) => reader,
+            Err(_) => return empty_response(StatusCode::SERVICE_UNAVAILABLE),
+        },
     };
-    if file.seek(SeekFrom::Start(start)).await.is_err() {
+    if reader.seek(SeekFrom::Start(start)).await.is_err() {
         return empty_response(StatusCode::INTERNAL_SERVER_ERROR);
     }
-    let stream = ReaderStream::with_capacity(file.take(response_length), READ_CHUNK_BYTES).map(
-        move |result| {
-            let _keep_permit_alive = &permit;
+    let guard = resource.bodies.start();
+    let cancelled = guard.token.clone().cancelled_owned();
+    let stream = ReaderStream::with_capacity(reader.take(response_length), READ_CHUNK_BYTES)
+        .take_until(cancelled)
+        .map(move |result| {
+            let _keep_alive = (&permit, &guard);
             result
-        },
-    );
+        });
     builder
         .body(Body::from_stream(stream))
         .unwrap_or_else(|_| empty_response(StatusCode::INTERNAL_SERVER_ERROR))
@@ -443,9 +588,10 @@ mod tests {
             resources: Arc::new(RwLock::new(HashMap::from([(
                 "opaque".to_owned(),
                 RegisteredResource {
-                    path: media_path,
+                    origin: Origin::File(media_path),
                     media_type: "video/mp4".to_owned(),
                     byte_length: 10,
+                    bodies: Arc::new(Bodies::default()),
                 },
             )]))),
             streams: Arc::new(Semaphore::new(1)),
@@ -502,5 +648,167 @@ mod tests {
         assert_eq!(invalid.status(), StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(invalid.headers()[header::CONTENT_RANGE], "bytes */10");
         std::fs::remove_dir_all(test_root).unwrap();
+    }
+
+    /// Serves bytes only after its gate opens, like a torrent file whose pieces
+    /// are not yet verified.
+    struct GatedSource {
+        data: Vec<u8>,
+        gate: Arc<Semaphore>,
+        fail: bool,
+    }
+
+    struct GatedReader {
+        data: std::io::Cursor<Vec<u8>>,
+        gate: Arc<Semaphore>,
+        wait: Option<BoxFuture<'static, ()>>,
+        open: bool,
+    }
+
+    impl MediaSource for GatedSource {
+        fn open(&self) -> BoxFuture<'static, std::io::Result<Box<dyn MediaReader>>> {
+            let reader = GatedReader {
+                data: std::io::Cursor::new(self.data.clone()),
+                gate: Arc::clone(&self.gate),
+                wait: None,
+                open: false,
+            };
+            let fail = self.fail;
+            Box::pin(async move {
+                if fail {
+                    return Err(std::io::Error::other("not available"));
+                }
+                Ok(Box::new(reader) as Box<dyn MediaReader>)
+            })
+        }
+    }
+
+    impl AsyncRead for GatedReader {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            if !self.open {
+                let gate = Arc::clone(&self.gate);
+                let wait = self.wait.get_or_insert_with(|| {
+                    Box::pin(async move {
+                        let _ = gate.acquire().await;
+                    })
+                });
+                std::task::ready!(wait.as_mut().poll(cx));
+                self.open = true;
+            }
+            std::pin::Pin::new(&mut self.data).poll_read(cx, buf)
+        }
+    }
+
+    impl AsyncSeek for GatedReader {
+        fn start_seek(
+            mut self: std::pin::Pin<&mut Self>,
+            position: SeekFrom,
+        ) -> std::io::Result<()> {
+            std::pin::Pin::new(&mut self.data).start_seek(position)
+        }
+
+        fn poll_complete(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<u64>> {
+            std::pin::Pin::new(&mut self.data).poll_complete(cx)
+        }
+    }
+
+    async fn gated_gateway(fail: bool) -> (MediaGateway, Arc<Semaphore>, String) {
+        let gateway = MediaGateway::start(GatewayLimits::default()).await.unwrap();
+        let gate = Arc::new(Semaphore::new(0));
+        let registration = gateway
+            .register_stream(StreamResource {
+                source: Arc::new(GatedSource {
+                    data: b"0123456789".to_vec(),
+                    gate: Arc::clone(&gate),
+                    fail,
+                }),
+                media_type: "video/mp4".to_owned(),
+                byte_length: 10,
+            })
+            .unwrap();
+        let path = registration.url.split_once("127.0.0.1").unwrap().1;
+        let path = path.split_once('/').unwrap().1;
+        (gateway, gate, format!("/{path}"))
+    }
+
+    async fn ranged(gateway: &MediaGateway, path: &str, range: &str) -> Response {
+        router(gateway.state.clone(), Duration::from_secs(5))
+            .oneshot(
+                Request::get(path)
+                    .header(header::RANGE, range)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn stream_resources_wait_for_bytes_then_serve_exact_ranges() {
+        let (gateway, gate, path) = gated_gateway(false).await;
+        let response = ranged(&gateway, &path, "bytes=3-6").await;
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 3-6/10");
+        let body = tokio::spawn(to_bytes(response.into_body(), 10));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !body.is_finished(),
+            "nothing is served before the bytes are ready"
+        );
+        gate.add_permits(Semaphore::MAX_PERMITS);
+        assert_eq!(body.await.unwrap().unwrap(), "3456");
+        gateway.wait_for_shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn newer_requests_cancel_the_oldest_waiting_body_and_revoke_cancels_all() {
+        let (gateway, gate, path) = gated_gateway(false).await;
+        let mut bodies = Vec::new();
+        for _ in 0..3 {
+            let response = ranged(&gateway, &path, "bytes=0-9").await;
+            bodies.push(tokio::spawn(to_bytes(response.into_body(), 10)));
+        }
+        let oldest = bodies.remove(0);
+        let cancelled = tokio::time::timeout(Duration::from_secs(2), oldest)
+            .await
+            .expect("the oldest body is cancelled")
+            .unwrap()
+            .unwrap();
+        assert!(cancelled.is_empty());
+        gate.add_permits(Semaphore::MAX_PERMITS);
+        for body in bodies {
+            assert_eq!(body.await.unwrap().unwrap(), "0123456789");
+        }
+
+        let (gateway, _closed, path) = gated_gateway(false).await;
+        let response = ranged(&gateway, &path, "bytes=0-9").await;
+        let pending = tokio::spawn(to_bytes(response.into_body(), 10));
+        gateway.revoke(&format!("http://127.0.0.1{path}"));
+        let revoked = tokio::time::timeout(Duration::from_secs(2), pending)
+            .await
+            .expect("revoking cancels in-flight bodies")
+            .unwrap()
+            .unwrap();
+        assert!(revoked.is_empty());
+        assert_eq!(
+            ranged(&gateway, &path, "bytes=0-9").await.status(),
+            StatusCode::NOT_FOUND
+        );
+        gateway.wait_for_shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn unavailable_sources_are_reported_without_a_body() {
+        let (gateway, _gate, path) = gated_gateway(true).await;
+        let response = ranged(&gateway, &path, "bytes=0-1").await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        gateway.wait_for_shutdown().await;
     }
 }

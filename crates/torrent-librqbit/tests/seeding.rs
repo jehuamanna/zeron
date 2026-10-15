@@ -43,6 +43,10 @@ struct Release {
 }
 
 fn publish(root: &Path) -> Release {
+    publish_lessons(root, &[900_000, 2_500_000, 70_000])
+}
+
+fn publish_lessons(root: &Path, lengths: &[usize]) -> Release {
     let mut drafts = PublisherDrafts::open_in_memory().unwrap();
     let draft_id = drafts.create().unwrap().draft.draft_id;
     drafts
@@ -73,7 +77,7 @@ fn publish(root: &Path) -> Release {
         .clone();
     let mut revision = 2;
     std::fs::create_dir_all(root.join("sources")).unwrap();
-    for (index, length) in [(0_u8, 900_000_usize), (1, 2_500_000), (2, 70_000)] {
+    for (index, &length) in (0_u8..).zip(lengths) {
         let lesson_id = drafts
             .edit_structure(
                 &draft_id,
@@ -678,4 +682,134 @@ fn torrent_metainfo_length(release: &Release) -> u64 {
     std::fs::metadata(release.package.join("course.json"))
         .unwrap()
         .len()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn streams_verified_bytes_from_any_offset_without_downloading_the_rest() {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    use torrent_port::{FetchRequest, ResolveRequest, TorrentSource};
+
+    const LESSON: usize = 100_000_000;
+    const SLICE: usize = 1 << 20;
+    let scratch = Scratch::new("stream");
+    let release = publish_lessons(&scratch.0, &[LESSON]);
+    let seeder = engine(&scratch.0).await;
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    wait_for_state(&seeder, &info_hash, TransferState::Seeding).await;
+    let seeder_address = seeder.listen_address().unwrap();
+
+    let learner = loopback(&scratch.0, "learner", false).await;
+    let resolved = learner
+        .resolve(ResolveRequest {
+            source: TorrentSource::Metainfo(release.torrent.clone()),
+            initial_peers: vec![],
+        })
+        .await
+        .unwrap();
+    let lesson = resolved
+        .files
+        .iter()
+        .find(|file| file.path != "course.json")
+        .unwrap()
+        .clone();
+    assert!(matches!(
+        learner.open_file(&info_hash, lesson.index).await,
+        Err(EngineError::NotActive)
+    ));
+    learner
+        .fetch(FetchRequest {
+            metainfo: release.torrent.clone(),
+            content_root: scratch.0.join("learner-content"),
+            files: vec![0],
+            initial_peers: vec![seeder_address],
+        })
+        .await
+        .unwrap();
+    wait_for_file(&learner, &info_hash, 0, resolved.files[0].length).await;
+    assert!(matches!(
+        learner.open_file(&info_hash, resolved.files.len()).await,
+        Err(EngineError::InvalidTorrent(_))
+    ));
+    let source = std::fs::read(release.package.join(&lesson.path)).unwrap();
+
+    // Seek far into the unselected lesson: only a window around it is fetched.
+    let offset = 80_000_000;
+    let mut reader = learner.open_file(&info_hash, lesson.index).await.unwrap();
+    reader.seek(std::io::SeekFrom::Start(offset)).await.unwrap();
+    let mut slice = vec![0_u8; SLICE];
+    tokio::time::timeout(Duration::from_secs(30), reader.read_exact(&mut slice))
+        .await
+        .expect("verified bytes arrive")
+        .unwrap();
+    let start = usize::try_from(offset).unwrap();
+    assert!(
+        slice == source[start..start + SLICE],
+        "streamed bytes differ"
+    );
+    let verified = learner.transfer(&info_hash).unwrap().file_verified_bytes[lesson.index];
+    assert!(
+        verified < 40_000_000,
+        "only the lookahead window is fetched: {verified}"
+    );
+    drop(reader);
+
+    // A new reader from the start gets earlier bytes on demand.
+    let mut reader = learner.open_file(&info_hash, lesson.index).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), reader.read_exact(&mut slice))
+        .await
+        .expect("verified bytes arrive")
+        .unwrap();
+    assert!(slice == source[..SLICE], "streamed bytes differ");
+    drop(reader);
+    learner.shutdown().await;
+    seeder.shutdown().await;
+}
+
+/// When `course.json` completes, a learner with uploads off disconnects its
+/// peers. A stream opened while that disconnect is in progress used to wait
+/// forever; the reader now asks for the peers again while it waits.
+#[tokio::test(flavor = "multi_thread")]
+async fn streams_reconnect_peers_dropped_when_the_selection_finished() {
+    use tokio::io::AsyncReadExt;
+
+    let scratch = Scratch::new("reconnect");
+    let release = publish(&scratch.0);
+    let seeder = engine(&scratch.0).await;
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    wait_for_state(&seeder, &info_hash, TransferState::Seeding).await;
+    let seeder_address = seeder.listen_address().unwrap();
+    let manifest_length = torrent_metainfo_length(&release);
+    for delay in [0, 100, 200, 300, 500] {
+        let learner = loopback(&scratch.0, &format!("learner-{delay}"), false).await;
+        fetch_manifest(
+            &learner,
+            &release,
+            scratch.0.join(format!("content-{delay}")),
+            seeder_address,
+        )
+        .await;
+        wait_for_file(&learner, &info_hash, 0, manifest_length).await;
+        tokio::time::sleep(Duration::from_millis(delay)).await;
+        let mut reader = learner.open_file(&info_hash, 1).await.unwrap();
+        let mut head = vec![0_u8; 64 * 1024];
+        tokio::time::timeout(Duration::from_secs(20), reader.read_exact(&mut head))
+            .await
+            .unwrap_or_else(|_| panic!("stream stalled after a {delay} ms delay"))
+            .unwrap();
+        drop(reader);
+        learner.shutdown().await;
+    }
+    seeder.shutdown().await;
 }

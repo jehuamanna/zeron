@@ -1,6 +1,7 @@
 //! Thin Tauri composition root for Zeron Learner Desktop.
 
 mod commands;
+mod media;
 
 use std::{
     path::PathBuf,
@@ -19,6 +20,8 @@ use torrent_librqbit::{EngineConfig, LibrqbitEngine};
 pub(crate) struct AppState {
     pub(crate) library: Arc<Mutex<CourseLibrary>>,
     pub(crate) media_gateway: MediaGateway,
+    /// The capability URL currently playing; revoked when another is issued.
+    pub(crate) current_media: Mutex<Option<String>>,
     pub(crate) torrents: Torrents,
 }
 
@@ -34,6 +37,7 @@ pub(crate) struct Torrents {
     pub(crate) download_port: Option<u16>,
     /// Peer port of the engine that serves shared courses.
     pub(crate) sharing_port: Option<u16>,
+    pub(crate) router: Option<Arc<Router>>,
     pub(crate) imports: Option<Arc<TorrentImports<Router>>>,
     pub(crate) sharing: Option<Arc<CourseSharing<LibrqbitEngine>>>,
 }
@@ -69,6 +73,7 @@ pub fn run() {
             app.manage(AppState {
                 library,
                 media_gateway,
+                current_media: Mutex::new(None),
                 torrents,
             });
             Ok(())
@@ -86,6 +91,7 @@ pub fn run() {
             commands::get_course_sharing,
             commands::set_course_sharing,
             commands::get_network_settings,
+            commands::get_course_availability,
             commands::set_network_profile,
         ])
         .build(tauri::generate_context!())
@@ -124,6 +130,7 @@ fn start_torrents(
             engines: Vec::new(),
             download_port: None,
             sharing_port: None,
+            router: None,
             imports: None,
             sharing: None,
         };
@@ -137,6 +144,7 @@ fn start_torrents(
         download_port: port(&private),
         sharing_port: shared.as_ref().and_then(port),
         engines: std::iter::once(private).chain(shared).collect(),
+        router: Some(Arc::clone(&router)),
         imports: Some(Arc::new(TorrentImports::new(
             Arc::clone(&router),
             Arc::clone(library),

@@ -38,6 +38,8 @@ AGENTS.md requires engine types to stay behind a capability port and every engin
 
 6. **Uploading is an explicit engine setting.** `EngineConfig::allow_uploads` maps to librqbit's session-wide `disable_upload` (Cargo feature `disable-upload`). With uploads off, the engine advertises no pieces, rejects piece requests, and refuses `seed`. librqbit has no per-torrent switch, so per-course sharing uses a separate session: the Learner runs a private engine and a sharing engine, and `learning_application::TransferRouter` moves a course's transfer between them.
 
+7. **Streaming wraps `FileStream` and bounds it.** `open_file` returns librqbit's verified-piece `FileStream` behind the port's `VerifiedFile`, without a parallel piece scheduler. The adapter limits readers to 4 per engine, because each stream holds one of the session's 8 blocking permits that piece I/O also needs. While a read waits, it re-requests peer reconnection every 3 s by opening and dropping a short-lived stream, which works around librqbit 9.0.1 missing a peer whose disconnect was in progress when the stream opened.
+
 ## Consequences
 
 - Release immutability (ADR 0003) holds while seeding, at the cost of a small adapter-owned storage implementation (Unix `read_exact_at`, Windows `seek_read`).

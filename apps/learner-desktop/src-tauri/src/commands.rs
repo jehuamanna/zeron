@@ -6,15 +6,15 @@ use std::{
 use course_format::ResourceKind;
 use learning_application::{
     CancellationFlag, CourseImportReceipt, CourseLibrary, CourseSharingStatus, ImportError,
-    LibraryError, NetworkProfile, SharingError, TorrentImportSnapshot, TorrentImportStage,
-    TorrentSource, TransferState,
+    InfoHash, LibraryError, LocalResource, NetworkProfile, SharingError, TorrentEngine as _,
+    TorrentImportSnapshot, TorrentImportStage, TorrentResource, TorrentSource, TransferState,
 };
-use media_gateway::FileResource;
+use media_gateway::{FileResource, StreamResource};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::AppState;
+use crate::{AppState, media::TorrentMedia};
 
 const TORRENT_IMPORT_EVENT: &str = "torrent-import";
 /// Course torrents list a handful of files; anything larger is not a Zeron release.
@@ -131,6 +131,15 @@ pub(crate) struct NetworkSettingsDto {
     torrent_engine: &'static str,
     download_port: Option<u16>,
     sharing_port: Option<u16>,
+}
+
+/// Verified bytes of one torrent lesson on this computer.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResourceAvailabilityDto {
+    resource_id: String,
+    verified_bytes: u64,
+    byte_length: u64,
 }
 
 /// A torrent course's sharing choice and metrics measured by this computer.
@@ -492,6 +501,11 @@ pub(crate) async fn set_network_profile(
     .await
 }
 
+enum Media {
+    Local(LocalResource),
+    Torrent(TorrentResource),
+}
+
 #[tauri::command]
 pub(crate) async fn register_media(
     course_id: String,
@@ -499,42 +513,115 @@ pub(crate) async fn register_media(
     state: State<'_, AppState>,
 ) -> Result<MediaRegistrationDto, CommandError> {
     let library = Arc::clone(&state.library);
-    let resource = run_blocking(move || {
+    let media = run_blocking(move || {
         let library = lock_library(&library)?;
+        let failed = |error| command_error("media_lookup_failed", error);
+        let not_found = || CommandError {
+            code: "media_not_found",
+            message: "the selected media resource is unavailable".to_owned(),
+        };
         if library
             .torrent_info_hash(&course_id)
-            .map_err(|error| command_error("media_lookup_failed", error))?
+            .map_err(failed)?
             .is_some()
         {
-            return Err(CommandError {
-                code: "media_not_downloaded",
-                message: "this course came from a torrent and its media is not downloaded yet"
-                    .to_owned(),
-            });
+            return library
+                .torrent_resources(&course_id)
+                .map_err(failed)?
+                .into_iter()
+                .find(|resource| resource.resource_id == resource_id)
+                .map(Media::Torrent)
+                .ok_or_else(not_found);
         }
         library
             .local_resource(&course_id, &resource_id)
-            .map_err(|error| command_error("media_lookup_failed", error))?
-            .ok_or_else(|| CommandError {
-                code: "media_not_found",
-                message: "the selected media resource is unavailable".to_owned(),
-            })
+            .map_err(failed)?
+            .map(Media::Local)
+            .ok_or_else(not_found)
     })
     .await?;
-    state
-        .media_gateway
-        .register(FileResource {
-            path: resource.path,
-            media_type: resource.media_type,
-            byte_length: resource.byte_length,
-        })
-        .await
-        .map(|registration| MediaRegistrationDto {
-            url: registration.url,
-            media_type: registration.media_type,
-            byte_length: registration.byte_length,
-        })
-        .map_err(|error| command_error("media_registration_failed", error))
+    let registration = match media {
+        Media::Local(resource) => {
+            state
+                .media_gateway
+                .register(FileResource {
+                    path: resource.path,
+                    media_type: resource.media_type,
+                    byte_length: resource.byte_length,
+                })
+                .await
+        }
+        Media::Torrent(resource) => {
+            let router = state.torrents.router.clone().ok_or_else(|| CommandError {
+                code: "torrent_engine_unavailable",
+                message:
+                    "torrent lessons are unavailable because the torrent engine could not start"
+                        .to_owned(),
+            })?;
+            let info_hash = InfoHash::parse(&resource.info_hash)
+                .map_err(|error| command_error("media_lookup_failed", error))?;
+            state.media_gateway.register_stream(StreamResource {
+                source: Arc::new(TorrentMedia {
+                    router,
+                    info_hash,
+                    file_index: resource.file_index,
+                }),
+                media_type: resource.media_type,
+                byte_length: resource.byte_length,
+            })
+        }
+    }
+    .map_err(|error| command_error("media_registration_failed", error))?;
+    // Only one lesson plays at a time: revoking the previous one stops its pending reads.
+    if let Ok(mut current) = state.current_media.lock()
+        && let Some(previous) = current.replace(registration.url.clone())
+    {
+        state.media_gateway.revoke(&previous);
+    }
+    Ok(MediaRegistrationDto {
+        url: registration.url,
+        media_type: registration.media_type,
+        byte_length: registration.byte_length,
+    })
+}
+
+/// How much of each torrent lesson this computer has verified. Empty for local
+/// courses, whose resources are verified at import.
+#[tauri::command]
+pub(crate) async fn get_course_availability(
+    course_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ResourceAvailabilityDto>, CommandError> {
+    let Some(router) = state.torrents.router.clone() else {
+        return Ok(Vec::new());
+    };
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        let resources = lock_library(&library)?
+            .torrent_resources(&course_id)
+            .map_err(|error| command_error("library_query_failed", error))?;
+        let transfer = resources
+            .first()
+            .and_then(|resource| InfoHash::parse(&resource.info_hash).ok())
+            .and_then(|info_hash| router.transfer(&info_hash));
+        Ok(resources
+            .into_iter()
+            .map(|resource| ResourceAvailabilityDto {
+                verified_bytes: transfer
+                    .as_ref()
+                    .and_then(|transfer| {
+                        transfer
+                            .file_verified_bytes
+                            .get(resource.file_index)
+                            .copied()
+                    })
+                    .unwrap_or(0),
+                byte_length: resource.byte_length,
+                resource_id: resource.resource_id,
+            })
+            .collect())
+    })
+    .await
 }
 
 impl From<CourseImportReceipt> for ImportReceiptDto {

@@ -23,6 +23,7 @@ use librqbit::{
 use torrent_port::{
     EngineError, FetchRequest, InfoHash, NetworkProfile, ResolveRequest, ResolvedTorrent,
     SeedRequest, TorrentEngine, TorrentFile, TorrentSource, TransferState, TransferStats,
+    VerifiedFile,
 };
 
 use crate::storage::{ContentMismatch, MetadataOnly, ReadOnlyContent};
@@ -60,6 +61,75 @@ pub struct LibrqbitEngine {
     /// Never written: magnet resolution uses storage that refuses all I/O.
     resolve_folder: PathBuf,
     allow_uploads: bool,
+    /// Every librqbit stream holds one of the session's 8 blocking permits,
+    /// which piece checks and writes also need; readers are capped below that.
+    open_files: Arc<tokio::sync::Semaphore>,
+}
+
+const MAX_OPEN_FILES: usize = 4;
+
+/// How long a read waits before asking librqbit to reconnect needed peers.
+const RECONNECT_NUDGE: Duration = Duration::from_secs(3);
+
+/// A librqbit stream plus its slot in the engine's reader limit.
+///
+/// A finished torrent (every selected file verified) disconnects its peers.
+/// Opening a stream asks it to reconnect peers it no longer needed, but in
+/// librqbit 9.0.1 a peer whose disconnect is still in progress at that moment
+/// is missed and never retried, so the read would wait forever. While a read
+/// waits, this reader therefore opens and drops a short-lived stream every
+/// [`RECONNECT_NUDGE`], which repeats that request.
+struct OpenFile<S> {
+    stream: S,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    handle: Arc<ManagedTorrent>,
+    file_index: usize,
+    nudge: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for OpenFile<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = &mut *self;
+        let polled = std::pin::Pin::new(&mut this.stream).poll_read(cx, buf);
+        if polled.is_ready() {
+            this.nudge = None;
+            return polled;
+        }
+        let nudge = this
+            .nudge
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(RECONNECT_NUDGE)));
+        if nudge.as_mut().poll(cx).is_ready() {
+            this.nudge = None;
+            let handle = Arc::clone(&this.handle);
+            let file_index = this.file_index;
+            tokio::spawn(async move {
+                let _ = handle.stream(file_index).await;
+            });
+            // Arm the next nudge.
+            cx.waker().wake_by_ref();
+        }
+        std::task::Poll::Pending
+    }
+}
+
+impl<S: tokio::io::AsyncSeek + Unpin> tokio::io::AsyncSeek for OpenFile<S> {
+    fn start_seek(
+        mut self: std::pin::Pin<&mut Self>,
+        position: std::io::SeekFrom,
+    ) -> std::io::Result<()> {
+        std::pin::Pin::new(&mut self.stream).start_seek(position)
+    }
+
+    fn poll_complete(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<u64>> {
+        std::pin::Pin::new(&mut self.stream).poll_complete(cx)
+    }
 }
 
 impl LibrqbitEngine {
@@ -80,6 +150,9 @@ impl LibrqbitEngine {
             active: Arc::new(Mutex::new(HashMap::new())),
             resolve_folder,
             allow_uploads: config.allow_uploads,
+            // At most MAX_OPEN_FILES readers plus one transient nudge stream
+            // hold librqbit permits, leaving the rest for piece I/O.
+            open_files: Arc::new(tokio::sync::Semaphore::new(MAX_OPEN_FILES)),
         })
     }
 
@@ -373,6 +446,44 @@ impl TorrentEngine for LibrqbitEngine {
             .delete(TorrentIdOrHash::Id(active.handle.id()), false)
             .await
             .map_err(|error| engine_error(&error))
+    }
+
+    async fn open_file(
+        &self,
+        info_hash: &InfoHash,
+        file_index: usize,
+    ) -> Result<Box<dyn VerifiedFile>, EngineError> {
+        let handle = self
+            .lock()
+            .get(info_hash)
+            .map(|active| Arc::clone(&active.handle))
+            .ok_or(EngineError::NotActive)?;
+        let file_count = handle
+            .with_metadata(|metadata| metadata.file_infos.len())
+            .map_err(|error| engine_error(&error))?;
+        if file_index >= file_count {
+            return Err(EngineError::InvalidTorrent(format!(
+                "the torrent has no file {file_index}"
+            )));
+        }
+        let permit = Arc::clone(&self.open_files)
+            .try_acquire_owned()
+            .map_err(|_| {
+                EngineError::Engine("too many torrent files are open for reading".to_owned())
+            })?;
+        // FileStream reads only verified pieces and prioritizes a 32 MiB
+        // window ahead of its position, also for unselected files.
+        let stream = Arc::clone(&handle)
+            .stream(file_index)
+            .await
+            .map_err(|error| engine_error(&error))?;
+        Ok(Box::new(OpenFile {
+            stream,
+            _permit: permit,
+            handle,
+            file_index,
+            nudge: None,
+        }))
     }
 
     fn transfer(&self, info_hash: &InfoHash) -> Option<TransferStats> {

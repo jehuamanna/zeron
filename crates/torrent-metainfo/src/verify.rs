@@ -39,6 +39,19 @@ pub fn info_hash(torrent: &[u8]) -> Result<String, TorrentError> {
     Ok(hex(&Sha1::digest(&torrent[span.clone()])))
 }
 
+/// Files in the order the torrent declares them, which is the order engines
+/// index them in. Paths are untrusted; callers must validate them.
+///
+/// # Errors
+/// Returns a decode error or [`TorrentError::Verification`] for a malformed file list.
+pub fn file_table(torrent: &[u8]) -> Result<Vec<PackageFile>, TorrentError> {
+    let top = decode_dict_with_spans(torrent)?;
+    let Some((Value::Dict(info), _)) = top.get(b"info".as_slice()) else {
+        return Err(TorrentError::Verification("missing info dictionary"));
+    };
+    declared_files(info)
+}
+
 /// Decode `torrent` strictly and check that it describes exactly `expected`
 /// files, without reading package bytes.
 ///

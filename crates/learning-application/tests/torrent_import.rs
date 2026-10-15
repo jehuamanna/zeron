@@ -189,6 +189,55 @@ async fn run<E: TorrentEngine>(
     (finished, stages)
 }
 
+/// The imported lesson maps to its torrent file and streams verified bytes
+/// identical to the published package.
+async fn assert_lesson_streams(
+    learner: &LibrqbitEngine,
+    library: &Arc<Mutex<CourseLibrary>>,
+    course_id: &str,
+    release: &Release,
+    info_hash: &InfoHash,
+) {
+    let resources = library
+        .lock()
+        .unwrap()
+        .torrent_resources(course_id)
+        .unwrap();
+    assert_eq!(resources.len(), 1);
+    let resource = &resources[0];
+    assert_eq!(resource.info_hash, release.info_hash);
+    let mut reader = learner
+        .open_file(info_hash, resource.file_index)
+        .await
+        .unwrap();
+    let mut head = vec![0_u8; 64 * 1024];
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut head),
+    )
+    .await
+    .expect("verified lesson bytes stream")
+    .unwrap();
+    let published = std::fs::read(
+        release.package.join(
+            library
+                .lock()
+                .unwrap()
+                .manifest(course_id)
+                .unwrap()
+                .unwrap()
+                .modules[0]
+                .lessons[0]
+                .resources[0]
+                .path
+                .clone(),
+        ),
+    )
+    .unwrap();
+    assert!(head == published[..head.len()], "streamed bytes differ");
+    drop(reader);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_magnet_import_fetches_only_the_manifest_and_restores_after_restart() {
     let scratch = Scratch::new("magnet");
@@ -264,6 +313,7 @@ async fn a_magnet_import_fetches_only_the_manifest_and_restores_after_restart() 
         largest < 1_500_000,
         "resource bytes were fetched: {stats:?}"
     );
+    assert_lesson_streams(&learner, &library, &course_id, &release, &info_hash).await;
     learner.shutdown().await;
 
     let restarted = loopback_engine(&scratch.0, "learner-2", false).await;
@@ -424,6 +474,14 @@ impl TorrentEngine for ScriptedEngine {
     async fn stop(&self, _: &InfoHash) -> Result<(), EngineError> {
         self.fetched.lock().unwrap().clear();
         Ok(())
+    }
+
+    async fn open_file(
+        &self,
+        _: &InfoHash,
+        _: usize,
+    ) -> Result<Box<dyn torrent_port::VerifiedFile>, EngineError> {
+        Err(EngineError::UnsupportedCapability("streaming"))
     }
 
     fn transfer(&self, info_hash: &InfoHash) -> Option<TransferStats> {

@@ -40,6 +40,12 @@ export interface Readiness {
   sharing: "ready" | "unavailable";
 }
 
+export interface ResourceAvailability {
+  resourceId: string;
+  verifiedBytes: number;
+  byteLength: number;
+}
+
 export interface CourseSharing {
   courseId: string;
   available: boolean;
@@ -131,6 +137,7 @@ export const libraryApi = {
   cancelTorrentImport: (jobId: string) => invoke<boolean>("cancel_torrent_import", { jobId }),
   getNetworkSettings: () => invoke<NetworkSettings>("get_network_settings"),
   setNetworkProfile: (profile: NetworkProfile) => invoke<void>("set_network_profile", { profile }),
+  availability: (courseId: string) => invoke<ResourceAvailability[]>("get_course_availability", { courseId }),
   getCourseSharing: (courseId: string) => invoke<CourseSharing | null>("get_course_sharing", { courseId }),
   setCourseSharing: (courseId: string, sharing: boolean) =>
     invoke<CourseSharing>("set_course_sharing", { courseId, sharing }),

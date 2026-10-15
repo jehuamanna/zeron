@@ -44,7 +44,7 @@ export function CourseSharingCard({ courseId }: { courseId: string }) {
               ? `On. Zeron uploads the parts of this course that this computer has verified to other learners ${audience[data.networkProfile]}. They can see this computer's IP address.`
               : "Off. Zeron uploads nothing for this course."}
           </p>
-          <p className="mt-1 text-xs text-slate-500">Only course.json is downloaded so far, so that is all that can be shared.</p>
+          <p className="mt-1 text-xs text-slate-500">Only the parts of this course that this computer has downloaded can be shared.</p>
         </div>
         <button
           type="button"

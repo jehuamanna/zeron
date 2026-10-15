@@ -9,4 +9,4 @@ pub use builder::{
     BuiltTorrent, HashProgress, PackageFile, TorrentError, TorrentOptions, build_torrent,
     piece_length_for,
 };
-pub use verify::{VerifiedTorrent, info_hash, inspect_torrent, verify_torrent};
+pub use verify::{VerifiedTorrent, file_table, info_hash, inspect_torrent, verify_torrent};

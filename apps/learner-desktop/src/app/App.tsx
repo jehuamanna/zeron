@@ -18,6 +18,7 @@ export function App() {
   const queryClient = useQueryClient();
   const { selectedCourseId, selectCourse, networkOpen, showNetwork } = useLibraryUi();
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+  const [playing, setPlaying] = useState<string | null>(null);
   const readiness = useQuery({ queryKey: ["readiness"], queryFn: libraryApi.readiness });
   const courses = useQuery({
     queryKey: ["courses"],
@@ -37,16 +38,32 @@ export function App() {
   });
   const openMedia = useMutation({
     mutationFn: (resourceId: string) => libraryApi.registerMedia(selectedCourseId!, resourceId),
-    onSuccess: (registration) => setMediaUrl(registration.url),
+    onSuccess: (registration, resourceId) => {
+      setMediaUrl(registration.url);
+      setPlaying(resourceId);
+    },
   });
 
   const torrentCourse = detail.data?.source === "torrent";
   const importError = importCourse.isError
     ? (asCommandError(importCourse.error)?.message ?? "The course folder could not be imported.")
     : null;
+  const availability = useQuery({
+    queryKey: ["availability", selectedCourseId],
+    queryFn: () => libraryApi.availability(selectedCourseId!),
+    enabled: selectedCourseId !== null && torrentCourse,
+    refetchInterval: 2000,
+  });
+  const downloaded = new Map(
+    (availability.data ?? []).map((item) => [
+      item.resourceId,
+      item.byteLength > 0 ? Math.floor((item.verifiedBytes / item.byteLength) * 100) : 100,
+    ]),
+  );
 
   const leaveCourse = () => {
     setMediaUrl(null);
+    setPlaying(null);
     selectCourse(null);
   };
 
@@ -105,7 +122,7 @@ export function App() {
                     <p className="mt-3 max-w-2xl text-slate-400">{detail.data.description ?? `Published by ${detail.data.publisherName}`}</p>
                     {torrentCourse ? (
                       <p className="mt-5 max-w-2xl rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
-                        This course came from a torrent. Zeron has verified its outline (course.json) only; lesson media has not been downloaded, so nothing can be played yet.
+                        This course streams from a torrent. Lessons download while you watch, and only data verified against the torrent is played. Each lesson shows how much of it is on this computer.
                       </p>
                     ) : null}
                     {torrentCourse ? <CourseSharingCard courseId={detail.data.courseId} /> : null}
@@ -118,14 +135,14 @@ export function App() {
                         <div className="grid aspect-video place-items-center rounded-2xl bg-[#03080d] text-slate-500">
                           <div className="text-center">
                             <Play className="mx-auto mb-3" size={30} />
-                            <p>{torrentCourse ? "Lessons become playable once their media is downloaded" : "Choose a video lesson to begin"}</p>
+                            <p>{torrentCourse ? "Choose a lesson to stream" : "Choose a video lesson to begin"}</p>
                           </div>
                         </div>
                       )}
                       {openMedia.isError ? (
                         <p role="alert" className="mt-3 text-sm text-red-300">
-                          {asCommandError(openMedia.error)?.code === "media_not_downloaded"
-                            ? "This lesson's media has not been downloaded yet."
+                          {torrentCourse
+                            ? (asCommandError(openMedia.error)?.message ?? "This lesson could not be streamed.")
                             : "This verified media file is no longer available."}
                         </p>
                       ) : null}
@@ -142,19 +159,17 @@ export function App() {
                               <div key={lesson.id} className="rounded-xl border border-white/10 bg-black/10 p-3">
                                 <p className="text-sm font-medium">{lesson.title}</p>
                                 <div className="mt-2 flex flex-wrap gap-2">
-                                  {lesson.resources.map((resource) => resource.kind === "video" && torrentCourse ? (
-                                    <span key={resource.id} className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-400">
-                                      <Play size={12} /> Video · not downloaded
-                                    </span>
-                                  ) : resource.kind === "video" ? (
+                                  {lesson.resources.map((resource) => resource.kind === "video" ? (
                                     <button
                                       type="button"
                                       key={resource.id}
                                       onClick={() => openMedia.mutate(resource.id)}
                                       disabled={openMedia.isPending}
-                                      className="inline-flex items-center gap-1 rounded-md bg-cyan-300/10 px-2 py-1 text-xs text-cyan-200 hover:bg-cyan-300/20 disabled:opacity-50"
+                                      aria-current={playing === resource.id ? "true" : undefined}
+                                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-cyan-300/20 disabled:opacity-50 ${playing === resource.id ? "bg-cyan-300/25 text-cyan-100" : "bg-cyan-300/10 text-cyan-200"}`}
                                     >
-                                      <Play size={12} /> Play video
+                                      <Play size={12} /> {playing === resource.id ? "Playing" : "Play video"}
+                                      {torrentCourse ? <span className="text-cyan-200/70">· {downloaded.get(resource.id) ?? 0}% downloaded</span> : null}
                                     </button>
                                   ) : (
                                     <span key={resource.id} className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-400">

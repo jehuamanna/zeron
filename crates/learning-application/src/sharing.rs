@@ -7,7 +7,7 @@ use std::{
 use thiserror::Error;
 use torrent_port::{
     EngineError, FetchRequest, InfoHash, ResolveRequest, ResolvedTorrent, SeedRequest,
-    TorrentEngine, TransferStats,
+    TorrentEngine, TransferStats, VerifiedFile,
 };
 
 use crate::{CourseLibrary, LibraryError};
@@ -149,6 +149,15 @@ impl<E: TorrentEngine> TorrentEngine for TransferRouter<E> {
         let _changes = self.changes.lock().await;
         self.routes().requests.remove(info_hash);
         self.engine_for(info_hash).stop(info_hash).await
+    }
+
+    async fn open_file(
+        &self,
+        info_hash: &InfoHash,
+        file_index: usize,
+    ) -> Result<Box<dyn VerifiedFile>, EngineError> {
+        let engine = Arc::clone(self.engine_for(info_hash));
+        engine.open_file(info_hash, file_index).await
     }
 
     fn transfer(&self, info_hash: &InfoHash) -> Option<TransferStats> {

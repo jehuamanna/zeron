@@ -53,6 +53,14 @@ impl TorrentEngine for FakeEngine {
             .ok_or(EngineError::NotActive)
     }
 
+    async fn open_file(
+        &self,
+        _: &InfoHash,
+        _: usize,
+    ) -> Result<Box<dyn torrent_port::VerifiedFile>, EngineError> {
+        Err(EngineError::UnsupportedCapability("streaming"))
+    }
+
     fn transfer(&self, info_hash: &InfoHash) -> Option<TransferStats> {
         self.active
             .lock()

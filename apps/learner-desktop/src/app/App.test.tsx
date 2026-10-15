@@ -21,6 +21,7 @@ vi.mock("../services/library", async (importOriginal) => ({
     onTorrentImport: vi.fn(() => Promise.resolve(() => {})),
     getCourseSharing: vi.fn(() => Promise.resolve(null)),
     getNetworkSettings: vi.fn(),
+    availability: vi.fn(() => Promise.resolve([])),
     setNetworkProfile: vi.fn(),
     setCourseSharing: vi.fn(),
   },
@@ -161,23 +162,29 @@ describe("learner library", () => {
     expect(libraryApi.registerMedia).toHaveBeenCalledWith("course_one", "video");
   });
 
-  it("labels torrent courses and withholds playback until media is downloaded", async () => {
+  it("streams torrent lessons and shows how much of each is downloaded", async () => {
     useLibraryUi.getState().selectCourse("course_torrent");
     vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
     vi.mocked(libraryApi.list).mockResolvedValue([]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
       courseId: "course_torrent", courseVersion: "1.0.0", title: "Torrent Course", description: null,
       publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), modules: [{ id: "module", title: "Module", lessons: [{
-        id: "lesson", title: "Lesson", resources: [{ id: "video", kind: "video", mediaType: "video/mp4", byteLength: 10, durationSeconds: null }],
+        id: "lesson", title: "Lesson", resources: [{ id: "video", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }],
       }] }],
+    });
+    vi.mocked(libraryApi.availability).mockResolvedValue([{ resourceId: "video", verifiedBytes: 50, byteLength: 200 }]);
+    vi.mocked(libraryApi.registerMedia).mockResolvedValue({
+      url: "http://127.0.0.1:49152/v1/media/stream/secret", mediaType: "video/mp4", byteLength: 200,
     });
 
     const view = renderApp();
-    await waitFor(() => expect(view.container.textContent).toContain("verified its outline (course.json) only"));
-    expect(view.container.textContent).toContain("Video · not downloaded");
+    await waitFor(() => expect(view.container.textContent).toContain("Lessons download while you watch"));
+    await waitFor(() => expect(view.container.textContent).toContain("25% downloaded"));
     const play = Array.from(view.container.querySelectorAll("button")).find((candidate) => candidate.textContent?.includes("Play video"));
-    expect(play).toBeUndefined();
-    expect(libraryApi.registerMedia).not.toHaveBeenCalled();
+    fireEvent.click(play!);
+    await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("/v1/media/stream/secret"));
+    expect(libraryApi.registerMedia).toHaveBeenCalledWith("course_torrent", "video");
+    expect(view.container.querySelector('[aria-current="true"]')?.textContent).toContain("Playing");
   });
 
   it("shows the source of each course in the library", async () => {

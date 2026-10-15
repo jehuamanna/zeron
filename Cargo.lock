@@ -5277,6 +5277,7 @@ name = "torrent-port"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

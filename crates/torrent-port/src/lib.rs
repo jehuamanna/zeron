@@ -141,6 +141,11 @@ pub struct FetchRequest {
     pub initial_peers: Vec<SocketAddr>,
 }
 
+/// Seekable reader over verified torrent bytes. Engine types stay behind it.
+pub trait VerifiedFile: tokio::io::AsyncRead + tokio::io::AsyncSeek + Send + Unpin {}
+
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncSeek + Send + Unpin> VerifiedFile for T {}
+
 /// Engine-reported transfer state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferState {
@@ -226,6 +231,17 @@ pub trait TorrentEngine: Send + Sync {
 
     /// Stop serving a torrent. Content files are never deleted.
     fn stop(&self, info_hash: &InfoHash) -> impl Future<Output = Result<(), EngineError>> + Send;
+
+    /// Open one file of an active torrent for reading, whether or not the
+    /// file is selected for download. Reads return only verified bytes and
+    /// wait until the pieces they need are verified; the engine prioritizes
+    /// pieces ahead of the read position. Dropping the reader releases that
+    /// priority, so seeking or abandoning a read cancels obsolete work.
+    fn open_file(
+        &self,
+        info_hash: &InfoHash,
+        file_index: usize,
+    ) -> impl Future<Output = Result<Box<dyn VerifiedFile>, EngineError>> + Send;
 
     /// Metrics for one active torrent.
     fn transfer(&self, info_hash: &InfoHash) -> Option<TransferStats>;
