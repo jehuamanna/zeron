@@ -136,7 +136,7 @@ fn seeding_intents_and_settings_persist() {
     storage
         .insert_release(release("release_2", "1.1.0"))
         .unwrap();
-    assert!(storage.seeding_intents().unwrap().is_empty());
+    assert_eq!(storage.seeding_intents().unwrap().len(), 0);
     storage.set_seeding_intent("release_1", true).unwrap();
     storage.set_seeding_intent("release_1", true).unwrap();
     storage.set_seeding_intent("release_2", true).unwrap();

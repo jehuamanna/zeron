@@ -123,13 +123,13 @@ fn the_cli_prepares_publishes_and_verifies_releases() {
         .find_map(|line| line.strip_prefix("info hash "))
         .unwrap()
         .to_owned();
-    assert!(data.entries("cli-staging").is_empty());
-    assert!(data.entries("releases").is_empty());
+    assert_eq!(data.entries("cli-staging").len(), 0);
+    assert_eq!(data.entries("releases").len(), 0);
 
     let unconfirmed = data.cli(&["publish", &draft_id]);
     assert!(!unconfirmed.status.success());
     assert!(stderr(&unconfirmed).contains("--confirm"));
-    assert!(data.entries("releases").is_empty());
+    assert_eq!(data.entries("releases").len(), 0);
 
     let published = data.cli(&["publish", &draft_id, "--confirm"]);
     assert!(published.status.success(), "{}", stderr(&published));
@@ -140,7 +140,7 @@ fn the_cli_prepares_publishes_and_verifies_releases() {
         .to_owned();
     let release_id = line.split_whitespace().nth(1).unwrap().to_owned();
     assert!(line.contains(&dry_hash), "deterministic info hash expected");
-    assert!(data.entries("cli-staging").is_empty());
+    assert_eq!(data.entries("cli-staging").len(), 0);
 
     let releases = data.cli(&["releases"]);
     assert!(stdout(&releases).contains(&format!(
@@ -165,7 +165,7 @@ fn the_cli_prepares_publishes_and_verifies_releases() {
         !stderr(&again).contains("copying files"),
         "rejected before staging"
     );
-    assert!(data.entries("cli-staging").is_empty());
+    assert_eq!(data.entries("cli-staging").len(), 0);
     assert_eq!(data.entries("releases").len(), 1);
 }
 

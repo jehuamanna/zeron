@@ -84,7 +84,7 @@ fn valid_sources_remove_file_issue() {
     fs::write(&path, b"media").unwrap();
     let mut course = draft(path.clone());
     course.modules.remove(0);
-    assert!(course.validate().is_empty());
+    assert_eq!(course.validate().len(), 0);
     fs::remove_file(path).unwrap();
 }
 

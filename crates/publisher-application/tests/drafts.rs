@@ -31,7 +31,7 @@ fn create_assigns_opaque_ids_and_defaults() {
     assert_eq!(first.draft.metadata.title, "Untitled course");
     assert_eq!(first.draft.metadata.publisher_name, "Local publisher");
     assert_eq!(first.draft.metadata.language, "en");
-    assert!(first.draft.modules.is_empty());
+    assert_eq!(first.draft.modules.len(), 0);
     for (id, prefix) in [
         (&first.draft.draft_id, "draft_"),
         (&first.draft.metadata.course_id, "course_"),

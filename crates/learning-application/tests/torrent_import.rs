@@ -419,9 +419,9 @@ async fn a_torrent_whose_inventory_differs_from_course_json_is_rejected() {
     .await;
     assert_eq!(finished.stage, TorrentImportStage::Failed);
     assert_eq!(finished.failure.unwrap().code, "inventory_mismatch");
-    assert!(library.lock().unwrap().courses().unwrap().is_empty());
+    assert_eq!(library.lock().unwrap().courses().unwrap().len(), 0);
     assert!(!courses.join(&torrent.info_hash).exists());
-    assert!(learner.transfers().is_empty());
+    assert_eq!(learner.transfers().len(), 0);
     learner.shutdown().await;
     seeder.shutdown().await;
 }
@@ -439,6 +439,11 @@ struct ScriptedEngine {
     fetched: Mutex<Vec<FetchRequest>>,
 }
 
+#[allow(
+    unknown_lints,
+    clippy::unused_async_trait_impl,
+    reason = "fakes mirror the async engine contract"
+)]
 impl TorrentEngine for ScriptedEngine {
     async fn seed(&self, _: SeedRequest) -> Result<InfoHash, EngineError> {
         Err(EngineError::UnsupportedCapability("seed"))
@@ -583,7 +588,7 @@ async fn non_courses_unsafe_inventories_and_stalled_manifests_fail_cleanly() {
             "{code}: cache not removed"
         );
     }
-    assert!(library.lock().unwrap().courses().unwrap().is_empty());
+    assert_eq!(library.lock().unwrap().courses().unwrap().len(), 0);
 }
 
 fn list_files(root: &Path) -> Vec<torrent_metainfo::PackageFile> {

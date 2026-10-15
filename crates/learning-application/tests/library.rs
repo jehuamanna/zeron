@@ -170,5 +170,5 @@ fn failed_import_never_becomes_visible() {
         library.import_local_folder(&course_root, &CancellationFlag::default()),
         Err(LibraryError::Import(_))
     ));
-    assert!(library.courses().unwrap().is_empty());
+    assert_eq!(library.courses().unwrap().len(), 0);
 }

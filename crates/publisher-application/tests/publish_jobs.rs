@@ -195,7 +195,7 @@ fn an_invalid_draft_fails_during_validation_without_artifacts() {
     let failure = finished.failure.unwrap();
     assert_eq!(failure.code, "draft_invalid");
     assert!(failure.message.contains("blocking issue"));
-    assert!(scratch.staging_entries().is_empty());
+    assert_eq!(scratch.staging_entries().len(), 0);
 }
 
 #[test]

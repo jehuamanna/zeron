@@ -168,7 +168,7 @@ fn activation_moves_verified_artifacts_into_an_immutable_release() {
         snapshot.release_id.as_deref(),
         Some(record.release.release_id.as_str())
     );
-    assert!(Scratch::entries(&fixture.scratch.staging()).is_empty());
+    assert_eq!(Scratch::entries(&fixture.scratch.staging()).len(), 0);
     assert_eq!(
         Scratch::entries(&fixture.scratch.releases()),
         std::slice::from_ref(&record.release.release_id)
@@ -285,8 +285,8 @@ fn artifacts_changed_after_verification_are_not_activated() {
             .activate(&job_id, &mut fixture.drafts, &fixture.scratch.releases()),
         Err(DraftServiceError::InvalidAttempt(_))
     ));
-    assert!(fixture.drafts.releases().unwrap().is_empty());
-    assert!(Scratch::entries(&fixture.scratch.releases()).is_empty());
+    assert_eq!(fixture.drafts.releases().unwrap().len(), 0);
+    assert_eq!(Scratch::entries(&fixture.scratch.releases()).len(), 0);
     assert!(fixture.scratch.staging().join(&attempt).is_dir());
 }
 
@@ -335,7 +335,7 @@ fn startup_recovery_completes_recorded_activations_and_drops_unrecorded_ones() {
     assert!(fixture.scratch.staging().join(&attempt).is_dir());
     let restarted = PublishJobs::new(&fixture.scratch.staging());
     assert_eq!(restarted.recover().unwrap(), 2);
-    assert!(Scratch::entries(&fixture.scratch.staging()).is_empty());
+    assert_eq!(Scratch::entries(&fixture.scratch.staging()).len(), 0);
 }
 
 #[test]

@@ -703,7 +703,7 @@ mod tests {
     #[test]
     fn migrates_and_proves_fts5() {
         let storage = Storage::open_in_memory().unwrap();
-        assert!(storage.list_courses().unwrap().is_empty());
+        assert_eq!(storage.list_courses().unwrap().len(), 0);
     }
 
     #[test]
@@ -734,7 +734,7 @@ mod tests {
             storage.course_package_root(&updated.course_id).unwrap(),
             Some(PathBuf::from("/course/updated"))
         );
-        assert!(storage.search_courses("networks").unwrap().is_empty());
+        assert_eq!(storage.search_courses("networks").unwrap().len(), 0);
         assert_eq!(storage.search_courses("consensus").unwrap().len(), 1);
     }
 
@@ -789,7 +789,7 @@ mod tests {
                 .torrent_info_hash
                 .is_none()
         );
-        assert!(storage.torrent_course_sources().unwrap().is_empty());
+        assert_eq!(storage.torrent_course_sources().unwrap().len(), 0);
         assert!(!storage.list_courses().unwrap()[0].sharing);
         assert!(
             !storage.set_course_sharing(&course.course_id, true).unwrap(),

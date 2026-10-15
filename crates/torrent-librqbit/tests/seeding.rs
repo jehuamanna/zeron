@@ -295,7 +295,7 @@ async fn changed_content_fails_closed_and_missing_content_is_rejected() {
             .await,
         Err(EngineError::InvalidTorrent(_))
     ));
-    assert!(engine.transfers().is_empty());
+    assert_eq!(engine.transfers().len(), 0);
     engine.shutdown().await;
 }
 

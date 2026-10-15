@@ -85,7 +85,7 @@ fn removal_drops_nested_lessons() {
     let removed = drafts
         .edit_structure(&id, 2, StructureEdit::RemoveModule { module_id })
         .unwrap();
-    assert!(removed.draft.modules.is_empty());
+    assert_eq!(removed.draft.modules.len(), 0);
     assert_eq!(removed.draft.revision, 3);
 }
 

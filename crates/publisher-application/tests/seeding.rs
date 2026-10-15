@@ -23,6 +23,11 @@ struct FakeEngine {
     refuse: Mutex<Option<EngineError>>,
 }
 
+#[allow(
+    unknown_lints,
+    clippy::unused_async_trait_impl,
+    reason = "fakes mirror the async engine contract"
+)]
 impl TorrentEngine for FakeEngine {
     async fn seed(&self, request: SeedRequest) -> Result<InfoHash, EngineError> {
         if let Some(error) = self.refuse.lock().unwrap().clone() {

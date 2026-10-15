@@ -59,15 +59,11 @@ pub fn inspect_media(path: &Path, media_type: &str) -> MediaReport {
             FindingSeverity::Advice,
             "Convert SubRip subtitles to WebVTT so the built-in player can display them.",
         )),
-        "application/pdf" => {
-            if !starts_with(&mut file, b"%PDF-") {
-                report.findings.push(finding(
-                    "unrecognized_pdf",
-                    FindingSeverity::Warning,
-                    "This file does not start like a PDF document; check that the right file was attached.",
-                ));
-            }
-        }
+        "application/pdf" if !starts_with(&mut file, b"%PDF-") => report.findings.push(finding(
+            "unrecognized_pdf",
+            FindingSeverity::Warning,
+            "This file does not start like a PDF document; check that the right file was attached.",
+        )),
         _ => {}
     }
     report

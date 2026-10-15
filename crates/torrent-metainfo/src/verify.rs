@@ -86,7 +86,7 @@ pub fn verify_torrent(
         .map_err(|_| TorrentError::Verification("piece length too large"))?;
     let mut piece = vec![0_u8; piece_capacity];
     let mut verified = 0_u64;
-    for expected_digest in pieces.chunks_exact(20) {
+    for expected_digest in pieces.as_chunks::<20>().0 {
         if cancelled() {
             return Err(TorrentError::Cancelled);
         }

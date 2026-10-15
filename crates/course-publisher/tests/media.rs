@@ -177,15 +177,17 @@ fn container_and_subtitle_formats_receive_advice() {
         )),
         ["subtitle_format"]
     );
-    assert!(
+    assert_eq!(
         inspect_media(&scratch.file("a.pdf", b"%PDF-1.7"), "application/pdf")
             .findings
-            .is_empty()
+            .len(),
+        0
     );
-    assert!(
+    assert_eq!(
         inspect_media(&scratch.file("a.vtt", b"WEBVTT\n"), "text/vtt")
             .findings
-            .is_empty()
+            .len(),
+        0
     );
     assert_eq!(
         inspect_media(&scratch.0.join("missing.mp4"), "video/mp4"),

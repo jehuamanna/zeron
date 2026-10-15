@@ -55,9 +55,9 @@ fn add_rename_and_remove_advance_one_revision_each() {
     assert_eq!(course.modules[0].title, "Basics");
     assert_eq!(course.modules[0].lessons[0].title, "Hello");
     assert_eq!(course.remove_lesson(4, "lesson_a"), Ok(5));
-    assert!(course.modules[0].lessons.is_empty());
+    assert_eq!(course.modules[0].lessons.len(), 0);
     assert_eq!(course.remove_module(5, "module_a"), Ok(6));
-    assert!(course.modules.is_empty());
+    assert_eq!(course.modules.len(), 0);
 }
 
 #[test]
