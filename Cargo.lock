@@ -6551,9 +6551,13 @@ name = "zeron-desktop"
 version = "0.1.0"
 dependencies = [
  "course-format",
+ "course-publisher",
+ "futures-util",
  "learning-application",
  "learning-storage",
  "media-gateway",
+ "publisher-application",
+ "reqwest",
  "serde",
  "serde_json",
  "tauri",

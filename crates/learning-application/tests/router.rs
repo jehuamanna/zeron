@@ -172,3 +172,35 @@ async fn a_pause_follows_the_torrent_when_sharing_changes() {
         "a resumed torrent stays running"
     );
 }
+
+#[tokio::test]
+async fn a_reserved_torrent_stays_private_even_when_stored_as_shared() {
+    let private = Arc::new(RecordingEngine::default());
+    let sharing = Arc::new(RecordingEngine::default());
+    let router = TransferRouter::new(Arc::clone(&private), Some(Arc::clone(&sharing)));
+    let hash = InfoHash::parse(&info_hash(&metainfo()).unwrap()).unwrap();
+    // A stored "shared" choice from before the sharing engine seeded it.
+    router.prefer_shared(hash.clone());
+    router.reserve(hash.clone());
+    assert!(router.is_reserved(&hash));
+    assert!(!router.is_shared(&hash));
+
+    router
+        .fetch(FetchRequest {
+            metainfo: metainfo(),
+            content_root: PathBuf::from("/content"),
+            files: vec![0],
+            initial_peers: vec![],
+        })
+        .await
+        .unwrap();
+    assert_eq!(private.active.lock().unwrap().len(), 1);
+    assert!(sharing.active.lock().unwrap().is_empty());
+    assert!(matches!(
+        router.set_shared(&hash, true).await,
+        Err(EngineError::UnsupportedCapability("sharing"))
+    ));
+    assert!(sharing.active.lock().unwrap().is_empty());
+    router.set_shared(&hash, false).await.unwrap();
+    assert_eq!(private.active.lock().unwrap().len(), 1);
+}

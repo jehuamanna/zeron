@@ -805,12 +805,8 @@ pub(crate) async fn set_rate_limits(
             .map_err(|error| command_error("settings_failed", error))
     })
     .await?;
-    if let Some(router) = state.torrents.router.clone() {
-        router
-            .set_rate_limits(limits)
-            .map_err(|error| command_error("settings_failed", error))?;
-    }
-    Ok(())
+    crate::apply_rate_limits(&state.torrents, limits)
+        .map_err(|error| command_error("settings_failed", error))
 }
 
 fn parse_rate_limits(
@@ -845,7 +841,8 @@ pub(crate) async fn set_network_profile(
     .await
 }
 
-/// Store the shared-course port and `UPnP` choice used the next time the engines start.
+/// Store the public engine's port (shared courses and releases) and the
+/// `UPnP` choice used the next time the engines start.
 #[tauri::command]
 pub(crate) async fn set_peer_reachability(
     peer_port: Option<u16>,
@@ -1818,6 +1815,7 @@ fn sharing_error(error: SharingError) -> CommandError {
     match error {
         SharingError::NotTorrentCourse => command_error("not_torrent_course", error),
         SharingError::Unavailable => command_error("sharing_unavailable", error),
+        SharingError::OwnRelease => command_error("own_release", error),
         // Engine details can name local directories; they never cross IPC.
         SharingError::Engine(_) => CommandError {
             code: "sharing_failed",
@@ -2164,6 +2162,7 @@ mod tests {
         ));
         assert_eq!(failed.code, "sharing_failed");
         assert!(!failed.message.contains("/home/"));
+        assert_eq!(sharing_error(SharingError::OwnRelease).code, "own_release");
     }
 
     #[test]

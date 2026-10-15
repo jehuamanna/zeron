@@ -14,8 +14,12 @@ tauri-build.workspace = true
 
 [dependencies]
 course-format = { path = "../../../crates/course-format" }
+course-publisher = { path = "../../../crates/course-publisher" }
+futures-util.workspace = true
 learning-application = { path = "../../../crates/learning-application" }
 media-gateway = { path = "../../../crates/media-gateway" }
+publisher-application = { path = "../../../crates/publisher-application" }
+reqwest.workspace = true
 serde.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
@@ -25,6 +29,7 @@ torrent-librqbit = { path = "../../../crates/torrent-librqbit" }
 [dev-dependencies]
 learning-storage = { path = "../../../crates/learning-storage" }
 serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "=2.0.2", features = ["v2_6"] }

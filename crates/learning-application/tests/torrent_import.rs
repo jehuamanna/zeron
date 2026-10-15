@@ -799,6 +799,56 @@ async fn only_courses_the_learner_shares_are_served_and_the_choice_survives_rest
     second.sharing.shutdown().await;
 }
 
+/// In the one Zeron app the public engine both seeds the user's releases and
+/// serves shared courses. Importing your own release keeps the learner's copy
+/// private, and sharing it is refused, so neither side can stop the other.
+#[tokio::test(flavor = "multi_thread")]
+async fn your_own_release_stays_private_while_the_public_engine_seeds_it() {
+    let scratch = Scratch::new("own-release");
+    let release = publish(&scratch.0);
+    let library = Arc::new(Mutex::new(
+        CourseLibrary::open(&scratch.0.join("library.sqlite3"), ImportLimits::default()).unwrap(),
+    ));
+    let app = learner(&scratch.0, &library, 1).await;
+    let info_hash = InfoHash::parse(&release.info_hash).unwrap();
+    app.router.reserve(info_hash.clone());
+    let public_address = seed(
+        &app.sharing,
+        release.torrent.clone(),
+        release.package.clone(),
+    )
+    .await;
+
+    let importer = imports(
+        Arc::clone(&app.router),
+        &library,
+        scratch.0.join("courses"),
+        TorrentImportTimeouts::default(),
+    );
+    let magnet = format!("magnet:?xt=urn:btih:{}", release.info_hash);
+    let (finished, _) = run(
+        &importer,
+        TorrentSource::Magnet(magnet),
+        vec![public_address],
+    )
+    .await;
+    let course_id = finished.course_id.expect("imported");
+    assert!(app.private.transfer(&info_hash).is_some());
+
+    assert!(matches!(
+        app.courses.set(&course_id, true).await,
+        Err(SharingError::OwnRelease)
+    ));
+    assert!(app.private.transfer(&info_hash).is_some());
+    assert!(
+        app.sharing.transfer(&info_hash).is_some(),
+        "the release keeps seeding"
+    );
+    assert!(!library.lock().unwrap().courses().unwrap()[0].sharing);
+    app.private.shutdown().await;
+    app.sharing.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn sharing_is_refused_without_a_sharing_engine() {
     let scratch = Scratch::new("no-sharing-engine");

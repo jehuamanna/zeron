@@ -19,6 +19,9 @@ struct Routes {
     requests: HashMap<InfoHash, FetchRequest>,
     /// Torrents the learner paused, paused again after a change of engine.
     paused: HashSet<InfoHash>,
+    /// Torrents the sharing engine carries for something else, such as the
+    /// user's own published releases; the learner's copy stays private.
+    reserved: HashSet<InfoHash>,
 }
 
 /// Routes each torrent to a private engine that never uploads or, for courses
@@ -53,7 +56,23 @@ impl<E: TorrentEngine> TransferRouter<E> {
     /// Whether a torrent is routed to the sharing engine.
     #[must_use]
     pub fn is_shared(&self, info_hash: &InfoHash) -> bool {
-        self.sharing.is_some() && self.routes().shared.contains(info_hash)
+        let routes = self.routes();
+        self.sharing.is_some()
+            && routes.shared.contains(info_hash)
+            && !routes.reserved.contains(info_hash)
+    }
+
+    /// Keep a torrent out of the sharing engine because that engine carries
+    /// it for something else; the learner's transfer of it stays private.
+    /// Call before transfers start; an active shared transfer is not moved.
+    pub fn reserve(&self, info_hash: InfoHash) {
+        self.routes().reserved.insert(info_hash);
+    }
+
+    /// Whether a torrent is kept out of the sharing engine.
+    #[must_use]
+    pub fn is_reserved(&self, info_hash: &InfoHash) -> bool {
+        self.routes().reserved.contains(info_hash)
     }
 
     /// Record stored choices before any transfer starts.
@@ -69,7 +88,7 @@ impl<E: TorrentEngine> TransferRouter<E> {
     /// [`EngineError::UnsupportedCapability`] when sharing is unavailable, or
     /// the engine failure that prevented the move. A failed move is undone.
     pub async fn set_shared(&self, info_hash: &InfoHash, shared: bool) -> Result<(), EngineError> {
-        if shared && self.sharing.is_none() {
+        if shared && (self.sharing.is_none() || self.is_reserved(info_hash)) {
             return Err(EngineError::UnsupportedCapability("sharing"));
         }
         let _changes = self.changes.lock().await;
@@ -241,6 +260,9 @@ pub enum SharingError {
     /// The sharing engine is not running.
     #[error("sharing is unavailable because its torrent engine could not start")]
     Unavailable,
+    /// The course is one of the user's releases, which Publish seeds.
+    #[error("this course is one of your releases; Publish already seeds it")]
+    OwnRelease,
     /// The library could not be read or written.
     #[error(transparent)]
     Library(#[from] LibraryError),
@@ -297,6 +319,9 @@ impl<E: TorrentEngine> CourseSharing<E> {
         let info_hash = InfoHash::parse(&info_hash)?;
         if sharing && !self.router.sharing_available() {
             return Err(SharingError::Unavailable);
+        }
+        if sharing && self.router.is_reserved(&info_hash) {
+            return Err(SharingError::OwnRelease);
         }
         self.router.set_shared(&info_hash, sharing).await?;
         let stored = self.library().set_course_sharing(course_id, sharing);

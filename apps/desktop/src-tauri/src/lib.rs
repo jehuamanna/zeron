@@ -3,6 +3,7 @@
 mod commands;
 mod media;
 mod navigation;
+mod publish;
 
 use std::{
     path::PathBuf,
@@ -15,7 +16,7 @@ use learning_application::{
     PeerReachability, TorrentImportTimeouts, TorrentImports, TransferRouter,
 };
 use media_gateway::{GatewayLimits, MediaGateway};
-use tauri::{Manager, RunEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 use torrent_librqbit::{EngineConfig, LibrqbitEngine};
 
 pub(crate) struct AppState {
@@ -29,8 +30,11 @@ pub(crate) struct AppState {
 pub(crate) type Router = TransferRouter<LibrqbitEngine>;
 
 /// Torrent import is optional at runtime: local courses keep working if the
-/// engines cannot start. Courses stay in a private engine that never uploads
-/// unless the learner shares them; shared courses move to a second engine.
+/// engines cannot start. Two engines run:
+///
+/// - a **private** engine downloads courses and never uploads;
+/// - a **public** engine, on the one fixed port, uploads. It serves the
+///   courses the learner shares and seeds published releases.
 pub(crate) struct Torrents {
     pub(crate) profile: NetworkProfile,
     /// The part of the stored reachability the sharing engine honors.
@@ -38,8 +42,10 @@ pub(crate) struct Torrents {
     pub(crate) engines: Vec<Arc<LibrqbitEngine>>,
     /// Peer port of the private engine, which downloads and never uploads.
     pub(crate) download_port: Option<u16>,
-    /// Peer port of the engine that serves shared courses.
+    /// Peer port of the public engine.
     pub(crate) sharing_port: Option<u16>,
+    /// The public engine, which also seeds releases.
+    pub(crate) public: Option<Arc<LibrqbitEngine>>,
     pub(crate) router: Option<Arc<Router>>,
     pub(crate) imports: Option<Arc<TorrentImports<Router>>>,
     pub(crate) sharing: Option<Arc<CourseSharing<LibrqbitEngine>>>,
@@ -77,6 +83,44 @@ fn spawn_background_work(torrents: &Torrents, library: &Arc<Mutex<CourseLibrary>
     tauri::async_runtime::spawn_blocking(move || commands::index_local_texts(&library));
 }
 
+/// Open the library and publisher data, start the gateway and both engines,
+/// and resume background work.
+fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let app_data = app.path().app_data_dir()?;
+    std::fs::create_dir_all(&app_data)?;
+    let library = CourseLibrary::open(&app_data.join("library.sqlite3"), ImportLimits::default())?;
+    let profile = library.network_profile()?;
+    let reachability = library.peer_reachability()?;
+    let library = Arc::new(Mutex::new(library));
+    let media_gateway = tauri::async_runtime::block_on(start_media_gateway())?;
+    trust_media_gateway(app, &media_gateway);
+    let torrents = start_torrents(profile, reachability, &app_data, &library);
+    let limits = library.lock().map_or_else(
+        |_| Ok(learning_application::RateLimits::default()),
+        |library| library.rate_limits(),
+    )?;
+    if let Err(error) = apply_rate_limits(&torrents, limits) {
+        eprintln!("speed limits were not applied: {error}");
+    }
+    // Releases are reserved on the public engine before the Library's
+    // transfers restore, so a learner copy of one stays private.
+    let publish =
+        publish::PublishState::open(&app_data, torrents.public.clone(), torrents.router.clone())?;
+    if let Some(sharing) = &torrents.sharing {
+        sharing.load()?;
+    }
+    spawn_background_work(&torrents, &library);
+    publish.spawn_background_work(profile);
+    app.manage(publish);
+    app.manage(AppState {
+        library,
+        media_gateway,
+        current_media: Mutex::new(None),
+        torrents,
+    });
+    Ok(())
+}
+
 /// Start the Zeron desktop application.
 ///
 /// # Panics
@@ -88,37 +132,11 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(navigation::guard())
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
-            let app_data = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&app_data)?;
-            let library =
-                CourseLibrary::open(&app_data.join("library.sqlite3"), ImportLimits::default())?;
-            let profile = library.network_profile()?;
-            let reachability = library.peer_reachability()?;
-            let library = Arc::new(Mutex::new(library));
-            let media_gateway = tauri::async_runtime::block_on(start_media_gateway())?;
-            trust_media_gateway(app, &media_gateway);
-            let torrents = start_torrents(profile, reachability, &app_data, &library);
-            if let Some(router) = &torrents.router {
-                let limits = library.lock().map_or_else(
-                    |_| Ok(learning_application::RateLimits::default()),
-                    |library| library.rate_limits(),
-                )?;
-                if let Err(error) = router.set_rate_limits(limits) {
-                    eprintln!("speed limits were not applied: {error}");
-                }
+        .setup(setup)
+        .on_window_event(|window, event| {
+            if let WindowEvent::DragDrop(drag) = event {
+                publish::drops::handle_drag_drop(window, drag);
             }
-            if let Some(sharing) = &torrents.sharing {
-                sharing.load()?;
-            }
-            spawn_background_work(&torrents, &library);
-            app.manage(AppState {
-                library,
-                media_gateway,
-                current_media: Mutex::new(None),
-                torrents,
-            });
-            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::readiness,
@@ -157,6 +175,32 @@ pub fn run() {
             commands::set_network_profile,
             commands::set_peer_reachability,
             commands::set_rate_limits,
+            publish::commands::list_drafts,
+            publish::commands::create_draft,
+            publish::commands::get_draft,
+            publish::commands::delete_draft,
+            publish::commands::update_draft_metadata,
+            publish::commands::edit_draft_structure,
+            publish::commands::choose_and_attach_resource,
+            publish::commands::inspect_media,
+            publish::commands::start_publish_preparation,
+            publish::commands::get_publish_job,
+            publish::commands::cancel_publish_job,
+            publish::commands::activate_release,
+            publish::commands::list_releases,
+            publish::commands::archive_release,
+            publish::commands::delete_release_files,
+            publish::drops::apply_drop,
+            publish::drops::discard_drop,
+            publish::commands::get_release_details,
+            publish::commands::export_release_torrent,
+            publish::commands::validate_draft,
+            publish::commands::get_distribution,
+            publish::commands::start_seeding,
+            publish::commands::stop_seeding,
+            publish::commands::set_trackers,
+            publish::commands::set_tracker_lists,
+            publish::commands::refresh_tracker_lists,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Zeron");
@@ -206,9 +250,10 @@ fn trust_media_gateway(app: &tauri::App, gateway: &MediaGateway) {
 #[cfg(not(target_os = "linux"))]
 fn trust_media_gateway(_: &tauri::App, _: &MediaGateway) {}
 
-/// Only the sharing engine serves peers, so only it takes the learner's fixed
-/// port; the private engine always uses a new port. Both ask the router to
-/// forward their port when forwarding applies.
+/// Only the public engine serves peers, so only it takes the fixed port; the
+/// private engine always uses a new port. Both ask the router to forward
+/// their port when forwarding applies. Each engine starts on its own, so
+/// releases can seed even if the private engine fails, and the reverse.
 fn start_torrents(
     profile: NetworkProfile,
     reachability: PeerReachability,
@@ -222,7 +267,7 @@ fn start_torrents(
             state_directory: app_data.join(directory),
             // Both engines may ask the router to forward their port, so a
             // seeder that cannot accept connections can still reach this
-            // learner. Only the sharing engine takes the fixed port.
+            // learner. Only the public engine takes the fixed port.
             reachability: if allow_uploads {
                 reachability
             } else {
@@ -238,13 +283,19 @@ fn start_torrents(
         .inspect_err(|error| eprintln!("torrent engine `{directory}` unavailable: {error}"))
         .ok()
     };
-    let Some(private) = start("engine", false) else {
+    let private = start("engine", false);
+    let public = start("engine-sharing", true);
+    let port = |engine: &Arc<LibrqbitEngine>| engine.listen_address().map(|address| address.port());
+    let engines: Vec<_> = private.iter().chain(public.iter()).cloned().collect();
+    let sharing_port = public.as_ref().and_then(port);
+    let Some(private) = private else {
         return Torrents {
             profile,
             reachability,
-            engines: Vec::new(),
+            engines,
             download_port: None,
-            sharing_port: None,
+            sharing_port,
+            public,
             router: None,
             imports: None,
             sharing: None,
@@ -252,16 +303,15 @@ fn start_torrents(
             disk: None,
         };
     };
-    let shared = start("engine-sharing", true);
-    let router = Arc::new(TransferRouter::new(Arc::clone(&private), shared.clone()));
+    let router = Arc::new(TransferRouter::new(Arc::clone(&private), public.clone()));
     let courses_root: PathBuf = app_data.join("courses");
-    let port = |engine: &Arc<LibrqbitEngine>| engine.listen_address().map(|address| address.port());
     Torrents {
         profile,
         reachability,
         download_port: port(&private),
-        sharing_port: shared.as_ref().and_then(port),
-        engines: std::iter::once(private).chain(shared).collect(),
+        sharing_port,
+        public,
+        engines,
         router: Some(Arc::clone(&router)),
         cache: Some(Arc::new(CourseCache::new(
             Arc::clone(&router),
@@ -281,5 +331,18 @@ fn start_torrents(
             TorrentImportTimeouts::default(),
         ))),
         sharing: Some(Arc::new(CourseSharing::new(router, Arc::clone(library)))),
+    }
+}
+
+/// Apply speed caps to every running engine: through the router when the
+/// private engine runs, else to the public engine alone.
+pub(crate) fn apply_rate_limits(
+    torrents: &Torrents,
+    limits: learning_application::RateLimits,
+) -> Result<(), learning_application::EngineError> {
+    match (&torrents.router, &torrents.public) {
+        (Some(router), _) => router.set_rate_limits(limits),
+        (None, Some(public)) => public.set_rate_limits(limits),
+        (None, None) => Ok(()),
     }
 }
