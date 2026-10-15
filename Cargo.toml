@@ -3,6 +3,7 @@ members = [
     "crates/course-format",
     "crates/learning-application",
     "crates/learning-storage",
+    "tools/course-cli",
 ]
 resolver = "3"
 

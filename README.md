@@ -27,4 +27,12 @@ Regenerate the manifest schema after changing its Rust types:
 cargo run -p course-format --bin export-course-schema
 ```
 
+Exercise the current local-library flow without a desktop shell:
+
+```bash
+cargo run -p course-cli -- ./zeron.sqlite3 import /path/to/course
+cargo run -p course-cli -- ./zeron.sqlite3 list
+cargo run -p course-cli -- ./zeron.sqlite3 search recovery
+```
+
 Read [AGENTS.md](AGENTS.md) and the architecture documents before changing module boundaries or dependencies.

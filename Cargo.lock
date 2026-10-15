@@ -40,6 +40,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
+name = "course-cli"
+version = "0.1.0"
+dependencies = [
+ "learning-application",
+]
+
+[[package]]
 name = "course-format"
 version = "0.1.0"
 dependencies = [
@@ -249,6 +256,7 @@ name = "learning-application"
 version = "0.1.0"
 dependencies = [
  "course-format",
+ "learning-storage",
  "serde_json",
  "sha2",
  "thiserror",
