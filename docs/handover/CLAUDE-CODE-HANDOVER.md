@@ -141,8 +141,8 @@ Still open in Phase 4. These also finish the "first milestone" in the roadmap:
 1. ~~Playback state machine: loading, buffering, playing, stalled, error.~~ Done (`phase-4-player-states.md`).
 2. ~~Persisted playback position, restored on reopen and after restart.~~ Done (`phase-4-playback-position.md`, learner schema v5).
 3. ~~Separate "buffered" and "verified" range labels in the player.~~ Done (`phase-4-player-states.md`).
-4. Controlled-swarm automated evidence for the milestone: lesson four plays before completion, a seek into absent data resumes after buffering, and a restart reuses verified bytes.
-5. Peer interruption and lookahead or priority behavior, which the spike left uncovered.
+4. ~~Controlled-swarm automated evidence for the milestone: lesson four plays before completion, a seek into absent data resumes after buffering, and a restart reuses verified bytes.~~ Done (`phase-4-controlled-swarm-milestone.md`).
+5. ~~Peer interruption and lookahead or priority behavior, which the spike left uncovered.~~ Peer loss covered by a two-seeder test; lookahead is librqbit's fixed window (tuning not implemented).
 6. Playback checks on macOS and Windows. These need those machines; record them as limitations if they are unavailable.
 
 ## Active slice: Admin course management (user request 2026-10-16)

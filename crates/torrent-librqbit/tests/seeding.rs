@@ -878,3 +878,205 @@ async fn streams_reconnect_peers_dropped_when_the_selection_finished() {
     }
     seeder.shutdown().await;
 }
+
+fn lesson_source(release: &Release, suffix: &str) -> Vec<u8> {
+    let path = std::fs::read_dir(release.package.join("resources"))
+        .unwrap()
+        .flat_map(|entry| std::fs::read_dir(entry.unwrap().path()).unwrap())
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.to_string_lossy().ends_with(suffix))
+        .unwrap();
+    std::fs::read(path).unwrap()
+}
+
+async fn read_at(
+    reader: &mut Box<dyn torrent_port::VerifiedFile>,
+    offset: u64,
+    length: usize,
+) -> Vec<u8> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    reader.seek(std::io::SeekFrom::Start(offset)).await.unwrap();
+    let mut bytes = vec![0_u8; length];
+    tokio::time::timeout(Duration::from_secs(60), reader.read_exact(&mut bytes))
+        .await
+        .expect("verified bytes arrive")
+        .unwrap();
+    bytes
+}
+
+/// The roadmap's first milestone in a controlled loopback swarm: lesson four
+/// plays before it is complete, a seek into data not yet downloaded resumes,
+/// and a restarted learner reuses the bytes it already verified.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_streaming_milestone_holds_in_a_controlled_swarm() {
+    use torrent_port::{FetchRequest, ResolveRequest, TorrentSource};
+
+    const LESSON: usize = 24_000_000;
+    const SLICE: usize = 1 << 20;
+    let scratch = Scratch::new("milestone");
+    let release = publish_lessons(&scratch.0, &[LESSON; 5]);
+    let source = lesson_source(&release, "lesson-3.bin");
+    let seeder = engine(&scratch.0).await;
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    wait_for_state(&seeder, &info_hash, TransferState::Seeding).await;
+    let seeder_address = seeder.listen_address().unwrap();
+
+    let learner = loopback(&scratch.0, "learner", false).await;
+    let resolved = learner
+        .resolve(ResolveRequest {
+            source: TorrentSource::Metainfo(release.torrent.clone()),
+            initial_peers: vec![],
+        })
+        .await
+        .unwrap();
+    let lesson = resolved
+        .files
+        .iter()
+        .find(|file| file.path.ends_with("lesson-3.bin"))
+        .unwrap()
+        .index;
+    let content_root = scratch.0.join("learner-content");
+    fetch_manifest(&learner, &release, content_root.clone(), seeder_address).await;
+    wait_for_file(&learner, &info_hash, 0, resolved.files[0].length).await;
+
+    // Lesson four plays before it is complete.
+    let mut reader = learner.open_file(&info_hash, lesson).await.unwrap();
+    assert!(
+        read_at(&mut reader, 0, SLICE).await == source[..SLICE],
+        "streamed bytes differ"
+    );
+    let started = learner.transfer(&info_hash).unwrap().file_verified_bytes[lesson];
+    assert!(
+        started < LESSON as u64 / 2,
+        "playing needs only the start: {started}"
+    );
+
+    // A seek into data not yet downloaded resumes once it is fetched.
+    let offset = LESSON * 9 / 10;
+    let before_seek = learner.transfer(&info_hash).unwrap().file_verified_bytes[lesson];
+    assert!(
+        before_seek < LESSON as u64,
+        "the seek target is not downloaded yet"
+    );
+    assert!(
+        read_at(&mut reader, offset as u64, SLICE).await == source[offset..offset + SLICE],
+        "streamed bytes differ"
+    );
+    drop(reader);
+    let verified = learner.transfer(&info_hash).unwrap().file_verified_bytes[lesson];
+    assert!(
+        verified > 0 && verified < LESSON as u64,
+        "partly verified: {verified}"
+    );
+    learner.shutdown().await;
+    seeder.shutdown().await;
+
+    // With no peer left, a restarted learner still has what it verified.
+    let restarted = loopback(&scratch.0, "learner", false).await;
+    restarted
+        .fetch(FetchRequest {
+            metainfo: release.torrent.clone(),
+            content_root,
+            files: vec![0],
+            initial_peers: vec![],
+        })
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let reused = loop {
+        let stats = restarted.transfer(&info_hash).unwrap();
+        if stats.state != TransferState::Checking {
+            break stats.file_verified_bytes[lesson];
+        }
+        assert!(Instant::now() < deadline, "the restart check finishes");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert!(
+        reused >= verified,
+        "verified bytes reused: {reused} of {verified}"
+    );
+    let mut reader = restarted.open_file(&info_hash, lesson).await.unwrap();
+    assert!(
+        read_at(&mut reader, 0, SLICE).await == source[..SLICE],
+        "streamed bytes differ"
+    );
+    assert!(
+        read_at(&mut reader, offset as u64, SLICE).await == source[offset..offset + SLICE],
+        "streamed bytes differ"
+    );
+    drop(reader);
+    restarted.shutdown().await;
+}
+
+/// A stream keeps going when one of its two seeders disappears.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_survives_losing_one_of_two_seeders() {
+    use tokio::io::AsyncReadExt;
+    use torrent_port::FetchRequest;
+
+    const LESSON: usize = 40_000_000;
+    let scratch = Scratch::new("peer-loss");
+    let release = publish_lessons(&scratch.0, &[LESSON]);
+    let source = lesson_source(&release, "lesson-0.bin");
+    let first = loopback(&scratch.0, "seeder-a", true).await;
+    let second = loopback(&scratch.0, "seeder-b", true).await;
+    let mut info_hash = None;
+    for seeder in [&first, &second] {
+        let hash = seeder
+            .seed(SeedRequest {
+                torrent: release.torrent.clone(),
+                content_root: release.package.clone(),
+            })
+            .await
+            .unwrap();
+        wait_for_state(seeder, &hash, TransferState::Seeding).await;
+        info_hash = Some(hash);
+    }
+    let info_hash = info_hash.unwrap();
+    let learner = loopback(&scratch.0, "learner", false).await;
+    learner
+        .fetch(FetchRequest {
+            metainfo: release.torrent.clone(),
+            content_root: scratch.0.join("learner-content"),
+            files: vec![0],
+            initial_peers: vec![
+                first.listen_address().unwrap(),
+                second.listen_address().unwrap(),
+            ],
+        })
+        .await
+        .unwrap();
+    let mut reader = learner.open_file(&info_hash, 1).await.unwrap();
+    let mut streamed = vec![0_u8; 4 << 20];
+    tokio::time::timeout(Duration::from_secs(60), reader.read_exact(&mut streamed))
+        .await
+        .expect("the stream starts")
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while learner.transfer(&info_hash).unwrap().connected_peers < 2 {
+        assert!(
+            Instant::now() < deadline,
+            "the learner reaches both seeders"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    first.shutdown().await;
+
+    let mut rest = Vec::new();
+    tokio::time::timeout(Duration::from_secs(120), reader.read_to_end(&mut rest))
+        .await
+        .expect("the remaining seeder serves the rest")
+        .unwrap();
+    streamed.extend(rest);
+    assert_eq!(streamed.len(), LESSON);
+    assert!(streamed == source, "streamed bytes differ");
+    drop(reader);
+    learner.shutdown().await;
+    second.shutdown().await;
+}
