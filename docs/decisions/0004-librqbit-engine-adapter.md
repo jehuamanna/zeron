@@ -26,13 +26,15 @@ AGENTS.md requires engine types to stay behind a capability port and every engin
    | `LocalNetwork` | all interfaces | off | the torrent's own | on |
    | `Internet` | all interfaces | on, no DHT persistence | the torrent's own | on |
 
-   `Loopback` additionally binds every socket to `lo` on Linux (`SO_BINDTODEVICE`), which also confines the always-created UDP tracker socket. All automated tests use `Loopback` and never touch public trackers or the DHT.
+   `Loopback` additionally binds every socket to `lo` on Linux (`SO_BINDTODEVICE`), which also confines the always-created UDP tracker socket. Automated tests use `Loopback` and never touch public trackers or the DHT. Tests that exercise local service discovery use `LocalNetwork`, multicast on the machine's own networks, and are opt-in (`--ignored`).
 4. **Release seeding is read-only.** Seeding goes through `ReadOnlyContent`, a storage factory that:
    - opens each torrent file read-only after checking that it is a regular file with the declared length;
    - serves positional reads;
    - refuses every write, removal, and length change.
 
    Missing or wrong-length files are reported as `ContentMismatch` before anything is served. After librqbit's initial piece check, content that is not completely verified is paused and reported as `Failed`; it is never served or repaired.
+
+5. **Magnet resolution announces, but stores nothing.** librqbit's list-only add never announces to local service discovery or the DHT (`announce = !list_only` in `session.rs`), so a learner would only hear a seeder's periodic announcement, every five minutes. A magnet is therefore resolved with a live add that selects no file and uses `MetadataOnly`, a storage that creates no file and refuses every read and write. Once metadata is verified, the adapter waits up to 2 s, longer than discovery's one-second reply rate limit, for metadata peers to reconnect. It records them as `ResolvedTorrent::peers` and removes the torrent; that removal runs to completion even if the caller stops waiting. A torrent already active in the engine is answered from its own metadata without the network. `.torrent` bytes are still resolved offline with list-only.
 
 ## Consequences
 

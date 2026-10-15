@@ -25,9 +25,12 @@ use torrent_port::{
     SeedRequest, TorrentEngine, TorrentFile, TorrentSource, TransferState, TransferStats,
 };
 
-use crate::storage::{ContentMismatch, ReadOnlyContent};
+use crate::storage::{ContentMismatch, MetadataOnly, ReadOnlyContent};
 
 const CHECK_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// How long a magnet resolve waits for its metadata peers to reconnect.
+/// Must exceed local service discovery's one-second reply rate limit.
+const PEER_HINT_WAIT: Duration = Duration::from_secs(2);
 const CONTENT_CHANGED: &str =
     "the content on disk no longer matches the torrent; nothing is being served";
 
@@ -51,6 +54,8 @@ struct Active {
 pub struct LibrqbitEngine {
     session: Arc<Session>,
     active: Arc<Mutex<HashMap<InfoHash, Active>>>,
+    /// Never written: magnet resolution uses storage that refuses all I/O.
+    resolve_folder: PathBuf,
 }
 
 impl LibrqbitEngine {
@@ -62,12 +67,14 @@ impl LibrqbitEngine {
         std::fs::create_dir_all(&config.state_directory)
             .map_err(|error| EngineError::Engine(format!("cannot create engine state: {error}")))?;
         let options = session_options(&config);
+        let resolve_folder = config.state_directory.join("resolving");
         let session = Session::new_with_opts(config.state_directory, options)
             .await
             .map_err(|error| engine_error(&error))?;
         Ok(Self {
             session,
             active: Arc::new(Mutex::new(HashMap::new())),
+            resolve_folder,
         })
     }
 
@@ -80,6 +87,141 @@ impl LibrqbitEngine {
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<InfoHash, Active>> {
         self.active.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    /// Read a `.torrent` without touching the network.
+    async fn resolve_offline(&self, bytes: Vec<u8>) -> Result<ResolvedTorrent, EngineError> {
+        let response = self
+            .session
+            .add_torrent(
+                AddTorrent::from_bytes(bytes),
+                Some(AddTorrentOptions {
+                    list_only: true,
+                    ..AddTorrentOptions::default()
+                }),
+            )
+            .await
+            .map_err(|error| engine_error(&error))?;
+        match response {
+            AddTorrentResponse::ListOnly(list) => resolved(
+                &list.info_hash.as_string(),
+                &list.info,
+                list.torrent_bytes.to_vec(),
+            ),
+            AddTorrentResponse::Added(_, handle)
+            | AddTorrentResponse::AlreadyManaged(_, handle) => resolved_from_handle(&handle),
+        }
+    }
+
+    /// Fetch metadata from peers. librqbit's list-only mode never announces,
+    /// so local service discovery would only hear the seeder's periodic
+    /// announcement. The torrent is therefore added live with no file selected
+    /// and storage that refuses all I/O, then removed once metadata is known.
+    async fn resolve_from_peers(
+        &self,
+        uri: String,
+        initial_peers: Vec<SocketAddr>,
+    ) -> Result<ResolvedTorrent, EngineError> {
+        let response = self
+            .session
+            .add_torrent(
+                AddTorrent::from_url(uri),
+                Some(AddTorrentOptions {
+                    only_files: Some(Vec::new()),
+                    storage_factory: Some(MetadataOnly.boxed()),
+                    output_folder: Some(self.resolve_folder.to_string_lossy().into_owned()),
+                    initial_peers: peers(initial_peers),
+                    ..AddTorrentOptions::default()
+                }),
+            )
+            .await
+            .map_err(|error| engine_error(&error))?;
+        let handle = match response {
+            AddTorrentResponse::Added(_, handle) => handle,
+            AddTorrentResponse::AlreadyManaged(_, handle) => return resolved_from_handle(&handle),
+            AddTorrentResponse::ListOnly(_) => {
+                return Err(EngineError::Engine(
+                    "unexpected list-only response".to_owned(),
+                ));
+            }
+        };
+        // Removal runs to completion even if the caller stops waiting.
+        let session = Arc::clone(&self.session);
+        tokio::spawn(async move {
+            // Metadata peers that reconnect once the torrent is live are
+            // returned so a following fetch can dial them directly. If none
+            // reconnect, the full wait also moves the fetch's discovery
+            // announcement past the seeder's one-second reply rate limit.
+            let deadline = tokio::time::Instant::now() + PEER_HINT_WAIT;
+            while connected_peers(&handle).is_empty() && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(CHECK_POLL_INTERVAL).await;
+            }
+            let result = resolved_from_handle(&handle);
+            session
+                .delete(TorrentIdOrHash::Id(handle.id()), false)
+                .await
+                .map_err(|error| engine_error(&error))?;
+            result
+        })
+        .await
+        .map_err(|error| EngineError::Engine(error.to_string()))?
+    }
+}
+
+fn resolved_from_handle(handle: &ManagedTorrent) -> Result<ResolvedTorrent, EngineError> {
+    let mut result = handle
+        .with_metadata(|metadata| {
+            resolved(
+                &handle.info_hash().as_string(),
+                &metadata.info,
+                metadata.torrent_bytes.to_vec(),
+            )
+        })
+        .map_err(|error| engine_error(&error))??;
+    result.peers = connected_peers(handle);
+    Ok(result)
+}
+
+#[expect(
+    clippy::default_trait_access,
+    reason = "librqbit exports PeerStatsFilter only with its HTTP API feature"
+)]
+fn connected_peers(handle: &ManagedTorrent) -> Vec<SocketAddr> {
+    handle.live().map_or_else(Vec::new, |live| {
+        let mut peers: Vec<SocketAddr> = live
+            .per_peer_stats_snapshot(Default::default())
+            .peers
+            .keys()
+            .filter_map(|address| address.parse().ok())
+            .collect();
+        peers.sort_unstable();
+        peers
+    })
+}
+
+fn resolved(
+    info_hash: &str,
+    info: &librqbit::ValidatedTorrentMetaV1Info<librqbit::ByteBufOwned>,
+    metainfo: Vec<u8>,
+) -> Result<ResolvedTorrent, EngineError> {
+    let files = info
+        .iter_file_details()
+        .enumerate()
+        .map(|(index, details)| TorrentFile {
+            index,
+            path: details.filename.to_vec().join("/"),
+            length: details.len,
+        })
+        .collect();
+    Ok(ResolvedTorrent {
+        info_hash: InfoHash::parse(info_hash)?,
+        name: info
+            .name()
+            .map(std::borrow::Cow::into_owned)
+            .unwrap_or_default(),
+        files,
+        metainfo,
+        peers: Vec::new(),
+    })
 }
 
 impl TorrentEngine for LibrqbitEngine {
@@ -139,14 +281,14 @@ impl TorrentEngine for LibrqbitEngine {
     }
 
     async fn resolve(&self, request: ResolveRequest) -> Result<ResolvedTorrent, EngineError> {
-        let add = match request.source {
+        match request.source {
             TorrentSource::Metainfo(bytes) => {
                 librqbit::torrent_from_bytes(&bytes)
                     .map_err(|error| EngineError::InvalidTorrent(error.to_string()))?;
-                AddTorrent::from_bytes(bytes)
+                self.resolve_offline(bytes).await
             }
             TorrentSource::Magnet(uri) => {
-                librqbit::Magnet::parse(&uri)
+                let info_hash = librqbit::Magnet::parse(&uri)
                     .ok()
                     .and_then(|magnet| magnet.as_id20())
                     .ok_or_else(|| {
@@ -154,46 +296,12 @@ impl TorrentEngine for LibrqbitEngine {
                             "the magnet link has no v1 info hash".to_owned(),
                         )
                     })?;
-                AddTorrent::from_url(uri)
+                if let Some(handle) = self.session.get(TorrentIdOrHash::Hash(info_hash)) {
+                    return resolved_from_handle(&handle);
+                }
+                self.resolve_from_peers(uri, request.initial_peers).await
             }
-        };
-        let response = self
-            .session
-            .add_torrent(
-                add,
-                Some(AddTorrentOptions {
-                    list_only: true,
-                    initial_peers: peers(request.initial_peers),
-                    ..AddTorrentOptions::default()
-                }),
-            )
-            .await
-            .map_err(|error| engine_error(&error))?;
-        let AddTorrentResponse::ListOnly(list) = response else {
-            return Err(EngineError::Engine(
-                "the torrent is already active in this engine".to_owned(),
-            ));
-        };
-        let files = list
-            .info
-            .iter_file_details()
-            .enumerate()
-            .map(|(index, details)| TorrentFile {
-                index,
-                path: details.filename.to_vec().join("/"),
-                length: details.len,
-            })
-            .collect();
-        Ok(ResolvedTorrent {
-            info_hash: InfoHash::parse(&list.info_hash.as_string())?,
-            name: list
-                .info
-                .name()
-                .map(std::borrow::Cow::into_owned)
-                .unwrap_or_default(),
-            files,
-            metainfo: list.torrent_bytes.to_vec(),
-        })
+        }
     }
 
     async fn fetch(&self, request: FetchRequest) -> Result<InfoHash, EngineError> {

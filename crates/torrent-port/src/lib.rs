@@ -122,6 +122,9 @@ pub struct ResolvedTorrent {
     pub files: Vec<TorrentFile>,
     /// Complete `.torrent` bytes for later restore.
     pub metainfo: Vec<u8>,
+    /// Peers connected when metadata arrived; a hint for a following fetch.
+    /// Empty for metadata resolved offline.
+    pub peers: Vec<SocketAddr>,
 }
 
 /// Download only selected files into a caller-owned directory. Repeating the

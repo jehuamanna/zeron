@@ -19,7 +19,7 @@ Status: complete for seeding immutable content through an engine-neutral port (s
 
 ### Learner capabilities (resolve and fetch)
 
-- `TorrentEngine::resolve(ResolveRequest { source, initial_peers })` returns verified metadata without downloading content. Sources are `.torrent` bytes (resolved offline) or a `magnet:` URI with a v1 info hash (fetched from peers). The result is `ResolvedTorrent`: info hash, name, files with engine index, untrusted path and length, and the complete metainfo for later restore. Malformed torrents and magnets without an info hash are `InvalidTorrent`.
+- `TorrentEngine::resolve(ResolveRequest { source, initial_peers })` returns verified metadata without downloading content. Sources are `.torrent` bytes (resolved offline) or a `magnet:` URI with a v1 info hash (fetched from peers). The result is `ResolvedTorrent`: info hash, name, files with engine index, untrusted path and length, and the complete metainfo for later restore. Malformed torrents and magnets without an info hash are `InvalidTorrent`. (Magnet resolution was later reworked to announce itself and to report its peers; see `phase-3-magnet-local-discovery.md`.)
 - `TorrentEngine::fetch(FetchRequest { metainfo, content_root, files, initial_peers })` downloads only the selected files into a caller-owned writable directory and reuses verified data on restart. Repeating the request for an active torrent replaces its selection.
 - `TransferStats` adds `downloaded_bytes` and per-file `file_verified_bytes`; `TransferState` adds `Downloading`.
 

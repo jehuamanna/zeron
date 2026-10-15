@@ -455,3 +455,135 @@ async fn wait_for_file(
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn magnet_resolution_leaves_no_transfer_or_content_behind() {
+    use torrent_port::{ResolveRequest, TorrentSource};
+
+    let scratch = Scratch::new("resolve-clean");
+    let release = publish(&scratch.0);
+    let seeder = engine(&scratch.0).await;
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    wait_for_state(&seeder, &info_hash, TransferState::Seeding).await;
+    let magnet = || TorrentSource::Magnet(format!("magnet:?xt=urn:btih:{}", release.info_hash));
+
+    let learner = LibrqbitEngine::start(EngineConfig {
+        profile: NetworkProfile::Loopback,
+        state_directory: scratch.0.join("learner-engine"),
+        listen_port: None,
+    })
+    .await
+    .unwrap();
+    let resolved = learner
+        .resolve(ResolveRequest {
+            source: magnet(),
+            initial_peers: vec![seeder.listen_address().unwrap()],
+        })
+        .await
+        .unwrap();
+    assert_eq!(resolved.info_hash, info_hash);
+    let seeder_address = seeder.listen_address().unwrap();
+    assert!(
+        resolved.peers.iter().all(|peer| *peer == seeder_address),
+        "peer hints name only the metadata peer: {:?}",
+        resolved.peers
+    );
+    assert!(learner.transfers().is_empty(), "no transfer is left behind");
+    let written: Vec<_> = resolved
+        .files
+        .iter()
+        .flat_map(|file| files_named(&scratch.0.join("learner-engine"), &file.path))
+        .collect();
+    assert!(written.is_empty(), "resolving wrote {written:?}");
+
+    // An engine already holding the torrent answers without any peer.
+    let own = seeder
+        .resolve(ResolveRequest {
+            source: magnet(),
+            initial_peers: vec![],
+        })
+        .await
+        .unwrap();
+    assert_eq!(own.files, resolved.files);
+    assert_eq!(
+        seeder.transfer(&info_hash).unwrap().state,
+        TransferState::Seeding
+    );
+    learner.shutdown().await;
+    seeder.shutdown().await;
+}
+
+fn files_named(root: &Path, name: &str) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .flat_map(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                files_named(&path, name)
+            } else if entry.file_name() == name {
+                vec![path]
+            } else {
+                Vec::new()
+            }
+        })
+        .collect()
+}
+
+/// Uses the Local-network profile, so it multicasts local service discovery on
+/// every interface of this machine. Opt in with `cargo test -- --ignored`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "announces on the local network; run manually with --ignored"]
+async fn magnets_resolve_through_local_service_discovery_alone() {
+    use torrent_port::{ResolveRequest, TorrentSource};
+
+    let scratch = Scratch::new("lsd");
+    let release = publish(&scratch.0);
+    let local = |name: &str| EngineConfig {
+        profile: NetworkProfile::LocalNetwork,
+        state_directory: scratch.0.join(name),
+        listen_port: None,
+    };
+    let seeder = LibrqbitEngine::start(local("seeder-engine")).await.unwrap();
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    wait_for_state(&seeder, &info_hash, TransferState::Seeding).await;
+    // Let the seeder's own start-up announcement pass, as when a learner joins later.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let learner = LibrqbitEngine::start(local("learner-engine"))
+        .await
+        .unwrap();
+    let started = Instant::now();
+    let resolved = tokio::time::timeout(
+        Duration::from_secs(60),
+        learner.resolve(ResolveRequest {
+            source: TorrentSource::Magnet(format!("magnet:?xt=urn:btih:{}", release.info_hash)),
+            initial_peers: vec![],
+        }),
+    )
+    .await
+    .expect("the learner found no seeder through local service discovery")
+    .unwrap();
+    assert_eq!(resolved.info_hash, info_hash);
+    eprintln!(
+        "resolved through local discovery in {:?} with peer hints {:?}",
+        started.elapsed(),
+        resolved.peers
+    );
+    learner.shutdown().await;
+    seeder.shutdown().await;
+}

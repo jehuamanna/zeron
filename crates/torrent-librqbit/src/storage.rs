@@ -117,6 +117,54 @@ impl TorrentStorage for ReadOnlyStorage {
     }
 }
 
+/// Storage for a torrent that only exchanges metadata: nothing is selected, so
+/// no piece is ever written, and no file named by untrusted metadata is created.
+#[derive(Clone, Copy)]
+pub(crate) struct MetadataOnly;
+
+impl StorageFactory for MetadataOnly {
+    type Storage = MetadataOnly;
+
+    fn create(&self, _: &ManagedTorrentShared, _: &TorrentMetadata) -> anyhow::Result<Self> {
+        Ok(Self)
+    }
+
+    fn clone_box(&self) -> BoxStorageFactory {
+        self.boxed()
+    }
+}
+
+impl TorrentStorage for MetadataOnly {
+    fn init(&mut self, _: &ManagedTorrentShared, _: &TorrentMetadata) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    // The initial check treats unreadable pieces as missing.
+    fn pread_exact(&self, _: usize, _: u64, _: &mut [u8]) -> anyhow::Result<()> {
+        bail!("metadata-only torrents have no content")
+    }
+
+    fn pwrite_all(&self, _: usize, _: u64, _: &[u8]) -> anyhow::Result<()> {
+        bail!("metadata-only torrents have no content")
+    }
+
+    fn remove_file(&self, _: usize, _: &Path) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn remove_directory_if_empty(&self, _: &Path) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn ensure_file_length(&self, _: usize, _: u64) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
+        Ok(Box::new(Self))
+    }
+}
+
 #[cfg(unix)]
 fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
     use std::os::unix::fs::FileExt;

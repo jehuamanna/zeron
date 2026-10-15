@@ -342,7 +342,7 @@ impl<E: TorrentEngine> TorrentImports<E> {
                 metainfo: resolved.metainfo.clone(),
                 content_root: content_root.clone(),
                 files: vec![manifest_index],
-                initial_peers,
+                initial_peers: fetch_peers(initial_peers, &resolved.peers),
             })
             .await
             .map_err(engine_failure)?;
@@ -649,9 +649,19 @@ fn opaque_id() -> String {
     id
 }
 
+/// Caller-supplied peers first, then the peers that served the metadata.
+fn fetch_peers(mut initial: Vec<SocketAddr>, resolved: &[SocketAddr]) -> Vec<SocketAddr> {
+    for peer in resolved {
+        if !initial.contains(peer) {
+            initial.push(*peer);
+        }
+    }
+    initial
+}
+
 #[cfg(test)]
 mod tests {
-    use super::safe_path;
+    use super::{fetch_peers, safe_path};
 
     #[test]
     fn only_portable_relative_paths_are_safe() {
@@ -660,5 +670,16 @@ mod tests {
         for unsafe_path in ["", "../x", "a//b", "/abs", "a\\b", "c:/x", "./x", "a/.."] {
             assert!(!safe_path(unsafe_path), "{unsafe_path}");
         }
+    }
+
+    #[test]
+    fn metadata_peers_are_added_after_caller_peers_without_duplicates() {
+        let caller = "127.0.0.1:7000".parse().unwrap();
+        let seeder = "192.168.1.20:6881".parse().unwrap();
+        assert_eq!(
+            fetch_peers(vec![caller], &[seeder, caller]),
+            [caller, seeder]
+        );
+        assert_eq!(fetch_peers(Vec::new(), &[]), []);
     }
 }

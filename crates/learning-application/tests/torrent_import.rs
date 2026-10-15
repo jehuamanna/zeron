@@ -278,6 +278,49 @@ async fn a_magnet_import_fetches_only_the_manifest_and_restores_after_restart() 
     seeder.shutdown().await;
 }
 
+/// Uses the Local-network profile, so it multicasts local service discovery on
+/// every interface of this machine. Opt in with `cargo test -- --ignored`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "announces on the local network; run manually with --ignored"]
+async fn a_magnet_imports_through_local_service_discovery_alone() {
+    let scratch = Scratch::new("lsd");
+    let release = publish(&scratch.0);
+    let local = |name: &str| EngineConfig {
+        profile: NetworkProfile::LocalNetwork,
+        state_directory: scratch.0.join(name),
+        listen_port: None,
+    };
+    let seeder = Arc::new(LibrqbitEngine::start(local("seeder")).await.unwrap());
+    seed(&seeder, release.torrent.clone(), release.package.clone()).await;
+    // Let the seeder's own start-up announcement pass, as when a learner joins later.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let library = Arc::new(Mutex::new(
+        CourseLibrary::open_in_memory(ImportLimits::default()).unwrap(),
+    ));
+    let learner = Arc::new(LibrqbitEngine::start(local("learner")).await.unwrap());
+    let importer = imports(
+        Arc::clone(&learner),
+        &library,
+        scratch.0.join("courses"),
+        TorrentImportTimeouts {
+            metadata: Duration::from_secs(30),
+            stall: Duration::from_secs(30),
+            ..TorrentImportTimeouts::default()
+        },
+    );
+    let magnet = format!("magnet:?xt=urn:btih:{}", release.info_hash);
+    let started = Instant::now();
+    let (finished, _) = run(&importer, TorrentSource::Magnet(magnet), vec![]).await;
+    assert_eq!(finished.stage, TorrentImportStage::Imported, "{finished:?}");
+    eprintln!(
+        "imported through local discovery in {:?}",
+        started.elapsed()
+    );
+    learner.shutdown().await;
+    seeder.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_torrent_whose_inventory_differs_from_course_json_is_rejected() {
     let scratch = Scratch::new("mismatch");
@@ -362,6 +405,7 @@ impl TorrentEngine for ScriptedEngine {
             name: "scripted".to_owned(),
             files,
             metainfo: b"scripted".to_vec(),
+            peers: Vec::new(),
         })
     }
 
