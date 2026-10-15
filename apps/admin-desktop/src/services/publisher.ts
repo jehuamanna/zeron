@@ -31,6 +31,16 @@ export interface ValidationIssue {
   message: string;
 }
 
+export type StructureEdit =
+  | { type: "addModule"; title: string }
+  | { type: "renameModule"; moduleId: string; title: string }
+  | { type: "removeModule"; moduleId: string }
+  | { type: "moveModule"; moduleId: string; position: number }
+  | { type: "addLesson"; moduleId: string; title: string }
+  | { type: "renameLesson"; lessonId: string; title: string }
+  | { type: "removeLesson"; lessonId: string }
+  | { type: "moveLesson"; moduleId: string; lessonId: string; position: number };
+
 export interface CommandError {
   code: string;
   message: string;
@@ -52,5 +62,7 @@ export const publisherApi = {
   getDraft: (draftId: string) => invoke<DraftDetail | null>("get_draft", { draftId }),
   updateDraftMetadata: (draftId: string, expectedRevision: number, metadata: DraftMetadata) =>
     invoke<DraftDetail>("update_draft_metadata", { draftId, expectedRevision, metadata }),
+  editDraftStructure: (draftId: string, expectedRevision: number, edit: StructureEdit) =>
+    invoke<DraftDetail>("edit_draft_structure", { draftId, expectedRevision, edit }),
   validateDraft: (draftId: string) => invoke<ValidationIssue[]>("validate_draft", { draftId }),
 };

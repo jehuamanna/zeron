@@ -1,26 +1,27 @@
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { DraftDetail } from "../../services/publisher";
+import type { DraftWriter } from "./draftWriter";
 import { useMetadataAutosave, type MetadataFields, type SaveState } from "./useMetadataAutosave";
 
 interface MetadataFormProps {
   draft: DraftDetail;
-  onSaved: (saved: DraftDetail) => void;
-  onReload: () => void;
+  writer: DraftWriter;
+  disabled: boolean;
   autosaveDelayMs?: number;
 }
 
 const inputClass =
   "mt-1.5 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-100 outline-none focus:border-amber-300/60 aria-[invalid=true]:border-red-400/70";
 
-export function MetadataForm({ draft, onSaved, onReload, autosaveDelayMs = 700 }: MetadataFormProps) {
-  const { fields, state, update, retry } = useMetadataAutosave(draft, onSaved, autosaveDelayMs);
+export function MetadataForm({ draft, writer, disabled, autosaveDelayMs = 700 }: MetadataFormProps) {
+  const { fields, state, update, retry } = useMetadataAutosave(draft, writer, autosaveDelayMs);
   const invalidField = state.kind === "error" ? state.field : undefined;
   const control = (name: keyof MetadataFields, field: string) => ({
     id: `metadata-${name}`,
     value: fields[name],
-    disabled: state.kind === "conflict",
+    disabled,
     "aria-invalid": invalidField === field,
     className: inputClass,
     onChange: (event: { target: { value: string } }) => update(name, event.target.value),
@@ -33,7 +34,7 @@ export function MetadataForm({ draft, onSaved, onReload, autosaveDelayMs = 700 }
           <h2 className="text-lg font-semibold">Course details</h2>
           <p className="mt-1 text-sm text-slate-400">Changes save automatically.</p>
         </div>
-        <SaveStatus state={state} onRetry={retry} onReload={onReload} />
+        <SaveStatus state={state} onRetry={retry} />
       </div>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         <Field label="Title" htmlFor="metadata-title" wide>
@@ -79,13 +80,13 @@ function Field({ label, htmlFor, wide, children }: { label: string; htmlFor: str
   );
 }
 
-function SaveStatus({ state, onRetry, onReload }: { state: SaveState; onRetry: () => void; onReload: () => void }) {
+function SaveStatus({ state, onRetry }: { state: SaveState; onRetry: () => void }) {
   const base = "flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-xs";
   switch (state.kind) {
     case "saved":
       return (
         <span role="status" className={`${base} bg-emerald-300/10 text-emerald-300`}>
-          <CheckCircle2 size={14} /> Saved · r{state.revision}
+          <CheckCircle2 size={14} /> Saved
         </span>
       );
     case "dirty":
@@ -97,17 +98,7 @@ function SaveStatus({ state, onRetry, onReload }: { state: SaveState; onRetry: (
         </span>
       );
     case "conflict":
-      return (
-        <div role="alert" className="max-w-xs rounded-2xl border border-amber-300/30 bg-amber-300/10 p-3 text-xs text-amber-100">
-          <p className="flex items-center gap-2 font-semibold"><AlertTriangle size={14} /> Changed elsewhere</p>
-          <p className="mt-1">
-            A newer revision{state.currentRevision === undefined ? "" : ` (r${state.currentRevision})`} was saved. Your latest edits were not saved.
-          </p>
-          <button type="button" onClick={onReload} className="mt-2 flex items-center gap-1.5 rounded-lg bg-amber-300 px-2.5 py-1 font-semibold text-slate-950">
-            <RefreshCw size={13} /> Discard my edits and load latest
-          </button>
-        </div>
-      );
+      return <span role="status" className={`${base} bg-amber-300/10 text-amber-200`}>Not saved · reload required</span>;
     case "error":
       return (
         <div role="alert" className="max-w-xs rounded-2xl border border-red-400/30 bg-red-400/10 p-3 text-xs text-red-100">

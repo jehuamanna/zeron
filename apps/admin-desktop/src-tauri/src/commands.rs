@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use course_publisher::DraftValidationIssue;
 use publisher_application::{
-    DraftServiceError, DraftSummary, MetadataEdit, PublisherDrafts, StoredDraft,
+    DraftServiceError, DraftSummary, MetadataEdit, PublisherDrafts, StoredDraft, StructureEdit,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -69,6 +69,46 @@ pub(crate) struct DraftMetadataInput {
     license_name: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum StructureEditInput {
+    AddModule {
+        title: String,
+    },
+    RenameModule {
+        module_id: String,
+        title: String,
+    },
+    RemoveModule {
+        module_id: String,
+    },
+    MoveModule {
+        module_id: String,
+        position: usize,
+    },
+    AddLesson {
+        module_id: String,
+        title: String,
+    },
+    RenameLesson {
+        lesson_id: String,
+        title: String,
+    },
+    RemoveLesson {
+        lesson_id: String,
+    },
+    MoveLesson {
+        module_id: String,
+        lesson_id: String,
+        position: usize,
+    },
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ValidationIssueDto {
@@ -133,6 +173,25 @@ pub(crate) async fn update_draft_metadata(
 }
 
 #[tauri::command]
+pub(crate) async fn edit_draft_structure(
+    draft_id: String,
+    expected_revision: u64,
+    edit: StructureEditInput,
+    state: State<'_, AppState>,
+) -> Result<DraftDetailDto, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || {
+        edit_structure(
+            &mut *lock_drafts(&drafts)?,
+            &draft_id,
+            expected_revision,
+            edit,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn validate_draft(
     draft_id: String,
     state: State<'_, AppState>,
@@ -177,6 +236,18 @@ fn update_metadata(
         .map_err(|error| service_error("draft_save_failed", error))
 }
 
+fn edit_structure(
+    drafts: &mut PublisherDrafts,
+    draft_id: &str,
+    expected_revision: u64,
+    edit: StructureEditInput,
+) -> Result<DraftDetailDto, CommandError> {
+    drafts
+        .edit_structure(draft_id, expected_revision, edit.into())
+        .map(DraftDetailDto::from)
+        .map_err(|error| service_error("draft_save_failed", error))
+}
+
 fn validate(
     drafts: &PublisherDrafts,
     draft_id: &str,
@@ -199,6 +270,41 @@ impl From<DraftMetadataInput> for MetadataEdit {
             tags: input.tags,
             prerequisites: input.prerequisites,
             license_name: input.license_name,
+        }
+    }
+}
+
+impl From<StructureEditInput> for StructureEdit {
+    fn from(input: StructureEditInput) -> Self {
+        match input {
+            StructureEditInput::AddModule { title } => Self::AddModule { title },
+            StructureEditInput::RenameModule { module_id, title } => {
+                Self::RenameModule { module_id, title }
+            }
+            StructureEditInput::RemoveModule { module_id } => Self::RemoveModule { module_id },
+            StructureEditInput::MoveModule {
+                module_id,
+                position,
+            } => Self::MoveModule {
+                module_id,
+                position,
+            },
+            StructureEditInput::AddLesson { module_id, title } => {
+                Self::AddLesson { module_id, title }
+            }
+            StructureEditInput::RenameLesson { lesson_id, title } => {
+                Self::RenameLesson { lesson_id, title }
+            }
+            StructureEditInput::RemoveLesson { lesson_id } => Self::RemoveLesson { lesson_id },
+            StructureEditInput::MoveLesson {
+                module_id,
+                lesson_id,
+                position,
+            } => Self::MoveLesson {
+                module_id,
+                lesson_id,
+                position,
+            },
         }
     }
 }
@@ -290,6 +396,8 @@ fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
             ..CommandError::new("revision_conflict", error)
         },
         DraftServiceError::NotFound { .. } => CommandError::new("draft_not_found", error),
+        DraftServiceError::EntityNotFound { .. } => CommandError::new("entity_not_found", error),
+        DraftServiceError::InvalidPosition { .. } => CommandError::new("invalid_position", error),
         DraftServiceError::InvalidInput { ref field, .. } => CommandError {
             field: Some(field.clone()),
             ..CommandError::new("invalid_input", error)
@@ -380,6 +488,54 @@ mod tests {
             "licenseName": null, "courseId": "course_hijack"
         }));
         assert!(unknown.is_err());
+    }
+
+    #[test]
+    fn structure_edits_round_trip_through_tagged_input() {
+        let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+        let draft_id = create(&mut drafts).unwrap().draft_id;
+        let edit = |value| serde_json::from_value::<StructureEditInput>(value).unwrap();
+        let added = edit_structure(
+            &mut drafts,
+            &draft_id,
+            0,
+            edit(serde_json::json!({ "type": "addModule", "title": "Basics" })),
+        )
+        .unwrap();
+        let module_id = added.modules[0].id.clone();
+        let with_lesson = edit_structure(
+            &mut drafts,
+            &draft_id,
+            1,
+            edit(
+                serde_json::json!({ "type": "addLesson", "moduleId": module_id, "title": "Hello" }),
+            ),
+        )
+        .unwrap();
+        assert_eq!(with_lesson.revision, 2);
+        assert_eq!(with_lesson.modules[0].lessons[0].title, "Hello");
+        let missing = edit_structure(
+            &mut drafts,
+            &draft_id,
+            2,
+            edit(serde_json::json!({ "type": "removeLesson", "lessonId": "lesson_missing" })),
+        )
+        .unwrap_err();
+        assert_eq!(missing.code, "entity_not_found");
+        let out_of_range = edit_structure(
+            &mut drafts,
+            &draft_id,
+            2,
+            edit(serde_json::json!({ "type": "moveModule", "moduleId": module_id, "position": 4 })),
+        )
+        .unwrap_err();
+        assert_eq!(out_of_range.code, "invalid_position");
+        for rejected in [
+            serde_json::json!({ "type": "addModule", "title": "T", "id": "module_chosen" }),
+            serde_json::json!({ "type": "deleteEverything" }),
+        ] {
+            assert!(serde_json::from_value::<StructureEditInput>(rejected).is_err());
+        }
     }
 
     #[test]

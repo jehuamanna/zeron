@@ -128,6 +128,12 @@ pub enum EditError {
         /// Requested zero-based position.
         position: usize,
     },
+    /// A new entity reused an ID already present in the draft.
+    #[error("ID '{id}' is already used in this draft")]
+    DuplicateId {
+        /// Rejected ID.
+        id: String,
+    },
 }
 
 impl DraftCourse {
@@ -193,6 +199,126 @@ impl DraftCourse {
             "lesson",
             |item| &item.id,
         )?;
+        Ok(self.advance_revision())
+    }
+
+    /// Append a module with a caller-generated stable ID.
+    ///
+    /// # Errors
+    /// Rejects stale revisions and IDs already used anywhere in the draft.
+    pub fn add_module(
+        &mut self,
+        expected_revision: u64,
+        module: DraftModule,
+    ) -> Result<u64, EditError> {
+        self.require_revision(expected_revision)?;
+        for id in std::iter::once(&module.id).chain(module.lessons.iter().map(|lesson| &lesson.id))
+        {
+            self.require_unused(id)?;
+        }
+        self.modules.push(module);
+        Ok(self.advance_revision())
+    }
+
+    /// Change a module title without changing its stable ID.
+    ///
+    /// # Errors
+    /// Rejects stale revisions and missing IDs.
+    pub fn rename_module(
+        &mut self,
+        expected_revision: u64,
+        module_id: &str,
+        title: String,
+    ) -> Result<u64, EditError> {
+        self.require_revision(expected_revision)?;
+        self.module_mut(module_id)?.title = title;
+        Ok(self.advance_revision())
+    }
+
+    /// Remove a module and every lesson and resource reference it contains.
+    ///
+    /// Source files are never touched; only the draft reference is removed.
+    ///
+    /// # Errors
+    /// Rejects stale revisions and missing IDs.
+    pub fn remove_module(
+        &mut self,
+        expected_revision: u64,
+        module_id: &str,
+    ) -> Result<u64, EditError> {
+        self.require_revision(expected_revision)?;
+        let index = self
+            .modules
+            .iter()
+            .position(|module| module.id == module_id)
+            .ok_or_else(|| not_found("module", module_id))?;
+        self.modules.remove(index);
+        Ok(self.advance_revision())
+    }
+
+    /// Append a lesson to a module with a caller-generated stable ID.
+    ///
+    /// # Errors
+    /// Rejects stale revisions, missing modules, and IDs already in use.
+    pub fn add_lesson(
+        &mut self,
+        expected_revision: u64,
+        module_id: &str,
+        lesson: DraftLesson,
+    ) -> Result<u64, EditError> {
+        self.require_revision(expected_revision)?;
+        self.require_unused(&lesson.id)?;
+        for resource in &lesson.resources {
+            self.require_unused(&resource.id)?;
+        }
+        self.module_mut(module_id)?.lessons.push(lesson);
+        Ok(self.advance_revision())
+    }
+
+    /// Change a lesson title without changing its stable ID.
+    ///
+    /// # Errors
+    /// Rejects stale revisions and missing IDs.
+    pub fn rename_lesson(
+        &mut self,
+        expected_revision: u64,
+        lesson_id: &str,
+        title: String,
+    ) -> Result<u64, EditError> {
+        self.require_revision(expected_revision)?;
+        self.modules
+            .iter_mut()
+            .flat_map(|module| module.lessons.iter_mut())
+            .find(|lesson| lesson.id == lesson_id)
+            .ok_or_else(|| not_found("lesson", lesson_id))?
+            .title = title;
+        Ok(self.advance_revision())
+    }
+
+    /// Remove a lesson and its resource references from whichever module holds it.
+    ///
+    /// Source files are never touched; only the draft reference is removed.
+    ///
+    /// # Errors
+    /// Rejects stale revisions and missing IDs.
+    pub fn remove_lesson(
+        &mut self,
+        expected_revision: u64,
+        lesson_id: &str,
+    ) -> Result<u64, EditError> {
+        self.require_revision(expected_revision)?;
+        let (module, index) = self
+            .modules
+            .iter_mut()
+            .find_map(|module| {
+                let index = module
+                    .lessons
+                    .iter()
+                    .position(|lesson| lesson.id == lesson_id)?;
+                Some((module, index))
+            })
+            .ok_or_else(|| not_found("lesson", lesson_id))?;
+        module.lessons.remove(index);
         Ok(self.advance_revision())
     }
 
@@ -298,6 +424,34 @@ impl DraftCourse {
     fn advance_revision(&mut self) -> u64 {
         self.revision = self.revision.saturating_add(1);
         self.revision
+    }
+
+    fn module_mut(&mut self, module_id: &str) -> Result<&mut DraftModule, EditError> {
+        self.modules
+            .iter_mut()
+            .find(|module| module.id == module_id)
+            .ok_or_else(|| not_found("module", module_id))
+    }
+
+    fn require_unused(&self, id: &str) -> Result<(), EditError> {
+        let used = self.modules.iter().any(|module| {
+            module.id == id
+                || module.lessons.iter().any(|lesson| {
+                    lesson.id == id || lesson.resources.iter().any(|resource| resource.id == id)
+                })
+        });
+        if used {
+            Err(EditError::DuplicateId { id: id.to_owned() })
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn not_found(entity: &'static str, id: &str) -> EditError {
+    EditError::NotFound {
+        entity,
+        id: id.to_owned(),
     }
 }
 

@@ -55,6 +55,7 @@ describe("publisher courses", () => {
     expect(publisherApi.createDraft).toHaveBeenCalledOnce();
     await waitFor(() => expect(view.getByLabelText("Blocking issues").textContent).toContain("add at least one module"));
     expect((view.getByLabelText("Title") as HTMLInputElement).value).toBe("Untitled course");
-    expect(view.getByRole("status").textContent).toContain("Saved · r0");
+    expect(view.getByRole("status").textContent).toBe(" Saved");
+    expect(view.container.textContent).toContain("Draft revision r0");
   });
 });

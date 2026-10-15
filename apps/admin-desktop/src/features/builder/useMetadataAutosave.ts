@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { asCommandError, publisherApi, type DraftDetail, type DraftMetadata } from "../../services/publisher";
+import type { DraftWriter } from "./draftWriter";
 
 export interface MetadataFields {
   courseVersion: string;
@@ -15,10 +16,10 @@ export interface MetadataFields {
 }
 
 export type SaveState =
-  | { kind: "saved"; revision: number }
+  | { kind: "saved" }
   | { kind: "dirty" }
   | { kind: "saving" }
-  | { kind: "conflict"; currentRevision: number | undefined }
+  | { kind: "conflict" }
   | { kind: "error"; message: string; field: string | undefined };
 
 export function fieldsFromDraft(draft: DraftDetail): MetadataFields {
@@ -56,20 +57,17 @@ export function metadataFromFields(fields: MetadataFields): DraftMetadata {
 }
 
 /**
- * Debounced, serialized metadata autosave. A stale revision stops autosave
- * until the editor explicitly reloads, so a newer save is never overwritten.
+ * Debounced metadata autosave that coalesces edits made while a save is in
+ * flight. Revision ownership and conflict blocking belong to the shared writer.
  */
-export function useMetadataAutosave(draft: DraftDetail, onSaved: (saved: DraftDetail) => void, delayMs: number) {
+export function useMetadataAutosave(draft: DraftDetail, writer: DraftWriter, delayMs: number) {
   const [fields, setFields] = useState(() => fieldsFromDraft(draft));
-  const [state, setState] = useState<SaveState>({ kind: "saved", revision: draft.revision });
+  const [state, setState] = useState<SaveState>({ kind: "saved" });
   const latest = useRef(fields);
-  const revision = useRef(draft.revision);
   const inFlight = useRef(false);
   const queued = useRef(false);
   const blocked = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const savedCallback = useRef(onSaved);
-  savedCallback.current = onSaved;
 
   useEffect(() => () => clearTimeout(timer.current), []);
 
@@ -83,15 +81,15 @@ export function useMetadataAutosave(draft: DraftDetail, onSaved: (saved: DraftDe
     const snapshot = latest.current;
     setState({ kind: "saving" });
     try {
-      const saved = await publisherApi.updateDraftMetadata(draft.draftId, revision.current, metadataFromFields(snapshot));
-      revision.current = saved.revision;
+      await writer.submit((revision) =>
+        publisherApi.updateDraftMetadata(draft.draftId, revision, metadataFromFields(snapshot)),
+      );
       inFlight.current = false;
-      savedCallback.current(saved);
       if (queued.current) {
         queued.current = false;
         void save();
       } else {
-        setState(latest.current === snapshot ? { kind: "saved", revision: saved.revision } : { kind: "dirty" });
+        setState(latest.current === snapshot ? { kind: "saved" } : { kind: "dirty" });
       }
     } catch (error) {
       inFlight.current = false;
@@ -100,12 +98,12 @@ export function useMetadataAutosave(draft: DraftDetail, onSaved: (saved: DraftDe
       if (command?.code === "revision_conflict") {
         blocked.current = true;
         clearTimeout(timer.current);
-        setState({ kind: "conflict", currentRevision: command.currentRevision });
+        setState({ kind: "conflict" });
       } else {
         setState({ kind: "error", message: command?.message ?? "The draft could not be saved.", field: command?.field });
       }
     }
-  }, [draft.draftId]);
+  }, [draft.draftId, writer]);
 
   const update = (name: keyof MetadataFields, value: string) => {
     const next = { ...latest.current, [name]: value };

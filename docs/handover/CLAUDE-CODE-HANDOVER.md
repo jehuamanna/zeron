@@ -42,12 +42,13 @@ The last fully green baseline at `930b4d5` passed Rust formatting, Clippy with w
 
 - Admin Desktop foundation (`docs/releases/phase-2-admin-desktop-foundation.md`).
 - Draft application service and metadata autosave (`docs/releases/phase-2-draft-application-service.md`). `publisher-application::PublisherDrafts` owns draft use cases; `apps/admin-desktop/src-tauri` composes it against app-data `publisher.sqlite3`. Command bodies are Tauri-independent functions tested against in-memory storage. Command errors carry `code`, plus `currentRevision` for conflicts and `field` for invalid input.
+- Module and lesson structure editing (`docs/releases/phase-2-structure-editing.md`). All Builder writes go through one serialized `draftWriter` per editing session (`apps/admin-desktop/src/features/builder/draftWriter.ts`); new editors must submit through it so they share the revision sequence and the conflict banner.
 
 Local tooling note: `pnpm` is not on `PATH` in this environment; it is available as `corepack pnpm` from `~/.nvm/versions/node/v22.22.2/bin`. The root scripts invoke nested `pnpm`, so put a `pnpm` shim that execs `corepack pnpm` on `PATH` before running the JS gates.
 
 ## Next slice
 
-Module/lesson/resource CRUD and accessible reordering (item 2 below). Add edit operations to `course-publisher::DraftCourse`, expose them through `PublisherDrafts` with the same revision/conflict contract as metadata autosave, and extend the Builder structure panel.
+Backend-only source selection plus path-free resource DTOs (item 3 below). The Admin backend must open the native file dialog itself (as the Learner does for course import), record the chosen path only inside the draft snapshot, and return path-free resource DTOs (ID, kind, display file name, media type, byte length). Resource add/remove/reorder should follow the structure-edit pattern: domain operation in `course-publisher`, `StructureEdit`-style use case in `publisher-application`, and a Builder control that submits through the draft writer.
 
 When testing UI in the browser pane, Tauri IPC can be faked by assigning `window.__TAURI_INTERNALS__ = { invoke, transformCallback }` after the page loads, then using the app (the initial list query will already have failed).
 
@@ -71,7 +72,7 @@ Phase 1 is functionally established, including complete local-file playback. Pha
 Continue Phase 2 in small slices:
 
 1. ~~Admin draft application service and autosave edits with conflict reporting.~~ Done.
-2. Module/lesson/resource CRUD and accessible reordering.
+2. ~~Module/lesson CRUD and accessible reordering.~~ Done; resource CRUD moves to item 3.
 3. Backend-only source selection plus path-free resource DTOs.
 4. Deterministic package staging and canonical `course.json` generation.
 5. Media inspection warnings without silent transcoding.

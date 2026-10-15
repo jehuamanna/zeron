@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, BookPlus, Boxes, CheckCircle2, FileVideo, Network, Settings2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, BookPlus, Boxes, CheckCircle2, Network, Settings2 } from "lucide-react";
 import { useCallback, useState } from "react";
 
-import { MetadataForm } from "../features/builder/MetadataForm";
+import { Builder } from "../features/builder/Builder";
 import { publisherApi, type DraftDetail } from "../services/publisher";
 import { useBuilderUi } from "../stores/builder";
 
@@ -76,19 +76,7 @@ export function App() {
                 <button type="button" onClick={() => selectDraft(null)} className="mb-6 flex items-center gap-2 text-sm text-slate-400"><ArrowLeft size={16} /> Back to courses</button>
                 {draft.isPending ? <p className="text-slate-400">Opening draft…</p> : draft.data ? (
                   <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-                    <div className="space-y-6">
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7">
-                        <MetadataForm key={`${draft.data.draftId}:${reloadCount}`} draft={draft.data} onSaved={handleSaved} onReload={() => void reloadDraft()} />
-                      </div>
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7">
-                        <h2 className="text-lg font-semibold">Structure</h2>
-                        <div className="mt-5 space-y-4">
-                          {draft.data.modules.length ? draft.data.modules.map((module) => <div key={module.id} className="rounded-2xl border border-white/10 p-5"><h3 className="font-semibold">{module.title}</h3></div>) : (
-                            <div className="rounded-2xl border border-dashed border-white/15 py-12 text-center text-slate-500"><FileVideo className="mx-auto mb-3" /><p>Add your first module and lesson</p></div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                    <Builder key={`${draft.data.draftId}:${reloadCount}`} draft={draft.data} onSaved={handleSaved} onReload={() => void reloadDraft()} />
                     <aside className="h-fit rounded-3xl border border-white/10 bg-black/20 p-6">
                       <h2 className="font-semibold">Publishing readiness</h2>
                       {validation.isPending ? <p className="mt-5 text-sm text-slate-400">Checking draft…</p> : validation.isError ? (

@@ -2,12 +2,15 @@
 
 use std::path::Path;
 
-use course_publisher::{DraftCourse, DraftMetadata, DraftValidationIssue, EditError};
+use course_publisher::{
+    DraftCourse, DraftLesson, DraftMetadata, DraftModule, DraftValidationIssue, EditError,
+};
 use publisher_storage::PublisherStorage;
 pub use publisher_storage::{DraftSummary, PublisherStorageError, StoredDraft};
 use thiserror::Error;
 
 const MAX_LIST_ENTRIES: usize = 32;
+const MAX_TITLE_CHARS: usize = 200;
 const MAX_DESCRIPTION_CHARS: usize = 10_000;
 
 /// Publisher-supplied course metadata for one autosave.
@@ -36,6 +39,63 @@ pub struct MetadataEdit {
     pub license_name: Option<String>,
 }
 
+/// One revision-checked change to the module and lesson tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StructureEdit {
+    /// Append a module with a fresh opaque ID.
+    AddModule {
+        /// Display title.
+        title: String,
+    },
+    /// Change a module title.
+    RenameModule {
+        /// Stable module ID.
+        module_id: String,
+        /// New display title.
+        title: String,
+    },
+    /// Remove a module, its lessons, and their resource references.
+    RemoveModule {
+        /// Stable module ID.
+        module_id: String,
+    },
+    /// Move a module to a zero-based position.
+    MoveModule {
+        /// Stable module ID.
+        module_id: String,
+        /// Target position.
+        position: usize,
+    },
+    /// Append a lesson with a fresh opaque ID.
+    AddLesson {
+        /// Parent module ID.
+        module_id: String,
+        /// Display title.
+        title: String,
+    },
+    /// Change a lesson title.
+    RenameLesson {
+        /// Stable lesson ID.
+        lesson_id: String,
+        /// New display title.
+        title: String,
+    },
+    /// Remove a lesson and its resource references.
+    RemoveLesson {
+        /// Stable lesson ID.
+        lesson_id: String,
+    },
+    /// Move a lesson to a zero-based position within its module.
+    MoveLesson {
+        /// Parent module ID.
+        module_id: String,
+        /// Stable lesson ID.
+        lesson_id: String,
+        /// Target position.
+        position: usize,
+    },
+}
+
 /// Draft use-case failure.
 #[derive(Debug, Error)]
 pub enum DraftServiceError {
@@ -60,6 +120,22 @@ pub enum DraftServiceError {
         field: String,
         /// Remediation text.
         message: &'static str,
+    },
+    /// A module or lesson referenced by an edit does not exist.
+    #[error("{entity} '{id}' was not found")]
+    EntityNotFound {
+        /// Entity classification.
+        entity: &'static str,
+        /// Missing stable ID.
+        id: String,
+    },
+    /// A move targeted a position outside the collection.
+    #[error("position {position} is outside the {entity} collection")]
+    InvalidPosition {
+        /// Entity classification.
+        entity: &'static str,
+        /// Requested zero-based position.
+        position: usize,
     },
     /// The OS random source could not create an identifier.
     #[error("cannot generate an opaque identifier: {0}")]
@@ -167,11 +243,70 @@ impl PublisherDrafts {
         draft
             .replace_metadata(expected_revision, metadata)
             .map_err(edit_error)?;
-        let summary = self.storage.update_draft(expected_revision, &draft)?;
-        Ok(StoredDraft {
-            draft,
-            updated_at_unix_seconds: summary.updated_at_unix_seconds,
-        })
+        self.save(expected_revision, draft)
+    }
+
+    /// Apply one module or lesson change when the editor owns the durable revision.
+    ///
+    /// Removing structure only drops draft references; source files are untouched.
+    ///
+    /// # Errors
+    /// Reports stale revisions as [`DraftServiceError::RevisionConflict`],
+    /// missing targets, out-of-range moves, and unbounded titles.
+    pub fn edit_structure(
+        &mut self,
+        draft_id: &str,
+        expected_revision: u64,
+        edit: StructureEdit,
+    ) -> Result<StoredDraft, DraftServiceError> {
+        let mut draft = self.require(draft_id)?;
+        let applied = match edit {
+            StructureEdit::AddModule { title } => draft.add_module(
+                expected_revision,
+                DraftModule {
+                    id: opaque_id("module")?,
+                    title: line("module.title", title, MAX_TITLE_CHARS)?,
+                    lessons: Vec::new(),
+                },
+            ),
+            StructureEdit::RenameModule { module_id, title } => draft.rename_module(
+                expected_revision,
+                &module_id,
+                line("module.title", title, MAX_TITLE_CHARS)?,
+            ),
+            StructureEdit::RemoveModule { module_id } => {
+                draft.remove_module(expected_revision, &module_id)
+            }
+            StructureEdit::MoveModule {
+                module_id,
+                position,
+            } => draft.move_module(expected_revision, &module_id, position),
+            StructureEdit::AddLesson { module_id, title } => draft.add_lesson(
+                expected_revision,
+                &module_id,
+                DraftLesson {
+                    id: opaque_id("lesson")?,
+                    title: line("lesson.title", title, MAX_TITLE_CHARS)?,
+                    estimated_duration_seconds: None,
+                    resources: Vec::new(),
+                },
+            ),
+            StructureEdit::RenameLesson { lesson_id, title } => draft.rename_lesson(
+                expected_revision,
+                &lesson_id,
+                line("lesson.title", title, MAX_TITLE_CHARS)?,
+            ),
+            StructureEdit::RemoveLesson { lesson_id } => {
+                draft.remove_lesson(expected_revision, &lesson_id)
+            }
+            StructureEdit::MoveLesson {
+                module_id,
+                lesson_id,
+                position,
+            } => draft.move_lesson(expected_revision, &module_id, &lesson_id, position),
+        };
+        applied.map_err(edit_error)?;
+        self.save(expected_revision, draft)
     }
 
     /// Validate the saved draft with the same policy used before packaging.
@@ -180,6 +315,18 @@ impl PublisherDrafts {
     /// Returns [`DraftServiceError::NotFound`] or a storage failure.
     pub fn validate(&self, draft_id: &str) -> Result<Vec<DraftValidationIssue>, DraftServiceError> {
         Ok(self.require(draft_id)?.validate())
+    }
+
+    fn save(
+        &mut self,
+        expected_revision: u64,
+        draft: DraftCourse,
+    ) -> Result<StoredDraft, DraftServiceError> {
+        let summary = self.storage.update_draft(expected_revision, &draft)?;
+        Ok(StoredDraft {
+            draft,
+            updated_at_unix_seconds: summary.updated_at_unix_seconds,
+        })
     }
 
     fn require(&self, draft_id: &str) -> Result<DraftCourse, DraftServiceError> {
@@ -195,7 +342,7 @@ fn normalize(edit: MetadataEdit, course_id: String) -> Result<DraftMetadata, Dra
     Ok(DraftMetadata {
         course_id,
         version: line("metadata.version", edit.version, 64)?,
-        title: line("metadata.title", edit.title, 200)?,
+        title: line("metadata.title", edit.title, MAX_TITLE_CHARS)?,
         description: optional(
             edit.description
                 .map(|value| multiline("metadata.description", value))
@@ -276,13 +423,13 @@ fn edit_error(error: EditError) -> DraftServiceError {
         EditError::RevisionConflict { expected, actual } => {
             DraftServiceError::RevisionConflict { expected, actual }
         }
-        EditError::NotFound { entity, id } => DraftServiceError::InvalidInput {
-            field: format!("{entity}:{id}"),
-            message: "was not found",
-        },
-        EditError::InvalidPosition { entity, .. } => DraftServiceError::InvalidInput {
-            field: entity.to_owned(),
-            message: "target position is outside the collection",
+        EditError::NotFound { entity, id } => DraftServiceError::EntityNotFound { entity, id },
+        EditError::InvalidPosition { entity, position } => {
+            DraftServiceError::InvalidPosition { entity, position }
+        }
+        EditError::DuplicateId { .. } => DraftServiceError::InvalidInput {
+            field: "id".to_owned(),
+            message: "collided with an existing ID; retry the edit",
         },
     }
 }
