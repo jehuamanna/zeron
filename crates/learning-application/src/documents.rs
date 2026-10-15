@@ -7,7 +7,7 @@
 
 use std::{fs::File, io::Read, path::PathBuf, time::Duration};
 
-use course_format::{ResourceKind, ResourceRelationKind};
+use course_format::{Lesson, Resource, ResourceKind, ResourceRelationKind};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
@@ -138,40 +138,11 @@ impl CourseLibrary {
         else {
             return Ok(None);
         };
-        let media = lesson
+        let Some(transcript) = lesson
             .resources
             .iter()
             .find(|resource| resource.id == media_resource_id)
-            .filter(|resource| matches!(resource.kind, ResourceKind::Video | ResourceKind::Audio));
-        let Some(media) = media else {
-            return Ok(None);
-        };
-        let timed = |id: &str| {
-            lesson.resources.iter().find(|resource| {
-                resource.id == id
-                    && matches!(
-                        resource.kind,
-                        ResourceKind::Transcript | ResourceKind::Subtitle
-                    )
-            })
-        };
-        let related = |kind: ResourceRelationKind| {
-            media
-                .relations
-                .iter()
-                .filter(|relation| relation.kind == kind)
-                .find_map(|relation| timed(&relation.resource_id))
-        };
-        let of_kind = |kind: ResourceKind| {
-            lesson
-                .resources
-                .iter()
-                .find(|resource| resource.kind == kind)
-        };
-        let Some(transcript) = related(ResourceRelationKind::Transcript)
-            .or_else(|| related(ResourceRelationKind::Subtitle))
-            .or_else(|| of_kind(ResourceKind::Transcript))
-            .or_else(|| of_kind(ResourceKind::Subtitle))
+            .and_then(|media| transcript_for(lesson, media))
         else {
             return Ok(None);
         };
@@ -218,6 +189,41 @@ impl CourseLibrary {
                 byte_length: local.byte_length,
             }))
     }
+}
+
+/// The transcript of a video or audio resource within its lesson: the
+/// resource it names as its transcript, else as its subtitle track, else the
+/// lesson's first transcript and then subtitle resource.
+pub(crate) fn transcript_for<'a>(lesson: &'a Lesson, media: &Resource) -> Option<&'a Resource> {
+    if !matches!(media.kind, ResourceKind::Video | ResourceKind::Audio) {
+        return None;
+    }
+    let timed = |id: &str| {
+        lesson.resources.iter().find(|resource| {
+            resource.id == id
+                && matches!(
+                    resource.kind,
+                    ResourceKind::Transcript | ResourceKind::Subtitle
+                )
+        })
+    };
+    let related = |kind: ResourceRelationKind| {
+        media
+            .relations
+            .iter()
+            .filter(|relation| relation.kind == kind)
+            .find_map(|relation| timed(&relation.resource_id))
+    };
+    let of_kind = |kind: ResourceKind| {
+        lesson
+            .resources
+            .iter()
+            .find(|resource| resource.kind == kind)
+    };
+    related(ResourceRelationKind::Transcript)
+        .or_else(|| related(ResourceRelationKind::Subtitle))
+        .or_else(|| of_kind(ResourceKind::Transcript))
+        .or_else(|| of_kind(ResourceKind::Subtitle))
 }
 
 impl DocumentSource {

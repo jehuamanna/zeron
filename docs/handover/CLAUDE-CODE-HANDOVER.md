@@ -295,7 +295,7 @@ Done so far: engine file selection (`phase-5-file-selection.md`, ADR 0004 decisi
 
 ### Phase 6 — learning workspace
 
-Done so far: lesson and course progress (`phase-6-progress.md`, new `learning-domain` crate, learner schema v8) Tiptap notes with typed anchors (`phase-6-notes.md`, ADR 0009, learner schema v9), PDF viewing with page and highlight notes (`phase-6-pdf-viewer.md`), and Excalidraw lesson drawings with write-once images and a Learner navigation guard (`phase-6-drawings.md`, ADR 0010, learner schema v10), and synced lesson transcripts parsed from WebVTT or SubRip (`phase-6-transcripts.md`), and a Markdown and text lesson reader with Shiki highlighting (`phase-6-reader-and-code-highlighting.md`). Remaining: incremental FTS5 indexing and offline search over course metadata, notes, transcripts, and lesson text.
+Done so far: lesson and course progress (`phase-6-progress.md`, new `learning-domain` crate, learner schema v8) Tiptap notes with typed anchors (`phase-6-notes.md`, ADR 0009, learner schema v9), PDF viewing with page and highlight notes (`phase-6-pdf-viewer.md`), and Excalidraw lesson drawings with write-once images and a Learner navigation guard (`phase-6-drawings.md`, ADR 0010, learner schema v10), and synced lesson transcripts parsed from WebVTT or SubRip (`phase-6-transcripts.md`), a Markdown and text lesson reader with Shiki highlighting (`phase-6-reader-and-code-highlighting.md`), and offline FTS5 search over courses, lessons, notes, transcripts, and lesson text (`phase-6-offline-search.md`, learner schema v11). **Phase 6 is complete**; its real-window search check is listed in that note.
 
 - Progress tracking per lesson and course.
 - Tiptap notes with typed anchors: a video timestamp or a PDF page and region.

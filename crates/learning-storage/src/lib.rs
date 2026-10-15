@@ -13,7 +13,7 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 10;
+const CURRENT_SCHEMA_VERSION: i64 = 11;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
 
 /// A stored learner note.
@@ -51,6 +51,38 @@ pub enum NoteWrite {
     },
     /// No such note.
     Missing,
+}
+
+/// A passage of a course file to index for search.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchEntry {
+    /// Lesson the passage belongs to.
+    pub lesson_id: String,
+    /// `transcript` or `text`.
+    pub kind: &'static str,
+    /// What a result opens: the media for a transcript, else the resource.
+    pub source_id: String,
+    /// Where in the media the passage starts, in seconds.
+    pub position: Option<f64>,
+    /// The passage.
+    pub body: String,
+}
+
+/// One search match.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchHit {
+    /// Course of the match.
+    pub course_id: String,
+    /// Lesson of the match; empty for the course itself.
+    pub lesson_id: String,
+    /// `course`, `lesson`, `note`, `transcript`, or `text`.
+    pub kind: String,
+    /// Course, lesson, note, or resource the match opens.
+    pub source_id: String,
+    /// Seconds into the media, for transcripts.
+    pub position: Option<f64>,
+    /// Matching excerpt; matched terms are wrapped in U+E000 and U+E001.
+    pub snippet: String,
 }
 
 /// A stored lesson drawing with its images.
@@ -822,6 +854,103 @@ impl Storage {
         Ok(DrawingWrite::Saved { revision })
     }
 
+    /// Whether a course file's text is indexed at this digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn is_resource_indexed(
+        &self,
+        course_id: &str,
+        resource_id: &str,
+        sha256: &str,
+    ) -> Result<bool, StorageError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT 1 FROM indexed_resources WHERE course_id = ?1 AND resource_id = ?2 AND sha256 = ?3",
+                [course_id, resource_id, sha256],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// Replace the indexed passages taken from one course file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for `SQLite` failures, including an unknown
+    /// course.
+    pub fn index_resource(
+        &mut self,
+        course_id: &str,
+        resource_id: &str,
+        sha256: &str,
+        entries: &[SearchEntry],
+    ) -> Result<(), StorageError> {
+        let tx = self.connection.transaction()?;
+        tx.execute(
+            "DELETE FROM learning_search WHERE course_id = ?1 AND origin_id = ?2 AND kind IN ('transcript', 'text')",
+            [course_id, resource_id],
+        )?;
+        tx.execute(
+            "INSERT INTO indexed_resources (course_id, resource_id, sha256) VALUES (?1, ?2, ?3)
+             ON CONFLICT(course_id, resource_id) DO UPDATE SET sha256 = excluded.sha256",
+            [course_id, resource_id, sha256],
+        )?;
+        {
+            let mut insert = tx.prepare(
+                "INSERT INTO learning_search (course_id, lesson_id, kind, source_id, origin_id, position, title, body)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, '', ?7)",
+            )?;
+            for entry in entries {
+                insert.execute(params![
+                    course_id,
+                    entry.lesson_id,
+                    entry.kind,
+                    entry.source_id,
+                    resource_id,
+                    entry.position,
+                    entry.body
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Best matches for an FTS5 query, titles weighted above text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when `SQLite` rejects the query; callers
+    /// should build it with care.
+    pub fn search(&self, fts_query: &str, limit: usize) -> Result<Vec<SearchHit>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT s.course_id, s.lesson_id, s.kind, s.source_id, s.position,
+                    snippet(learning_search, -1, char(57344), char(57345), '…', 16)
+             FROM learning_search AS s JOIN courses AS c ON c.course_id = s.course_id
+             WHERE learning_search MATCH ?1
+             ORDER BY bm25(learning_search, 0, 0, 0, 0, 0, 0, 5.0, 1.0)
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(
+            params![fts_query, sqlite_integer(limit as u64, "search limit")?],
+            |row| {
+                Ok(SearchHit {
+                    course_id: row.get(0)?,
+                    lesson_id: row.get(1)?,
+                    kind: row.get(2)?,
+                    source_id: row.get(3)?,
+                    position: row.get(4)?,
+                    snippet: row.get(5)?,
+                })
+            },
+        )?;
+        rows.collect::<Result<_, _>>().map_err(StorageError::from)
+    }
+
     /// Read a learner setting.
     ///
     /// # Errors
@@ -1026,6 +1155,7 @@ impl Storage {
             )?;
         }
         refresh_search_row(&tx, manifest)?;
+        index_course_outline(&tx, manifest)?;
         tx.commit()?;
 
         Ok(StoredCourseSummary {
@@ -1133,15 +1263,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         found = 4;
     }
     // Later versions each add one table or column; they run in order.
-    let steps: [(i64, Migration); 6] = [
-        (4, add_playback_positions),
-        (5, add_download_commitments),
-        (6, add_pause_flag),
-        (7, add_lesson_progress),
-        (8, add_notes),
-        (9, add_drawings),
-    ];
-    for (from, step) in steps {
+    for (from, step) in TABLE_MIGRATIONS {
         if found == from {
             step(connection)?;
             found += 1;
@@ -1266,6 +1388,122 @@ fn add_drawings(connection: &mut Connection) -> Result<(), StorageError> {
          PRAGMA user_version = 10;",
     )?;
     tx.commit()?;
+    Ok(())
+}
+
+/// Migrations from schema 4 on, by the version they start from.
+const TABLE_MIGRATIONS: [(i64, Migration); 7] = [
+    (4, add_playback_positions),
+    (5, add_download_commitments),
+    (6, add_pause_flag),
+    (7, add_lesson_progress),
+    (8, add_notes),
+    (9, add_drawings),
+    (10, add_learning_search),
+];
+
+/// Schema 11. One full-text index over what a learner can search: course and
+/// lesson titles, notes (kept in step by triggers), and the text of
+/// transcripts and lesson documents, with the files it was taken from.
+fn add_learning_search(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "CREATE VIRTUAL TABLE learning_search USING fts5(
+           course_id UNINDEXED,
+           lesson_id UNINDEXED,
+           kind UNINDEXED,
+           source_id UNINDEXED,
+           origin_id UNINDEXED,
+           position UNINDEXED,
+           title,
+           body,
+           tokenize = 'unicode61 remove_diacritics 2'
+         );
+         CREATE TABLE indexed_resources (
+           course_id TEXT NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+           resource_id TEXT NOT NULL,
+           sha256 TEXT NOT NULL,
+           PRIMARY KEY(course_id, resource_id)
+         ) STRICT;
+         CREATE TRIGGER notes_search_insert AFTER INSERT ON notes BEGIN
+           INSERT INTO learning_search (course_id, lesson_id, kind, source_id, origin_id, position, title, body)
+           VALUES (new.course_id, new.lesson_id, 'note', new.note_id, new.note_id, NULL, '', new.body_text);
+         END;
+         CREATE TRIGGER notes_search_update AFTER UPDATE OF body_text ON notes BEGIN
+           DELETE FROM learning_search WHERE kind = 'note' AND source_id = old.note_id;
+           INSERT INTO learning_search (course_id, lesson_id, kind, source_id, origin_id, position, title, body)
+           VALUES (new.course_id, new.lesson_id, 'note', new.note_id, new.note_id, NULL, '', new.body_text);
+         END;
+         CREATE TRIGGER notes_search_delete AFTER DELETE ON notes BEGIN
+           DELETE FROM learning_search WHERE kind = 'note' AND source_id = old.note_id;
+         END;
+         INSERT INTO learning_search (course_id, lesson_id, kind, source_id, origin_id, position, title, body)
+           SELECT course_id, lesson_id, 'note', note_id, note_id, NULL, '', body_text FROM notes;",
+    )?;
+    let manifests = {
+        let mut statement = tx.prepare("SELECT manifest_json FROM courses")?;
+        let rows = statement.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for manifest in manifests {
+        let manifest: CourseManifest = serde_json::from_slice(&manifest)?;
+        index_course_outline(&tx, &manifest)?;
+    }
+    tx.execute_batch("PRAGMA user_version = 11;")?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Replace a course's title and lesson rows in the learning index, and drop
+/// text taken from its files: a new version may have changed them.
+fn index_course_outline(
+    tx: &Transaction<'_>,
+    manifest: &CourseManifest,
+) -> Result<(), StorageError> {
+    tx.execute(
+        "DELETE FROM learning_search WHERE course_id = ?1 AND kind <> 'note'",
+        [&manifest.course_id],
+    )?;
+    tx.execute(
+        "DELETE FROM indexed_resources WHERE course_id = ?1",
+        [&manifest.course_id],
+    )?;
+    let modules: Vec<&str> = manifest
+        .modules
+        .iter()
+        .map(|module| module.title.as_str())
+        .collect();
+    let course_body = [
+        manifest.description.as_deref().unwrap_or_default(),
+        &manifest.publisher.name,
+        &manifest.tags.join(" "),
+        &modules.join("\n"),
+    ]
+    .join("\n");
+    let mut insert = tx.prepare(
+        "INSERT INTO learning_search (course_id, lesson_id, kind, source_id, origin_id, position, title, body)
+         VALUES (?1, ?2, ?3, ?4, ?4, NULL, ?5, ?6)",
+    )?;
+    insert.execute(params![
+        manifest.course_id,
+        "",
+        "course",
+        manifest.course_id,
+        manifest.title,
+        course_body
+    ])?;
+    for module in &manifest.modules {
+        for lesson in &module.lessons {
+            insert.execute(params![
+                manifest.course_id,
+                lesson.id,
+                "lesson",
+                lesson.id,
+                lesson.title,
+                module.title
+            ])?;
+        }
+    }
     Ok(())
 }
 
@@ -1587,7 +1825,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE drawing_files; DROP TABLE lesson_drawings;
+                    "DROP TABLE learning_search; DROP TABLE indexed_resources;
+                     DROP TABLE drawing_files; DROP TABLE lesson_drawings;
                      DROP TABLE notes; DROP TABLE lesson_progress;
                      ALTER TABLE course_torrent_sources DROP COLUMN paused;
                      DROP TABLE download_commitments; DROP TABLE playback_positions;
@@ -1608,6 +1847,52 @@ mod tests {
             storage.playback_position(&course.course_id, "res").unwrap(),
             Some(position)
         );
+        drop(storage);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn version_ten_databases_index_existing_courses_and_notes() {
+        let path =
+            std::env::temp_dir().join(format!("zeron-learning-v10-{}.sqlite3", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let course = manifest("Distributed caching", "systems");
+        {
+            let mut storage = Storage::open(&path).unwrap();
+            storage
+                .save_imported_course(&course, 10, Path::new("/courses/cache"))
+                .unwrap();
+            storage
+                .connection
+                .execute_batch(
+                    "DROP TRIGGER notes_search_insert; DROP TRIGGER notes_search_update;
+                     DROP TRIGGER notes_search_delete;
+                     DROP TABLE learning_search; DROP TABLE indexed_resources;
+                     PRAGMA user_version = 10;",
+                )
+                .unwrap();
+            storage
+                .insert_note(
+                    "note_1",
+                    &course.course_id,
+                    &course.modules[0].lessons[0].id,
+                    r#"{"kind":"lesson"}"#,
+                    "{}",
+                    "Consistent hashing ring",
+                )
+                .unwrap();
+        }
+        let storage = Storage::open(&path).unwrap();
+        let kinds = |query: &str| -> Vec<String> {
+            storage
+                .search(query, 5)
+                .unwrap()
+                .into_iter()
+                .map(|hit| hit.kind)
+                .collect()
+        };
+        assert_eq!(kinds("\"hashing\""), ["note"]);
+        assert_eq!(kinds("\"distributed\""), ["course"]);
         drop(storage);
         std::fs::remove_file(path).unwrap();
     }
@@ -1806,6 +2091,101 @@ mod tests {
             }
         );
         assert_eq!(storage.drawing(&id, "l2").unwrap(), None);
+    }
+
+    #[test]
+    fn searches_outlines_notes_and_indexed_text() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Distributed caching", "systems");
+        let id = course.course_id.clone();
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/cache"))
+            .unwrap();
+        let lesson = course.modules[0].lessons[0].id.clone();
+        let hits = |storage: &Storage, query: &str| -> Vec<(String, String)> {
+            storage
+                .search(query, 20)
+                .unwrap()
+                .into_iter()
+                .map(|hit| (hit.kind, hit.snippet))
+                .collect()
+        };
+        assert_eq!(hits(&storage, "distributed")[0].0, "course");
+        assert_eq!(
+            hits(&storage, "distributed")[0].1,
+            "\u{e000}Distributed\u{e001} caching"
+        );
+
+        storage
+            .insert_note(
+                "note_1",
+                &id,
+                &lesson,
+                r#"{"kind":"lesson"}"#,
+                "{}",
+                "Consistent hashing ring",
+            )
+            .unwrap();
+        assert_eq!(hits(&storage, "hashing").len(), 1);
+        storage
+            .update_note(
+                "note_1",
+                0,
+                r#"{"kind":"lesson"}"#,
+                "{}",
+                "Rendezvous hashing",
+            )
+            .unwrap();
+        assert_eq!(hits(&storage, "ring").len(), 0);
+        assert_eq!(hits(&storage, "rendezvous")[0].0, "note");
+
+        assert!(!storage.is_resource_indexed(&id, "subs", "abc").unwrap());
+        let entry = |body: &str, position| SearchEntry {
+            lesson_id: lesson.clone(),
+            kind: "transcript",
+            source_id: "video".to_owned(),
+            position,
+            body: body.to_owned(),
+        };
+        storage
+            .index_resource(
+                &id,
+                "subs",
+                "abc",
+                &[
+                    entry("write through caches", Some(30.0)),
+                    entry("eviction policy", Some(60.0)),
+                ],
+            )
+            .unwrap();
+        assert!(storage.is_resource_indexed(&id, "subs", "abc").unwrap());
+        assert!(!storage.is_resource_indexed(&id, "subs", "def").unwrap());
+        let found = storage.search("eviction", 5).unwrap();
+        assert_eq!(
+            (found[0].source_id.as_str(), found[0].position),
+            ("video", Some(60.0))
+        );
+        storage
+            .index_resource(
+                &id,
+                "subs",
+                "def",
+                &[entry("least recently used", Some(5.0))],
+            )
+            .unwrap();
+        assert_eq!(hits(&storage, "eviction").len(), 0);
+        assert_eq!(hits(&storage, "recently").len(), 1);
+
+        // A new version of the course drops text taken from its old files.
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/cache"))
+            .unwrap();
+        assert_eq!(hits(&storage, "recently").len(), 0);
+        assert!(!storage.is_resource_indexed(&id, "subs", "def").unwrap());
+        assert_eq!(hits(&storage, "rendezvous").len(), 1);
+        storage.delete_note("note_1", 1).unwrap();
+        assert_eq!(hits(&storage, "rendezvous").len(), 0);
+        assert!(storage.search("\"unbalanced", 5).is_err());
     }
 
     #[test]

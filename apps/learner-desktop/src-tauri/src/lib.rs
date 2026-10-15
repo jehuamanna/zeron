@@ -52,6 +52,31 @@ pub(crate) struct Torrents {
 /// How often free disk space is checked while downloads may run.
 const DISK_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Work that runs after startup: restore torrent courses, honor the cache
+/// cap, watch free space, and index local courses' text for search.
+fn spawn_background_work(torrents: &Torrents, library: &Arc<Mutex<CourseLibrary>>) {
+    if let Some(imports) = torrents.imports.clone() {
+        let cache = torrents.cache.clone();
+        let disk = torrents.disk.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = imports.restore().await;
+            // Honor the cache cap once restored courses report their bytes.
+            if let Some(cache) = cache {
+                let _ = cache.enforce_limit(None).await;
+            }
+            // Keep watching free space for as long as the app runs.
+            if let Some(disk) = disk {
+                loop {
+                    disk.check().await;
+                    tokio::time::sleep(DISK_CHECK_INTERVAL).await;
+                }
+            }
+        });
+    }
+    let library = Arc::clone(library);
+    tauri::async_runtime::spawn_blocking(move || commands::index_local_texts(&library));
+}
+
 /// Start the learner desktop application.
 ///
 /// # Panics
@@ -86,24 +111,7 @@ pub fn run() {
             if let Some(sharing) = &torrents.sharing {
                 sharing.load()?;
             }
-            if let Some(imports) = torrents.imports.clone() {
-                let cache = torrents.cache.clone();
-                let disk = torrents.disk.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = imports.restore().await;
-                    // Honor the cache cap once restored courses report their bytes.
-                    if let Some(cache) = cache {
-                        let _ = cache.enforce_limit(None).await;
-                    }
-                    // Keep watching free space for as long as the app runs.
-                    if let Some(disk) = disk {
-                        loop {
-                            disk.check().await;
-                            tokio::time::sleep(DISK_CHECK_INTERVAL).await;
-                        }
-                    }
-                });
-            }
+            spawn_background_work(&torrents, &library);
             app.manage(AppState {
                 library,
                 media_gateway,
@@ -135,6 +143,7 @@ pub fn run() {
             commands::read_document,
             commands::read_transcript,
             commands::read_text_resource,
+            commands::search_library,
             commands::list_notes,
             commands::create_note,
             commands::update_note,

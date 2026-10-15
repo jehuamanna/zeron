@@ -821,3 +821,94 @@ fn markdown_and_text_resources_are_readable_text() {
         );
     }
 }
+
+#[test]
+fn search_finds_courses_lessons_notes_transcripts_and_text() {
+    use learning_application::{Anchor, DocumentSource, SearchKind, read_local_document};
+
+    let (_root, mut library) = transcript_fixture();
+    let pending = library.unindexed_local_texts().unwrap();
+    let mut ids: Vec<&str> = pending.iter().map(|(_, id, _)| id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["plain", "readme", "subs_fr", "transcript_en"]);
+    for (course_id, resource_id, source) in &pending {
+        let DocumentSource::Local {
+            path,
+            sha256,
+            byte_length,
+        } = source
+        else {
+            panic!("local");
+        };
+        let bytes = read_local_document(path, sha256, *byte_length).unwrap();
+        assert!(
+            library
+                .index_text_resource(course_id, resource_id, &bytes)
+                .unwrap()
+        );
+        assert!(
+            !library
+                .index_text_resource(course_id, resource_id, &bytes)
+                .unwrap()
+        );
+    }
+    assert_eq!(library.unindexed_local_texts().unwrap().len(), 0);
+    assert!(
+        !library
+            .index_text_resource("course_transcripts", "video_a", b"video")
+            .unwrap()
+    );
+
+    let found = |library: &learning_application::CourseLibrary, query: &str| {
+        let mut found: Vec<(SearchKind, String, Option<f64>)> = library
+            .search_learning(query)
+            .unwrap()
+            .into_iter()
+            .map(|result| (result.kind, result.source_id, result.position))
+            .collect();
+        found.sort_by(|a, b| a.1.cmp(&b.1));
+        found
+    };
+    assert_eq!(
+        found(&library, "hel"),
+        [
+            (SearchKind::Transcript, "video_a".to_owned(), Some(1.0)),
+            (SearchKind::Transcript, "video_b".to_owned(), Some(1.0)),
+        ]
+    );
+    assert_eq!(
+        found(&library, "notes"),
+        [
+            (SearchKind::Text, "plain".to_owned(), None),
+            (SearchKind::Text, "readme".to_owned(), None)
+        ]
+    );
+    let course = library.search_learning("transcripts").unwrap();
+    assert_eq!(
+        (course[0].kind, course[0].lesson_id.as_deref()),
+        (SearchKind::Course, None)
+    );
+    assert_eq!(course[0].course_title, "Transcripts");
+    let lesson = library.search_learning("lesson").unwrap();
+    assert_eq!(
+        (lesson[0].kind, lesson[0].lesson_title.as_deref()),
+        (SearchKind::Lesson, Some("Lesson"))
+    );
+
+    let note = library
+        .create_note(
+            "course_transcripts",
+            "lesson_one",
+            &Anchor::Lesson {},
+            &note_doc("Quorum reads"),
+        )
+        .unwrap();
+    let hit = &library.search_learning("quorum").unwrap()[0];
+    assert_eq!(
+        (hit.kind, hit.source_id.as_str()),
+        (SearchKind::Note, note.note_id.as_str())
+    );
+    assert_eq!(hit.snippet, "\u{e000}Quorum\u{e001} reads");
+    assert_eq!(library.search_learning("\" OR (").unwrap(), []);
+    assert_eq!(library.search_learning("plain notes").unwrap().len(), 1);
+}

@@ -9,6 +9,7 @@ mod library;
 mod local_import;
 mod notes;
 mod progress;
+mod search;
 mod sharing;
 mod streaming;
 mod torrent_import;
@@ -34,6 +35,7 @@ pub use local_import::{
 };
 pub use notes::{Note, NoteChange};
 pub use progress::CourseProgressView;
+pub use search::{SearchKind, SearchResult};
 pub use sharing::{CourseSharing, CourseSharingStatus, SharingError, TransferRouter};
 pub use streaming::{StreamWait, open_lesson_stream};
 pub use torrent_import::{

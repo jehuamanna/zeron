@@ -9,7 +9,7 @@ use learning_application::{
     CourseSharingStatus, DISK_RESERVE_BYTES, DocumentError, DocumentSource, DownloadScope,
     DrawingFile, DrawingSave, EngineError, ImportError, InfoHash, LibraryError, LocalResource,
     MAX_TEXT_BYTES, MAX_TRANSCRIPT_BYTES, NetworkProfile, Note, NoteChange, PeerReachability,
-    RateLimits, SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage,
+    RateLimits, SearchKind, SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage,
     TorrentResource, TorrentSource, TransferState, fits, parse_transcript, read_local_document,
     read_torrent_document,
 };
@@ -433,13 +433,122 @@ pub(crate) async fn choose_and_import_course(
         message: "the selected folder is not on a local disk".to_owned(),
     })?;
     let library = Arc::clone(&state.library);
-    run_blocking(move || {
+    let receipt = run_blocking(move || {
         let mut library = lock_library(&library)?;
         library
             .import_local_folder(&root, &CancellationFlag::default())
             .map(ImportReceiptDto::from)
             .map(Some)
             .map_err(local_import_error)
+    })
+    .await?;
+    let library = Arc::clone(&state.library);
+    tauri::async_runtime::spawn_blocking(move || index_local_texts(&library));
+    Ok(receipt)
+}
+
+/// Index the text of local courses' transcripts and documents that are not
+/// indexed yet. Each file is re-verified against its course while read, with
+/// the library unlocked.
+pub(crate) fn index_local_texts(library: &Mutex<CourseLibrary>) {
+    let Ok(pending) = library
+        .lock()
+        .map_err(drop)
+        .and_then(|library| library.unindexed_local_texts().map_err(drop))
+    else {
+        return;
+    };
+    for (course_id, resource_id, source) in pending {
+        let DocumentSource::Local {
+            path,
+            sha256,
+            byte_length,
+        } = source
+        else {
+            continue;
+        };
+        if byte_length > MAX_TEXT_BYTES.max(MAX_TRANSCRIPT_BYTES as u64) {
+            continue;
+        }
+        let Ok(bytes) = read_local_document(&path, &sha256, byte_length) else {
+            continue;
+        };
+        if let Ok(mut library) = library.lock() {
+            let _ = library.index_text_resource(&course_id, &resource_id, &bytes);
+        }
+    }
+}
+
+/// Index text the window just read, verified, so search finds it next time.
+fn index_read_text(
+    state: &State<'_, AppState>,
+    course_id: String,
+    resource_id: String,
+    bytes: Vec<u8>,
+) {
+    let library = Arc::clone(&state.library);
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Ok(mut library) = library.lock() {
+            let _ = library.index_text_resource(&course_id, &resource_id, &bytes);
+        }
+    });
+}
+
+/// One search match.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SearchResultDto {
+    /// `course`, `lesson`, `note`, `transcript`, or `text`.
+    kind: &'static str,
+    course_id: String,
+    course_title: String,
+    lesson_id: Option<String>,
+    lesson_title: Option<String>,
+    source_id: String,
+    position: Option<f64>,
+    /// Matched terms are wrapped in U+E000 and U+E001.
+    snippet: String,
+}
+
+/// Search courses, lessons, notes, transcripts, and lesson text offline.
+#[tauri::command]
+pub(crate) async fn search_library(
+    query: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SearchResultDto>, CommandError> {
+    if query.len() > 256 {
+        return Err(CommandError {
+            code: "invalid_input",
+            message: "the search is too long".to_owned(),
+        });
+    }
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        let results = lock_library(&library)?
+            .search_learning(&query)
+            .map_err(|_| CommandError {
+                code: "library_query_failed",
+                message: "the library could not be searched".to_owned(),
+            })?;
+        Ok(results
+            .into_iter()
+            .map(|result| SearchResultDto {
+                kind: match result.kind {
+                    SearchKind::Course => "course",
+                    SearchKind::Lesson => "lesson",
+                    SearchKind::Note => "note",
+                    SearchKind::Transcript => "transcript",
+                    SearchKind::Text => "text",
+                },
+                course_id: result.course_id,
+                course_title: result.course_title,
+                lesson_id: result.lesson_id,
+                lesson_title: result.lesson_title,
+                source_id: result.source_id,
+                position: result.position,
+                snippet: result.snippet,
+            })
+            .collect())
     })
     .await
 }
@@ -1171,6 +1280,7 @@ pub(crate) async fn read_text_resource(
     resource_id: String,
     state: State<'_, AppState>,
 ) -> Result<TextResourceDto, CommandError> {
+    let (course_id_for_index, resource_id_for_index) = (course_id.clone(), resource_id.clone());
     let library = Arc::clone(&state.library);
     let (markdown, source) = run_blocking(move || {
         lock_library(&library)?
@@ -1182,7 +1292,14 @@ pub(crate) async fn read_text_resource(
     if source.byte_length() > MAX_TEXT_BYTES {
         return Err(document_error(DocumentError::TooLarge));
     }
-    let text = String::from_utf8(read_source(&state, source).await?).map_err(|_| CommandError {
+    let bytes = read_source(&state, source).await?;
+    index_read_text(
+        &state,
+        course_id_for_index,
+        resource_id_for_index,
+        bytes.clone(),
+    );
+    let text = String::from_utf8(bytes).map_err(|_| CommandError {
         code: "text_unreadable",
         message: "the resource is not UTF-8 text".to_owned(),
     })?;
@@ -1215,6 +1332,7 @@ pub(crate) async fn read_transcript(
     media_resource_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<TranscriptDto>, CommandError> {
+    let course_id_for_index = course_id.clone();
     let library = Arc::clone(&state.library);
     let Some((resource_id, language, source)) = run_blocking(move || {
         lock_library(&library)?
@@ -1229,6 +1347,12 @@ pub(crate) async fn read_transcript(
         return Err(document_error(DocumentError::TooLarge));
     }
     let bytes = read_source(&state, source).await?;
+    index_read_text(
+        &state,
+        course_id_for_index,
+        resource_id.clone(),
+        bytes.clone(),
+    );
     let cues =
         parse_transcript(&bytes).map_err(|error| command_error("transcript_unreadable", error))?;
     Ok(Some(TranscriptDto {

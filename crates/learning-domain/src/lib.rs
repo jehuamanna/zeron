@@ -4,6 +4,7 @@
 mod drawings;
 mod notes;
 mod progress;
+mod search;
 mod transcript;
 
 pub use drawings::{
@@ -12,4 +13,5 @@ pub use drawings::{
 };
 pub use notes::{Anchor, MAX_NOTE_BYTES, NoteBody, NoteError, Region};
 pub use progress::{COMPLETION_RATIO, CourseProgress, LessonStatus, watched_enough};
+pub use search::{fts_query, text_passages, transcript_passages};
 pub use transcript::{Cue, MAX_TRANSCRIPT_BYTES, TranscriptError, parse_transcript};

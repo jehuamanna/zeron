@@ -1,19 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, ChevronLeft, Download, File, HardDrive, Magnet, Network, Play, Search } from "lucide-react";
-import { lazy, Suspense, useCallback, useRef, useState } from "react";
+import { BookOpen, ChevronLeft, Download, File, HardDrive, Magnet, Network, Play } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
 import { AvailabilityLabel, formatSize, KeepOfflineToggle, PauseTransfersButton, useCourseDownloads } from "../features/downloads/downloads";
 import { DocumentViewer } from "../features/documents/DocumentViewer";
 import { DrawingPanel } from "../features/drawings/DrawingPanel";
+import { LibrarySearch } from "../features/search/LibrarySearch";
 import { TranscriptPanel } from "../features/transcripts/TranscriptPanel";
 import { NotesPanel } from "../features/notes/NotesPanel";
 import { LessonPlayer, type PlayerHandle } from "../features/player/LessonPlayer";
 import { LessonStatusIcon, MarkCompleteButton, ProgressBar, useCourseProgress } from "../features/progress/progress";
 import { CourseSharingCard } from "../features/sharing/CourseSharingCard";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
-import { asCommandError, libraryApi, type Region } from "../services/library";
+import { asCommandError, libraryApi, type Region, type SearchResult } from "../services/library";
 import { useLibraryUi } from "../stores/library";
 
 const formatBytes = (bytes: number) =>
@@ -149,6 +150,27 @@ export function App() {
     pendingSeek.current = seconds;
     openMedia.mutate(resourceId);
   };
+
+  // A search result opens its course, then the place it matched.
+  const [searchTarget, setSearchTarget] = useState<SearchResult | null>(null);
+  const openSearchResult = (result: SearchResult) => {
+    setMediaUrl(null);
+    setPlaying(null);
+    setPdfView(null);
+    setTextView(null);
+    setActiveLessonId(null);
+    selectCourse(result.courseId);
+    setSearchTarget(result);
+  };
+  useEffect(() => {
+    if (!searchTarget || detail.data?.courseId !== searchTarget.courseId) return;
+    setSearchTarget(null);
+    if (searchTarget.kind === "transcript") seekTo(searchTarget.sourceId, searchTarget.position ?? 0);
+    else if (searchTarget.kind === "text") openText(searchTarget.sourceId);
+    else if (searchTarget.lessonId) setActiveLessonId(searchTarget.lessonId);
+    // Runs once the target's course has loaded; the openers are fresh each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTarget, detail.data]);
 
   const leaveCourse = () => {
     setMediaUrl(null);
@@ -452,10 +474,7 @@ export function App() {
               <p className="mb-2 text-xs font-bold uppercase tracking-[0.24em] text-cyan-300">Library</p>
               <h1 className="text-4xl font-semibold tracking-tight">Continue learning</h1>
             </div>
-            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-slate-400">
-              <Search size={16} />
-              <span className="text-sm">Search arrives with lesson indexing</span>
-            </div>
+            <LibrarySearch onOpen={openSearchResult} />
           </div>
 
           <TorrentImportPanel engine={readiness.data?.torrentImport ?? "pending"} />

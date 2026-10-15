@@ -34,6 +34,7 @@ vi.mock("../services/library", async (importOriginal) => ({
     notes: vi.fn(() => Promise.resolve([])),
     storage: vi.fn(() => Promise.resolve({ streamedBytes: 0, cacheLimitBytes: null, availableBytes: 50 * 1024 ** 3, lowDisk: false })),
     savePlaybackPosition: vi.fn(() => Promise.resolve(true)),
+    search: vi.fn(),
   },
 }));
 
@@ -177,6 +178,32 @@ describe("learner library", () => {
     await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("/v1/media/opaque/secret"));
     expect(libraryApi.registerMedia).toHaveBeenCalledWith("course_one", "video");
     expect(libraryApi.playbackPosition).toHaveBeenCalledWith("course_one", "video");
+  });
+
+  it("opens a transcript search match in its course at the matched moment", async () => {
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "course_one", courseVersion: "1.0.0", title: "Media Course", description: null,
+      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, modules: [{ id: "module", title: "Module", lessons: [{
+        id: "lesson", title: "Lesson", resources: [{ id: "video", kind: "video", mediaType: "video/mp4", byteLength: 10, durationSeconds: null }],
+      }] }],
+    });
+    vi.mocked(libraryApi.registerMedia).mockResolvedValue({
+      url: "http://127.0.0.1:49152/v1/media/opaque/secret", mediaType: "video/mp4", byteLength: 10,
+    });
+    vi.mocked(libraryApi.search).mockResolvedValue([{
+      kind: "transcript", courseId: "course_one", courseTitle: "Media Course", lessonId: "lesson", lessonTitle: "Lesson",
+      sourceId: "video", position: 42, snippet: "\u{e000}quorum\u{e001} reads",
+    }]);
+
+    const view = renderApp();
+    fireEvent.change(await waitFor(() => view.getByRole("searchbox", { name: "Search your courses" })), { target: { value: "quorum" } });
+    const matches = await waitFor(() => view.getByRole("list", { name: "Matches" }));
+    fireEvent.click(within(matches).getByRole("button"));
+    await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("/v1/media/opaque/secret"));
+    expect(useLibraryUi.getState().selectedCourseId).toBe("course_one");
+    expect(libraryApi.registerMedia).toHaveBeenCalledWith("course_one", "video");
   });
 
   it("streams torrent lessons and shows how much of each is downloaded", async () => {

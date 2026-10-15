@@ -62,6 +62,18 @@ export interface Note {
   updatedAtUnixSeconds: number;
 }
 
+export interface SearchResult {
+  kind: "course" | "lesson" | "note" | "transcript" | "text";
+  courseId: string;
+  courseTitle: string;
+  lessonId: string | null;
+  lessonTitle: string | null;
+  sourceId: string;
+  position: number | null;
+  /** Matched terms are wrapped in U+E000 and U+E001. */
+  snippet: string;
+}
+
 export interface TranscriptCue {
   start: number;
   end: number;
@@ -273,6 +285,7 @@ export const libraryApi = {
   /** Saves only if the note is still at `expectedRevision`; never overwrites a newer note. */
   updateNote: (noteId: string, expectedRevision: number, anchor: NoteAnchor, body: string) =>
     invoke<NoteChange>("update_note", { noteId, expectedRevision, anchor, body }),
+  search: (query: string) => invoke<SearchResult[]>("search_library", { query }),
   readText: (courseId: string, resourceId: string) =>
     invoke<{ format: "markdown" | "text"; text: string }>("read_text_resource", { courseId, resourceId }),
   transcript: (courseId: string, mediaResourceId: string) => invoke<Transcript | null>("read_transcript", { courseId, mediaResourceId }),
