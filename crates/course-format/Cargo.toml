@@ -1,0 +1,23 @@
+[package]
+name = "course-format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+schemars.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "export-course-schema"
+path = "src/bin/export_schema.rs"
+
