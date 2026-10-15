@@ -192,6 +192,18 @@ export interface SeedingStatus {
   failure: string | null;
 }
 
+export interface TrackerList {
+  url: string;
+  trackerCount: number;
+  fetchedAtUnixSeconds: number | null;
+}
+
+export interface TrackerListRefresh {
+  url: string;
+  trackerCount: number | null;
+  error: string | null;
+}
+
 export interface Distribution {
   configuredProfile: NetworkProfile;
   activeProfile: NetworkProfile;
@@ -202,8 +214,12 @@ export interface Distribution {
   portForwarding: boolean;
   activePortForwarding: boolean;
   restartRequired: boolean;
-  /** Trackers written into new releases. */
+  /** Trackers added by hand, written into new releases first. */
   trackers: string[];
+  /** Followed tracker lists with their cached downloads. */
+  trackerLists: TrackerList[];
+  /** How many trackers a release published now would carry. */
+  effectiveTrackerCount: number;
   engineError: string | null;
   releases: SeedingStatus[];
 }
@@ -254,6 +270,8 @@ export const publisherApi = {
   stopSeeding: (releaseId: string) => invoke<void>("stop_seeding", { releaseId }),
   setNetworkProfile: (profile: NetworkProfile) => invoke<void>("set_network_profile", { profile }),
   setTrackers: (trackers: string[]) => invoke<string[]>("set_trackers", { trackers }),
+  setTrackerLists: (urls: string[]) => invoke<string[]>("set_tracker_lists", { urls }),
+  refreshTrackerLists: () => invoke<TrackerListRefresh[]>("refresh_tracker_lists"),
   setPeerReachability: (peerPort: number | null, portForwarding: boolean) =>
     invoke<void>("set_peer_reachability", { peerPort, portForwarding }),
   onDrag: (handler: (active: boolean) => void) => listen<{ active: boolean }>("builder-drag", (event) => handler(event.payload.active)),

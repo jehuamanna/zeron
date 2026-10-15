@@ -16,6 +16,8 @@ tauri-build.workspace = true
 course-format = { path = "../../../crates/course-format" }
 course-publisher = { path = "../../../crates/course-publisher" }
 publisher-application = { path = "../../../crates/publisher-application" }
+futures-util.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
@@ -23,6 +25,7 @@ torrent-librqbit = { path = "../../../crates/torrent-librqbit" }
 
 [dev-dependencies]
 serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true

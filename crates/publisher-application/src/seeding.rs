@@ -12,55 +12,14 @@ use torrent_port::{
 };
 
 use crate::{
-    DistributionOptions, DraftServiceError, PublisherDrafts, RELEASE_PACKAGE_DIRECTORY,
-    RELEASE_TORRENT_FILE, release_directory,
+    DraftServiceError, PublisherDrafts, RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE,
+    release_directory,
     torrents::{StagedAttempt, read_torrent},
 };
 
 const NETWORK_PROFILE_KEY: &str = "network_profile";
 const PEER_PORT_KEY: &str = "peer_port";
 const PORT_FORWARDING_KEY: &str = "port_forwarding";
-const TRACKERS_KEY: &str = "trackers";
-
-/// Most trackers a publisher may list.
-pub const MAX_TRACKERS: usize = 16;
-/// Longest accepted tracker URL, in bytes.
-pub const MAX_TRACKER_URL_BYTES: usize = 512;
-
-/// Trim, validate, and de-duplicate tracker URLs, keeping their order.
-///
-/// # Errors
-/// Returns [`DraftServiceError::InvalidInput`] for more than [`MAX_TRACKERS`]
-/// URLs, an overlong URL, or anything other than an absolute `http`, `https`,
-/// or `udp` URL with a host.
-pub fn normalize_trackers(urls: &[String]) -> Result<Vec<String>, DraftServiceError> {
-    let invalid = |message| DraftServiceError::InvalidInput {
-        field: "trackers".to_owned(),
-        message,
-    };
-    let mut trackers: Vec<String> = Vec::new();
-    for url in urls
-        .iter()
-        .map(|url| url.trim())
-        .filter(|url| !url.is_empty())
-    {
-        if url.len() > MAX_TRACKER_URL_BYTES || url.chars().any(char::is_whitespace) {
-            return Err(invalid(
-                "must be URLs of at most 512 characters without spaces",
-            ));
-        }
-        if !torrent_metainfo::is_tracker_url(url) {
-            return Err(invalid("must be http, https, or udp URLs with a host"));
-        }
-        if !trackers.iter().any(|known| known == url) {
-            trackers.push(url.to_owned());
-        }
-    }
-    if trackers.len() > MAX_TRACKERS {
-        return Err(invalid("can list at most 16 URLs"));
-    }
-    Ok(trackers)
-}
 
 /// Stable storage and IPC name of a network profile.
 #[must_use]
@@ -126,44 +85,6 @@ impl PublisherDrafts {
         Ok(self
             .storage
             .set_setting(PORT_FORWARDING_KEY, reachability.port_forwarding_setting())?)
-    }
-
-    /// Trackers written into new releases, in order; empty unless the
-    /// publisher chose some.
-    ///
-    /// # Errors
-    /// Returns a storage failure.
-    pub fn trackers(&self) -> Result<Vec<String>, DraftServiceError> {
-        Ok(self
-            .storage
-            .setting(TRACKERS_KEY)?
-            .map(|stored| stored.lines().map(str::to_owned).collect())
-            .unwrap_or_default())
-    }
-
-    /// Validate and store the trackers written into new releases. Existing
-    /// releases are immutable and keep the trackers they were published with.
-    ///
-    /// # Errors
-    /// Returns [`DraftServiceError::InvalidInput`] (see [`normalize_trackers`])
-    /// or a storage failure.
-    pub fn set_trackers(&mut self, urls: &[String]) -> Result<Vec<String>, DraftServiceError> {
-        let trackers = normalize_trackers(urls)?;
-        self.storage
-            .set_setting(TRACKERS_KEY, &trackers.join("\n"))?;
-        Ok(trackers)
-    }
-
-    /// Distribution options for a new release: one tier per tracker, so
-    /// clients announce to every tracker rather than stopping at the first.
-    ///
-    /// # Errors
-    /// Returns a storage failure.
-    pub fn distribution_options(&self) -> Result<DistributionOptions, DraftServiceError> {
-        Ok(DistributionOptions {
-            tracker_tiers: self.trackers()?.into_iter().map(|url| vec![url]).collect(),
-            web_seeds: Vec::new(),
-        })
     }
 
     /// One release record.

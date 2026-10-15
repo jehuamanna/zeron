@@ -9,9 +9,10 @@ use std::{
 };
 
 use publisher_application::{
-    DistributionOptions, DraftServiceError, EngineError, MetadataEdit, NetworkProfile,
-    PeerReachability, PublishJobs, PublisherDrafts, ReleaseStatus, SeedingService, StructureEdit,
-    TransferState, TransferStats,
+    DEFAULT_TRACKER_LISTS, DistributionOptions, DraftServiceError, EngineError, MAX_TRACKERS,
+    MetadataEdit, NetworkProfile, PeerReachability, PublishJobs, PublisherDrafts, ReleaseStatus,
+    SeedingService, StructureEdit, TrackerListStatus, TransferState, TransferStats,
+    merge_tracker_lists,
 };
 use torrent_port::{
     FetchRequest, InfoHash, ResolveRequest, ResolvedTorrent, SeedRequest, TorrentEngine,
@@ -466,8 +467,16 @@ fn trackers_are_validated_stored_in_order_and_become_one_tier_each() {
         vec!["tracker.example:6969".to_owned()],
         vec![format!("https://tracker.example/{}", "a".repeat(600))],
         vec!["https://tracker.example/a b".to_owned()],
-        (0..17)
-            .map(|index| format!("udp://tracker{index}.example:6969/announce"))
+        (0..101)
+            .map(|index| format!("udp://t{index}.example:6969/announce"))
+            .collect(),
+        (0..70)
+            .map(|index| {
+                format!(
+                    "udp://tracker-{index:03}.{}.example:6969/announce",
+                    "a".repeat(40)
+                )
+            })
             .collect(),
     ] {
         let error = drafts.set_trackers(&bad).unwrap_err();
@@ -484,4 +493,157 @@ fn trackers_are_validated_stored_in_order_and_become_one_tier_each() {
 
     drafts.set_trackers(&[]).unwrap();
     assert_eq!(drafts.trackers().unwrap().len(), 0);
+}
+
+#[test]
+fn published_tracker_lists_merge_in_order_within_the_limits() {
+    let first =
+        "udp://tracker.one.example:1337/announce\n\nhttp://tracker.two.example:80/announce\n";
+    let second = "# comment\nwss://tracker.webtorrent.example\nudp://tracker.one.example:1337/announce\nnot a url\nhttps://tracker.three.example:443/announce";
+    assert_eq!(
+        merge_tracker_lists(&[first, second]),
+        vec![
+            "udp://tracker.one.example:1337/announce".to_owned(),
+            "http://tracker.two.example:80/announce".to_owned(),
+            "https://tracker.three.example:443/announce".to_owned(),
+        ]
+    );
+
+    let many = (0..150)
+        .map(|index| format!("udp://t{index}.example:6969/announce"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let merged = merge_tracker_lists(&[&many]);
+    assert_eq!(merged.len(), MAX_TRACKERS);
+    assert_eq!(merged[0], "udp://t0.example:6969/announce");
+
+    let long = (0..200)
+        .map(|index| {
+            format!(
+                "udp://tracker-{index:03}.{}.example:6969/announce",
+                "a".repeat(40)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let merged = merge_tracker_lists(&[&long]);
+    assert!(
+        merged.len() < 100,
+        "the magnet budget stops the merge first"
+    );
+    let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+    assert_eq!(
+        drafts.set_trackers(&merged).unwrap(),
+        merged,
+        "a merged list always saves"
+    );
+}
+
+#[test]
+fn tracker_lists_default_cache_per_list_and_follow_hand_added_trackers() {
+    let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+    assert_eq!(
+        drafts.tracker_lists().unwrap(),
+        DEFAULT_TRACKER_LISTS.map(str::to_owned)
+    );
+    assert!(
+        drafts.effective_trackers().unwrap().is_empty(),
+        "nothing fetched yet"
+    );
+    let [first, second] = DEFAULT_TRACKER_LISTS;
+    assert_eq!(
+        drafts.tracker_list_statuses().unwrap()[0],
+        TrackerListStatus {
+            url: first.to_owned(),
+            tracker_count: 0,
+            fetched_at_unix_seconds: None
+        }
+    );
+
+    let stored = drafts
+        .store_tracker_list(
+            first,
+            "udp://a.example:1/announce\nwss://web.example\nudp://b.example:2/announce",
+            100,
+        )
+        .unwrap();
+    assert_eq!(stored, 2, "unsupported lines are dropped");
+    drafts
+        .store_tracker_list(
+            second,
+            "udp://b.example:2/announce\nhttps://c.example/announce",
+            200,
+        )
+        .unwrap();
+    drafts
+        .set_trackers(&["udp://mine.example:3/announce".to_owned()])
+        .unwrap();
+    assert_eq!(
+        drafts.effective_trackers().unwrap(),
+        [
+            "udp://mine.example:3/announce",
+            "udp://a.example:1/announce",
+            "udp://b.example:2/announce",
+            "https://c.example/announce"
+        ]
+    );
+    assert_eq!(
+        drafts.distribution_options().unwrap().tracker_tiers.len(),
+        4
+    );
+    let statuses = drafts.tracker_list_statuses().unwrap();
+    assert_eq!(
+        (
+            statuses[0].tracker_count,
+            statuses[0].fetched_at_unix_seconds
+        ),
+        (2, Some(100))
+    );
+    assert_eq!(
+        (
+            statuses[1].tracker_count,
+            statuses[1].fetched_at_unix_seconds
+        ),
+        (2, Some(200))
+    );
+
+    // A list that is no longer followed stops contributing; removing every
+    // list leaves only the hand-added trackers.
+    drafts.set_tracker_lists(&[second.to_owned()]).unwrap();
+    assert_eq!(
+        drafts.effective_trackers().unwrap(),
+        [
+            "udp://mine.example:3/announce",
+            "udp://b.example:2/announce",
+            "https://c.example/announce"
+        ]
+    );
+    drafts.set_tracker_lists(&[]).unwrap();
+    assert_eq!(
+        drafts.effective_trackers().unwrap(),
+        ["udp://mine.example:3/announce"]
+    );
+
+    let extra = "https://lists.example/mine.txt".to_owned();
+    assert_eq!(
+        drafts
+            .set_tracker_lists(&[format!(" {extra} "), extra.clone(), String::new()])
+            .unwrap(),
+        std::slice::from_ref(&extra)
+    );
+    for bad in [
+        vec!["http://lists.example/plain.txt".to_owned()],
+        vec!["udp://lists.example:1".to_owned()],
+        vec!["lists.example/a.txt".to_owned()],
+        (0..11)
+            .map(|index| format!("https://lists{index}.example/a.txt"))
+            .collect(),
+    ] {
+        let error = drafts.set_tracker_lists(&bad).unwrap_err();
+        assert!(
+            matches!(&error, DraftServiceError::InvalidInput { field, .. } if field == "trackerLists"),
+            "{bad:?}: {error}"
+        );
+    }
+    assert_eq!(drafts.tracker_lists().unwrap(), [extra]);
 }

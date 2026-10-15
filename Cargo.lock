@@ -3638,6 +3638,7 @@ dependencies = [
  "tokio",
  "torrent-metainfo",
  "torrent-port",
+ "url",
 ]
 
 [[package]]
@@ -6521,12 +6522,15 @@ version = "0.1.0"
 dependencies = [
  "course-format",
  "course-publisher",
+ "futures-util",
  "publisher-application",
+ "reqwest",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tokio",
  "torrent-librqbit",
 ]
 

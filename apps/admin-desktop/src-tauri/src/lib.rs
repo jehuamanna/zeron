@@ -2,6 +2,7 @@
 
 mod commands;
 mod drops;
+mod tracker_lists;
 
 use std::{
     path::PathBuf,
@@ -71,6 +72,16 @@ pub fn run() {
                     let _ = seeding.restore().await;
                 });
             }
+            // Fetching lists is internet traffic, so only the Internet profile
+            // refreshes them on its own; the Refresh button works in any profile.
+            if active_profile == NetworkProfile::Internet {
+                let drafts = Arc::clone(&drafts);
+                tauri::async_runtime::spawn(async move {
+                    let _ =
+                        commands::refresh_lists(drafts, Some(tracker_lists::STALE_AFTER_SECONDS))
+                            .await;
+                });
+            }
             app.manage(AppState {
                 drafts,
                 publish_jobs: Arc::new(publish_jobs),
@@ -112,6 +123,8 @@ pub fn run() {
             commands::set_network_profile,
             commands::set_peer_reachability,
             commands::set_trackers,
+            commands::set_tracker_lists,
+            commands::refresh_tracker_lists,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Zeron Publisher");

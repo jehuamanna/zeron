@@ -7,7 +7,7 @@ import { DistributionPage } from "./DistributionPage";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { getDistribution: vi.fn(), startSeeding: vi.fn(), stopSeeding: vi.fn(), setNetworkProfile: vi.fn(), setPeerReachability: vi.fn(), setTrackers: vi.fn() },
+  publisherApi: { getDistribution: vi.fn(), startSeeding: vi.fn(), stopSeeding: vi.fn(), setNetworkProfile: vi.fn(), setPeerReachability: vi.fn(), setTrackers: vi.fn(), setTrackerLists: vi.fn(), refreshTrackerLists: vi.fn() },
 }));
 
 function status(overrides: Partial<SeedingStatus>): SeedingStatus {
@@ -40,6 +40,11 @@ beforeEach(() => {
     activePortForwarding: false,
     restartRequired: false,
     trackers: [],
+    trackerLists: [
+      { url: "https://lists.example/best.txt", trackerCount: 20, fetchedAtUnixSeconds: Math.floor(Date.now() / 1000) - 300 },
+      { url: "https://other.example/best.txt", trackerCount: 0, fetchedAtUnixSeconds: null },
+    ],
+    effectiveTrackerCount: 20,
     engineError: null,
     releases: [status({})],
   };
@@ -54,8 +59,20 @@ beforeEach(() => {
     server = { ...server, configuredProfile: profile, restartRequired: true };
   });
   vi.mocked(publisherApi.setTrackers).mockImplementation(async (trackers) => {
-    server = { ...server, trackers };
+    server = { ...server, trackers, effectiveTrackerCount: server.effectiveTrackerCount + trackers.length };
     return trackers;
+  });
+  vi.mocked(publisherApi.setTrackerLists).mockImplementation(async (urls) => {
+    server = { ...server, trackerLists: urls.map((url) => ({ url, trackerCount: 0, fetchedAtUnixSeconds: null })) };
+    return urls;
+  });
+  vi.mocked(publisherApi.refreshTrackerLists).mockImplementation(async () => {
+    server = {
+      ...server,
+      trackerLists: server.trackerLists.map((list) => ({ ...list, trackerCount: 7, fetchedAtUnixSeconds: Math.floor(Date.now() / 1000) })),
+      effectiveTrackerCount: 7,
+    };
+    return server.trackerLists.map((list) => ({ url: list.url, trackerCount: 7, error: null }));
   });
   vi.mocked(publisherApi.setPeerReachability).mockImplementation(async (peerPort, portForwarding) => {
     server = { ...server, peerPort, portForwarding, restartRequired: true };
@@ -149,7 +166,7 @@ describe("distribution workspace", () => {
 
   it("saves trackers one per line and explains the privacy trade-off", async () => {
     const view = renderPage();
-    const field = await waitFor(() => view.getByLabelText("Tracker URLs, one per line"));
+    const field = await waitFor(() => view.getByLabelText("Additional tracker URLs, one per line"));
     expect(view.container.textContent).toContain("shows the IP address of everyone downloading");
     expect(view.container.textContent).toContain("Only the Internet profile announces to trackers.");
     expect((view.getByRole("button", { name: "Save trackers" }) as HTMLButtonElement).disabled).toBe(true);
@@ -157,15 +174,48 @@ describe("distribution workspace", () => {
     fireEvent.click(view.getByRole("button", { name: "Save trackers" }));
     await waitFor(() => expect(publisherApi.setTrackers).toHaveBeenCalledWith(["udp://tracker.example:6969/announce", "https://tracker.example/announce"]));
     await waitFor(() => expect((view.getByRole("button", { name: "Save trackers" }) as HTMLButtonElement).disabled).toBe(true));
-    expect((view.getByLabelText("Tracker URLs, one per line") as HTMLTextAreaElement).value).toBe(
+    expect((view.getByLabelText("Additional tracker URLs, one per line") as HTMLTextAreaElement).value).toBe(
       "udp://tracker.example:6969/announce\nhttps://tracker.example/announce",
     );
+  });
+
+  it("lists each followed tracker list with its last download and the total", async () => {
+    const view = renderPage();
+    await waitFor(() => expect(view.getByRole("list", { name: "Tracker list status" })).toBeTruthy());
+    const status = view.getByRole("list", { name: "Tracker list status" }).textContent;
+    expect(status).toContain("20 trackers · downloaded 5 min ago");
+    expect(status).toContain("0 trackers · not downloaded yet");
+    expect((view.getByLabelText("Tracker list URLs, one per line") as HTMLTextAreaElement).value).toBe(
+      "https://lists.example/best.txt\nhttps://other.example/best.txt",
+    );
+    expect(view.container.textContent).toContain("New releases will carry 20 trackers: yours first, then the lists.");
+  });
+
+  it("saves an added list URL and downloads the lists again", async () => {
+    const view = renderPage();
+    const field = await waitFor(() => view.getByLabelText("Tracker list URLs, one per line"));
+    fireEvent.change(field, { target: { value: "https://lists.example/best.txt\nhttps://other.example/best.txt\nhttps://mine.example/list.txt" } });
+    fireEvent.click(view.getByRole("button", { name: "Save lists" }));
+    await waitFor(() => expect(publisherApi.refreshTrackerLists).toHaveBeenCalled());
+    expect(publisherApi.setTrackerLists).toHaveBeenCalledWith(["https://lists.example/best.txt", "https://other.example/best.txt", "https://mine.example/list.txt"]);
+    await waitFor(() => expect(view.container.textContent).toContain("New releases will carry 7 trackers"));
+    expect(view.getByRole("list", { name: "Tracker list status" }).textContent).toContain("mine.example/list.txt7 trackers · downloaded just now");
+  });
+
+  it("reports a list that failed to refresh", async () => {
+    vi.mocked(publisherApi.refreshTrackerLists).mockResolvedValue([
+      { url: "https://lists.example/best.txt", trackerCount: 20, error: null },
+      { url: "https://other.example/best.txt", trackerCount: null, error: "the download timed out" },
+    ]);
+    const view = renderPage();
+    fireEvent.click(await waitFor(() => view.getByRole("button", { name: "Refresh lists" })));
+    await waitFor(() => expect(view.getByRole("alert").textContent).toContain("Refresh failed: the download timed out"));
   });
 
   it("shows why trackers were rejected", async () => {
     vi.mocked(publisherApi.setTrackers).mockRejectedValue({ code: "invalid_input", field: "trackers", message: "trackers must be http, https, or udp URLs with a host" });
     const view = renderPage();
-    const field = await waitFor(() => view.getByLabelText("Tracker URLs, one per line"));
+    const field = await waitFor(() => view.getByLabelText("Additional tracker URLs, one per line"));
     fireEvent.change(field, { target: { value: "ftp://tracker.example" } });
     fireEvent.click(view.getByRole("button", { name: "Save trackers" }));
     await waitFor(() => expect(view.getByRole("alert").textContent).toContain("must be http, https, or udp URLs"));

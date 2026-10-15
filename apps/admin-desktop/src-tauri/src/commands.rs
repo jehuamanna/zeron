@@ -3,10 +3,11 @@ use std::sync::{Arc, Mutex};
 use course_format::ResourceKind;
 use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
-    DraftServiceError, DraftSummary, FindingSeverity, MAX_TRACKERS, MetadataEdit, PeerReachability,
-    PublishJobSnapshot, PublishJobs, PublishStage, PublisherDrafts, ReleaseRecord,
-    ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit, TransferState,
-    inspect_draft_media, network_profile_name, parse_network_profile, source_info,
+    DraftServiceError, DraftSummary, FindingSeverity, MAX_TRACKER_LISTS, MAX_TRACKERS,
+    MetadataEdit, PeerReachability, PublishJobSnapshot, PublishJobs, PublishStage, PublisherDrafts,
+    ReleaseRecord, ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit,
+    TrackerListStatus, TransferState, inspect_draft_media, network_profile_name,
+    parse_network_profile, source_info,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -245,10 +246,41 @@ pub(crate) struct DistributionDto {
     active_port_forwarding: bool,
     /// The stored network choice differs from the running engine's.
     restart_required: bool,
-    /// Trackers written into new releases.
+    /// Trackers added by hand, written into new releases first.
     trackers: Vec<String>,
+    /// Followed tracker lists with their cached downloads.
+    tracker_lists: Vec<TrackerListDto>,
+    /// How many trackers a release published now would carry.
+    effective_tracker_count: usize,
     engine_error: Option<String>,
     releases: Vec<SeedingStatusDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrackerListDto {
+    url: String,
+    tracker_count: usize,
+    fetched_at_unix_seconds: Option<u64>,
+}
+
+impl From<TrackerListStatus> for TrackerListDto {
+    fn from(status: TrackerListStatus) -> Self {
+        Self {
+            url: status.url,
+            tracker_count: status.tracker_count,
+            fetched_at_unix_seconds: status.fetched_at_unix_seconds,
+        }
+    }
+}
+
+/// Outcome of downloading one tracker list.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TrackerListRefreshDto {
+    url: String,
+    tracker_count: Option<usize>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -694,13 +726,15 @@ pub(crate) async fn get_distribution(
         .and_then(|engine| torrent_engine_port(engine));
     let engine_error = state.distribution.engine_error.clone();
     run_blocking(move || {
-        let (configured, reachability, trackers) = {
+        let (configured, reachability, trackers, tracker_lists, effective_tracker_count) = {
             let drafts = lock_drafts(&drafts)?;
             let failed = |error| service_error("distribution_failed", error);
             (
                 drafts.network_profile().map_err(failed)?,
                 drafts.peer_reachability().map_err(failed)?,
                 drafts.trackers().map_err(failed)?,
+                drafts.tracker_list_statuses().map_err(failed)?,
+                drafts.effective_trackers().map_err(failed)?.len(),
             )
         };
         let releases = match seeding {
@@ -733,6 +767,11 @@ pub(crate) async fn get_distribution(
             active_port_forwarding: active.1.port_forwarding,
             restart_required: (configured, reachability.for_profile(configured)) != active,
             trackers,
+            tracker_lists: tracker_lists
+                .into_iter()
+                .map(TrackerListDto::from)
+                .collect(),
+            effective_tracker_count,
             engine_error,
             releases,
         })
@@ -795,6 +834,88 @@ pub(crate) async fn set_trackers(
         lock_drafts(&drafts)?
             .set_trackers(&trackers)
             .map_err(|error| service_error("settings_failed", error))
+    })
+    .await
+}
+
+/// Store the tracker lists to follow; returns the normalized list.
+#[tauri::command]
+pub(crate) async fn set_tracker_lists(
+    urls: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, CommandError> {
+    if urls.len() > MAX_TRACKER_LISTS * 4 {
+        return Err(CommandError {
+            field: Some("trackerLists".to_owned()),
+            ..CommandError::new("invalid_input", "too many tracker list lines")
+        });
+    }
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || {
+        lock_drafts(&drafts)?
+            .set_tracker_lists(&urls)
+            .map_err(|error| service_error("settings_failed", error))
+    })
+    .await
+}
+
+/// Download every followed tracker list now and cache the ones that arrive.
+/// A list that fails keeps its previous download.
+#[tauri::command]
+pub(crate) async fn refresh_tracker_lists(
+    state: State<'_, AppState>,
+) -> Result<Vec<TrackerListRefreshDto>, CommandError> {
+    refresh_lists(Arc::clone(&state.drafts), None).await
+}
+
+/// Refresh followed lists, or with `stale_after` only those whose cached copy
+/// is older than that many seconds.
+pub(crate) async fn refresh_lists(
+    drafts: Arc<Mutex<PublisherDrafts>>,
+    stale_after: Option<u64>,
+) -> Result<Vec<TrackerListRefreshDto>, CommandError> {
+    let now = crate::tracker_lists::now_unix_seconds();
+    let listed = Arc::clone(&drafts);
+    let urls = run_blocking(move || {
+        lock_drafts(&listed)?
+            .tracker_list_statuses()
+            .map_err(|error| service_error("settings_failed", error))
+    })
+    .await?
+    .into_iter()
+    .filter(|status| {
+        stale_after.is_none_or(|limit| {
+            status
+                .fetched_at_unix_seconds
+                .is_none_or(|fetched| now.saturating_sub(fetched) > limit)
+        })
+    })
+    .map(|status| status.url)
+    .collect();
+    let fetched = crate::tracker_lists::fetch_all(urls).await;
+    run_blocking(move || {
+        let mut drafts = lock_drafts(&drafts)?;
+        fetched
+            .into_iter()
+            .map(|(url, body)| {
+                Ok(match body {
+                    Ok(body) => TrackerListRefreshDto {
+                        tracker_count: Some(
+                            drafts
+                                .store_tracker_list(&url, &body, now)
+                                .map_err(|error| service_error("settings_failed", error))?,
+                        ),
+                        error: None,
+                        url,
+                    },
+                    Err(error) => TrackerListRefreshDto {
+                        url,
+                        tracker_count: None,
+                        error: Some(error),
+                    },
+                })
+            })
+            .collect()
     })
     .await
 }

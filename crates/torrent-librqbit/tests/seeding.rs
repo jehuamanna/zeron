@@ -595,6 +595,41 @@ async fn magnets_resolve_through_local_service_discovery_alone() {
         resolved.peers
     );
     learner.shutdown().await;
+
+    // Trackers in the magnet are ignored under this profile and must not slow
+    // the resolve down.
+    let trackers = (0..70).fold(String::new(), |mut trackers, index| {
+        use std::fmt::Write as _;
+        let _ = write!(
+            trackers,
+            "&tr=udp%3A%2F%2Ftracker{index}.example%3A6969%2Fannounce"
+        );
+        trackers
+    });
+    let learner = LibrqbitEngine::start(local("learner-engine-trackers", false))
+        .await
+        .unwrap();
+    let started = Instant::now();
+    let resolved = tokio::time::timeout(
+        Duration::from_secs(120),
+        learner.resolve(ResolveRequest {
+            source: TorrentSource::Magnet(format!(
+                "magnet:?xt=urn:btih:{}{trackers}",
+                release.info_hash
+            )),
+            initial_peers: vec![],
+        }),
+    )
+    .await
+    .expect("the learner found no seeder with trackers listed")
+    .unwrap();
+    eprintln!(
+        "with {} trackers listed, resolved in {:?}",
+        trackers.matches("&tr=").count(),
+        started.elapsed()
+    );
+    assert_eq!(resolved.info_hash, info_hash);
+    learner.shutdown().await;
     seeder.shutdown().await;
 }
 

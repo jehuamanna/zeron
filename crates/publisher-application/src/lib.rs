@@ -7,6 +7,7 @@ mod seeding;
 mod sources;
 mod staging;
 mod torrents;
+mod trackers;
 
 use std::path::Path;
 
@@ -33,8 +34,7 @@ pub use releases::{
     RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE, ReleaseTorrent, release_directory,
 };
 pub use seeding::{
-    MAX_TRACKER_URL_BYTES, MAX_TRACKERS, ReleaseSeedingStatus, SeedingService,
-    network_profile_name, normalize_trackers, parse_network_profile,
+    ReleaseSeedingStatus, SeedingService, network_profile_name, parse_network_profile,
 };
 pub use sources::{ResourceMediaFindings, SourceInfo, inspect_draft_media, source_info};
 pub use staging::{StagingReceipt, discard_abandoned_staging, discard_all_attempts, stage_draft};
@@ -47,6 +47,11 @@ pub use torrent_port::{
 pub use torrents::{
     DistributionOptions, TorrentPhase, TorrentReceipt, discard_attempt, generate_torrent,
     verify_staged_torrent,
+};
+pub use trackers::{
+    DEFAULT_TRACKER_LISTS, MAX_MAGNET_TRACKER_BYTES, MAX_TRACKER_LIST_BODY_BYTES,
+    MAX_TRACKER_LISTS, MAX_TRACKER_URL_BYTES, MAX_TRACKERS, TrackerListStatus, merge_tracker_lists,
+    normalize_tracker_lists, normalize_trackers,
 };
 
 const MAX_LIST_ENTRIES: usize = 32;
