@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, ChevronLeft, Download, File, HardDrive, Magnet, Network, Play, Search } from "lucide-react";
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
 import { AvailabilityLabel, formatSize, KeepOfflineToggle, PauseTransfersButton, useCourseDownloads } from "../features/downloads/downloads";
 import { DocumentViewer } from "../features/documents/DocumentViewer";
 import { DrawingPanel } from "../features/drawings/DrawingPanel";
+import { TranscriptPanel } from "../features/transcripts/TranscriptPanel";
 import { NotesPanel } from "../features/notes/NotesPanel";
 import { LessonPlayer, type PlayerHandle } from "../features/player/LessonPlayer";
 import { LessonStatusIcon, MarkCompleteButton, ProgressBar, useCourseProgress } from "../features/progress/progress";
@@ -124,6 +125,7 @@ export function App() {
       ? [note.anchor.region]
       : [],
   );
+  const currentPlayerTime = useCallback(() => player.current?.currentTime() ?? 0, []);
   const seekTo = (resourceId: string, seconds: number) => {
     if (playing === resourceId) {
       player.current?.seek(seconds);
@@ -244,6 +246,15 @@ export function App() {
                             ? (asCommandError(openMedia.error)?.message ?? "This lesson could not be streamed.")
                             : "This verified media file is no longer available."}
                         </p>
+                      ) : null}
+                      {mediaUrl && playing && !pdfView ? (
+                        <TranscriptPanel
+                          key={playing}
+                          courseId={detail.data.courseId}
+                          mediaResourceId={playing}
+                          currentTime={currentPlayerTime}
+                          onSeek={(seconds) => seekTo(playing, seconds)}
+                        />
                       ) : null}
                     </div>
                     {activeLesson ? (

@@ -133,6 +133,7 @@ pub fn run() {
             commands::remove_downloads,
             commands::get_course_progress,
             commands::read_document,
+            commands::read_transcript,
             commands::list_notes,
             commands::create_note,
             commands::update_note,

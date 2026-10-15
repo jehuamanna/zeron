@@ -658,3 +658,125 @@ fn drawings_save_from_their_current_revision_and_keep_images() {
         1
     );
 }
+
+const TRANSCRIPT_VTT: &[u8] = b"WEBVTT\n\n00:01.000 --> 00:02.000\nHello\n";
+
+fn transcript_fixture() -> (TempRoot, CourseLibrary) {
+    let vtt = TRANSCRIPT_VTT;
+    let root = TempRoot::new();
+    let course = root.path().join("transcripts");
+    fs::create_dir(&course).unwrap();
+    let mut resources = Vec::new();
+    let mut add = |id: &str, kind: &str, file: &str, bytes: &[u8], extra: serde_json::Value| {
+        fs::write(course.join(file), bytes).unwrap();
+        let digest = Sha256::digest(bytes)
+            .iter()
+            .fold(String::new(), |mut hex, byte| {
+                write!(&mut hex, "{byte:02x}").unwrap();
+                hex
+            });
+        let mut resource = json!({ "id": id, "kind": kind, "path": file, "mediaType": "application/octet-stream", "byteLength": bytes.len(), "sha256": digest });
+        for (key, value) in extra.as_object().unwrap() {
+            resource[key] = value.clone();
+        }
+        resources.push(resource);
+    };
+    add(
+        "video_a",
+        "video",
+        "a.mp4",
+        b"video a",
+        json!({ "relations": [{ "kind": "subtitle", "resourceId": "subs_fr" }] }),
+    );
+    add("video_b", "video", "b.mp4", b"video b", json!({}));
+    add(
+        "subs_fr",
+        "subtitle",
+        "a.fr.vtt",
+        vtt,
+        json!({ "language": "fr" }),
+    );
+    add(
+        "transcript_en",
+        "transcript",
+        "en.vtt",
+        vtt,
+        json!({ "language": "en" }),
+    );
+    add("handout", "pdf", "handout.pdf", b"%PDF-1.4\n", json!({}));
+    let manifest = json!({
+        "schemaVersion": 1, "courseId": "course_transcripts", "version": "1.0.0", "title": "Transcripts",
+        "publisher": { "name": "Zeron Tests" }, "language": "en",
+        "modules": [{ "id": "module_one", "title": "Module", "position": 0, "lessons": [
+            { "id": "lesson_one", "title": "Lesson", "position": 0, "resources": resources },
+        ] }]
+    });
+    fs::write(
+        course.join("course.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let mut library = CourseLibrary::open(
+        &root.path().join("library.sqlite3"),
+        ImportLimits::default(),
+    )
+    .unwrap();
+    library
+        .import_local_folder(&course, &CancellationFlag::default())
+        .unwrap();
+
+    (root, library)
+}
+
+#[test]
+fn media_finds_its_transcript_by_relation_then_by_lesson() {
+    use learning_application::{DocumentSource, read_local_document};
+
+    let (_root, library) = transcript_fixture();
+    let vtt = TRANSCRIPT_VTT;
+    let (id, language, source) = library
+        .transcript_source("course_transcripts", "video_a")
+        .unwrap()
+        .unwrap();
+    assert_eq!((id.as_str(), language.as_deref()), ("subs_fr", Some("fr")));
+    let DocumentSource::Local {
+        path,
+        sha256,
+        byte_length,
+    } = source
+    else {
+        panic!("a local transcript");
+    };
+    assert_eq!(
+        read_local_document(&path, &sha256, byte_length).unwrap(),
+        vtt
+    );
+    let (id, language, _) = library
+        .transcript_source("course_transcripts", "video_b")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (id.as_str(), language.as_deref()),
+        ("transcript_en", Some("en"))
+    );
+    for (course_id, resource) in [
+        ("course_transcripts", "handout"),
+        ("course_transcripts", "transcript_en"),
+        ("course_transcripts", "missing"),
+        ("course_missing", "video_a"),
+    ] {
+        assert!(
+            library
+                .transcript_source(course_id, resource)
+                .unwrap()
+                .is_none(),
+            "{resource}"
+        );
+    }
+    assert!(
+        library
+            .document_source("course_transcripts", "transcript_en")
+            .unwrap()
+            .is_none()
+    );
+}

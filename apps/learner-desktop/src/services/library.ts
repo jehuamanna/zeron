@@ -62,6 +62,18 @@ export interface Note {
   updatedAtUnixSeconds: number;
 }
 
+export interface TranscriptCue {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface Transcript {
+  resourceId: string;
+  language: string | null;
+  cues: TranscriptCue[];
+}
+
 export interface DrawingFile {
   id: string;
   mimeType: string;
@@ -261,6 +273,7 @@ export const libraryApi = {
   /** Saves only if the note is still at `expectedRevision`; never overwrites a newer note. */
   updateNote: (noteId: string, expectedRevision: number, anchor: NoteAnchor, body: string) =>
     invoke<NoteChange>("update_note", { noteId, expectedRevision, anchor, body }),
+  transcript: (courseId: string, mediaResourceId: string) => invoke<Transcript | null>("read_transcript", { courseId, mediaResourceId }),
   drawing: (courseId: string, lessonId: string) => invoke<Drawing | null>("get_drawing", { courseId, lessonId }),
   saveDrawing: (courseId: string, lessonId: string, expectedRevision: number | null, sceneJson: string, files: DrawingFile[]) =>
     invoke<DrawingSave>("save_drawing", { courseId, lessonId, expectedRevision, sceneJson, files }),

@@ -8,9 +8,10 @@ use learning_application::{
     Anchor, Availability, CacheError, CancellationFlag, CourseImportReceipt, CourseLibrary,
     CourseSharingStatus, DISK_RESERVE_BYTES, DocumentError, DocumentSource, DownloadScope,
     DrawingFile, DrawingSave, EngineError, ImportError, InfoHash, LibraryError, LocalResource,
-    NetworkProfile, Note, NoteChange, PeerReachability, RateLimits, SharingError, TorrentEngine,
-    TorrentImportSnapshot, TorrentImportStage, TorrentResource, TorrentSource, TransferState, fits,
-    read_local_document, read_torrent_document,
+    MAX_TRANSCRIPT_BYTES, NetworkProfile, Note, NoteChange, PeerReachability, RateLimits,
+    SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage, TorrentResource,
+    TorrentSource, TransferState, fits, parse_transcript, read_local_document,
+    read_torrent_document,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::{Deserialize, Serialize};
@@ -1117,7 +1118,16 @@ pub(crate) async fn read_document(
     })
     .await?
     .ok_or_else(|| document_error(DocumentError::NotADocument))?;
-    let bytes = match source {
+    let bytes = read_source(&state, source).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Verified bytes of a document, local or from the torrent stream.
+async fn read_source(
+    state: &State<'_, AppState>,
+    source: DocumentSource,
+) -> Result<Vec<u8>, CommandError> {
+    match source {
         DocumentSource::Local {
             path,
             sha256,
@@ -1126,7 +1136,7 @@ pub(crate) async fn read_document(
             run_blocking(move || {
                 read_local_document(&path, &sha256, byte_length).map_err(document_error)
             })
-            .await?
+            .await
         }
         DocumentSource::Torrent {
             info_hash,
@@ -1140,10 +1150,62 @@ pub(crate) async fn read_document(
                 .ok_or_else(|| document_error(DocumentError::Unavailable))?;
             read_torrent_document(&*router, &info_hash, file_index, byte_length)
                 .await
-                .map_err(document_error)?
+                .map_err(document_error)
         }
+    }
+}
+
+/// A transcript as timed cues.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TranscriptDto {
+    resource_id: String,
+    language: Option<String>,
+    cues: Vec<CueDto>,
+}
+
+#[derive(Debug, Serialize)]
+struct CueDto {
+    start: f64,
+    end: f64,
+    text: String,
+}
+
+/// The transcript of a video or audio resource, or `null` when it has none.
+#[tauri::command]
+pub(crate) async fn read_transcript(
+    course_id: String,
+    media_resource_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<TranscriptDto>, CommandError> {
+    let library = Arc::clone(&state.library);
+    let Some((resource_id, language, source)) = run_blocking(move || {
+        lock_library(&library)?
+            .transcript_source(&course_id, &media_resource_id)
+            .map_err(|error| document_error(DocumentError::Library(error)))
+    })
+    .await?
+    else {
+        return Ok(None);
     };
-    Ok(tauri::ipc::Response::new(bytes))
+    if source.byte_length() > MAX_TRANSCRIPT_BYTES as u64 {
+        return Err(document_error(DocumentError::TooLarge));
+    }
+    let bytes = read_source(&state, source).await?;
+    let cues =
+        parse_transcript(&bytes).map_err(|error| command_error("transcript_unreadable", error))?;
+    Ok(Some(TranscriptDto {
+        resource_id,
+        language,
+        cues: cues
+            .into_iter()
+            .map(|cue| CueDto {
+                start: cue.start,
+                end: cue.end,
+                text: cue.text,
+            })
+            .collect(),
+    }))
 }
 
 fn document_error(error: DocumentError) -> CommandError {
