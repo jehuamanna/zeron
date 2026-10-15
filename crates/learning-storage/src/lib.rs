@@ -13,7 +13,8 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 2;
+const CURRENT_SCHEMA_VERSION: i64 = 3;
+const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash";
 
 /// Durable course metadata returned to application use cases.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +33,22 @@ pub struct StoredCourseSummary {
     pub total_resource_bytes: u64,
     /// Unix timestamp in seconds at successful import.
     pub imported_at_unix_seconds: u64,
+    /// Info hash when the course was imported from a torrent; such courses'
+    /// resource bytes are not locally verified until downloaded.
+    pub torrent_info_hash: Option<String>,
+}
+
+/// Backend-only description of a torrent-sourced course for engine restore.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TorrentCourseSource {
+    /// Stable logical course ID.
+    pub course_id: String,
+    /// v1 info hash.
+    pub info_hash: String,
+    /// Complete `.torrent` bytes.
+    pub metainfo: Vec<u8>,
+    /// Learner-owned download directory. Never serialize this over IPC.
+    pub content_root: PathBuf,
 }
 
 /// Storage startup and operation failures.
@@ -129,7 +146,119 @@ impl Storage {
             .duration_since(UNIX_EPOCH)
             .map_err(|_| StorageError::InvalidSystemClock)?
             .as_secs();
-        self.save_imported_course_at(manifest, total_resource_bytes, package_root, imported_at)
+        self.save_imported_course_at(
+            manifest,
+            total_resource_bytes,
+            package_root,
+            imported_at,
+            None,
+        )
+    }
+
+    /// Persist a course whose validated manifest came from a torrent. Only
+    /// `course.json` is verified at this point; resource bytes are not.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when serialization, clock, or `SQLite` operations fail.
+    pub fn save_torrent_course(
+        &mut self,
+        manifest: &CourseManifest,
+        total_resource_bytes: u64,
+        content_root: &Path,
+        info_hash: &str,
+        metainfo: &[u8],
+    ) -> Result<StoredCourseSummary, StorageError> {
+        let imported_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| StorageError::InvalidSystemClock)?
+            .as_secs();
+        self.save_imported_course_at(
+            manifest,
+            total_resource_bytes,
+            content_root,
+            imported_at,
+            Some((info_hash, metainfo)),
+        )
+    }
+
+    /// Torrent source of a course, if it was imported from a torrent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn course_torrent_info_hash(
+        &self,
+        course_id: &str,
+    ) -> Result<Option<String>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT info_hash FROM course_torrent_sources WHERE course_id = ?1",
+                [course_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    /// Every torrent-sourced course with its metainfo and download directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query or path-decoding failures.
+    pub fn torrent_course_sources(&self) -> Result<Vec<TorrentCourseSource>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT t.course_id, t.info_hash, t.metainfo, l.path_encoding, l.path_bytes
+             FROM course_torrent_sources AS t JOIN course_locations AS l ON l.course_id = t.course_id
+             ORDER BY t.course_id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (course_id, info_hash, metainfo, encoding, bytes) = row?;
+            Ok(TorrentCourseSource {
+                course_id,
+                info_hash,
+                metainfo,
+                content_root: decode_path(&encoding, &bytes)?,
+            })
+        })
+        .collect()
+    }
+
+    /// Read a learner setting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn setting(&self, key: &str) -> Result<Option<String>, StorageError> {
+        self.connection
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    /// Write a learner setting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for `SQLite` failures.
+    pub fn set_setting(&mut self, key: &str, value: &str) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
     }
 
     /// Fetch one course summary by stable logical ID.
@@ -141,7 +270,7 @@ impl Storage {
     pub fn course(&self, course_id: &str) -> Result<Option<StoredCourseSummary>, StorageError> {
         self.connection
             .query_row(
-                "SELECT course_id, course_version, title, publisher_name, language, total_resource_bytes, imported_at FROM courses WHERE course_id = ?1",
+                &format!("SELECT {SUMMARY_COLUMNS} FROM courses AS c LEFT JOIN course_torrent_sources AS t ON t.course_id = c.course_id WHERE c.course_id = ?1"),
                 [course_id],
                 summary_from_row,
             )
@@ -155,9 +284,9 @@ impl Storage {
     ///
     /// Returns [`StorageError`] for `SQLite` query or row-decoding failures.
     pub fn list_courses(&self) -> Result<Vec<StoredCourseSummary>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "SELECT course_id, course_version, title, publisher_name, language, total_resource_bytes, imported_at FROM courses ORDER BY title COLLATE NOCASE, course_id",
-        )?;
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {SUMMARY_COLUMNS} FROM courses AS c LEFT JOIN course_torrent_sources AS t ON t.course_id = c.course_id ORDER BY c.title COLLATE NOCASE, c.course_id"
+        ))?;
         let rows = statement.query_map([], summary_from_row)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StorageError::from)
@@ -211,12 +340,13 @@ impl Storage {
     /// Returns [`StorageError`] when `SQLite` rejects the bound FTS query. The
     /// caller should present syntax errors as recoverable user input errors.
     pub fn search_courses(&self, query: &str) -> Result<Vec<StoredCourseSummary>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "SELECT c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {SUMMARY_COLUMNS}
              FROM course_search AS s JOIN courses AS c ON c.course_id = s.course_id
+             LEFT JOIN course_torrent_sources AS t ON t.course_id = c.course_id
              WHERE course_search MATCH ?1
-             ORDER BY bm25(course_search), c.course_id",
-        )?;
+             ORDER BY bm25(course_search), c.course_id"
+        ))?;
         let rows = statement.query_map([query], summary_from_row)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StorageError::from)
@@ -228,6 +358,7 @@ impl Storage {
         total_resource_bytes: u64,
         package_root: &Path,
         imported_at: u64,
+        torrent: Option<(&str, &[u8])>,
     ) -> Result<StoredCourseSummary, StorageError> {
         let total_bytes = sqlite_integer(total_resource_bytes, "total resource bytes")?;
         let imported_at_i64 = sqlite_integer(imported_at, "import timestamp")?;
@@ -295,6 +426,16 @@ impl Storage {
                 imported_at_i64
             ],
         )?;
+        tx.execute(
+            "DELETE FROM course_torrent_sources WHERE course_id = ?1",
+            [&manifest.course_id],
+        )?;
+        if let Some((info_hash, metainfo)) = torrent {
+            tx.execute(
+                "INSERT INTO course_torrent_sources (course_id, info_hash, metainfo) VALUES (?1, ?2, ?3)",
+                params![manifest.course_id, info_hash, metainfo],
+            )?;
+        }
         refresh_search_row(&tx, manifest)?;
         tx.commit()?;
 
@@ -306,6 +447,7 @@ impl Storage {
             language: manifest.language.clone(),
             total_resource_bytes,
             imported_at_unix_seconds: imported_at,
+            torrent_info_hash: torrent.map(|(info_hash, _)| info_hash.to_owned()),
         })
     }
 }
@@ -365,6 +507,23 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
                verified_at INTEGER NOT NULL CHECK(verified_at >= 0)
              ) STRICT;
              PRAGMA user_version = 2;",
+        )?;
+        tx.commit()?;
+        found = 2;
+    }
+    if found == 2 {
+        let tx = connection.transaction()?;
+        tx.execute_batch(
+            "CREATE TABLE course_torrent_sources (
+               course_id TEXT PRIMARY KEY NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+               info_hash TEXT NOT NULL,
+               metainfo BLOB NOT NULL
+             ) STRICT;
+             CREATE TABLE settings (
+               key TEXT PRIMARY KEY NOT NULL,
+               value TEXT NOT NULL
+             ) STRICT;
+             PRAGMA user_version = 3;",
         )?;
         tx.commit()?;
     }
@@ -430,6 +589,7 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredCourseSum
                 Box::new(error),
             )
         })?,
+        torrent_info_hash: row.get(7)?,
     })
 }
 
@@ -514,7 +674,7 @@ mod tests {
         let mut storage = Storage::open_in_memory().unwrap();
         let original = manifest("Distributed Systems", "networks");
         storage
-            .save_imported_course_at(&original, 128, Path::new("/course/original"), 10)
+            .save_imported_course_at(&original, 128, Path::new("/course/original"), 10, None)
             .unwrap();
         assert_eq!(
             storage.course(&original.course_id).unwrap().unwrap().title,
@@ -527,7 +687,7 @@ mod tests {
 
         let updated = manifest("Distributed Systems Updated", "consensus");
         storage
-            .save_imported_course_at(&updated, 256, Path::new("/course/updated"), 20)
+            .save_imported_course_at(&updated, 256, Path::new("/course/updated"), 20, None)
             .unwrap();
         let summary = storage.course(&updated.course_id).unwrap().unwrap();
         assert_eq!(summary.title, "Distributed Systems Updated");
@@ -539,6 +699,59 @@ mod tests {
         );
         assert!(storage.search_courses("networks").unwrap().is_empty());
         assert_eq!(storage.search_courses("consensus").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn torrent_sources_are_recorded_and_cleared_by_local_reimport() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Torrent Course", "p2p");
+        let summary = storage
+            .save_torrent_course(
+                &course,
+                64,
+                Path::new("/cache/abc"),
+                &"a".repeat(40),
+                b"d4:infoe",
+            )
+            .unwrap();
+        assert_eq!(
+            summary.torrent_info_hash.as_deref(),
+            Some("a".repeat(40).as_str())
+        );
+        assert_eq!(
+            storage.list_courses().unwrap()[0]
+                .torrent_info_hash
+                .as_deref(),
+            Some("a".repeat(40).as_str())
+        );
+        assert_eq!(
+            storage.course_torrent_info_hash(&course.course_id).unwrap(),
+            Some("a".repeat(40))
+        );
+        let sources = storage.torrent_course_sources().unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].metainfo, b"d4:infoe");
+        assert_eq!(sources[0].content_root, Path::new("/cache/abc"));
+
+        storage
+            .save_imported_course(&course, 64, Path::new("/local/course"))
+            .unwrap();
+        assert!(
+            storage
+                .course(&course.course_id)
+                .unwrap()
+                .unwrap()
+                .torrent_info_hash
+                .is_none()
+        );
+        assert!(storage.torrent_course_sources().unwrap().is_empty());
+
+        assert_eq!(storage.setting("network_profile").unwrap(), None);
+        storage.set_setting("network_profile", "internet").unwrap();
+        assert_eq!(
+            storage.setting("network_profile").unwrap().as_deref(),
+            Some("internet")
+        );
     }
 
     #[test]
@@ -556,7 +769,7 @@ mod tests {
         let mut storage = Storage::open_in_memory().unwrap();
         let manifest = manifest("Course", "tag");
         assert!(matches!(
-            storage.save_imported_course_at(&manifest, u64::MAX, Path::new("/course"), 1),
+            storage.save_imported_course_at(&manifest, u64::MAX, Path::new("/course"), 1, None),
             Err(StorageError::IntegerOverflow("total resource bytes"))
         ));
     }
@@ -566,7 +779,7 @@ mod tests {
         let mut storage = Storage::open_in_memory().unwrap();
         let manifest = manifest("Course", "tag");
         storage
-            .save_imported_course_at(&manifest, 128, Path::new("/course"), 1)
+            .save_imported_course_at(&manifest, 128, Path::new("/course"), 1, None)
             .unwrap();
         storage
             .connection

@@ -7,7 +7,9 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use learning_application::{CancellationFlag, CourseLibrary, ImportLimits, LibraryError};
+use learning_application::{
+    CancellationFlag, CourseLibrary, ImportLimits, LibraryError, NetworkProfile,
+};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -119,6 +121,25 @@ fn verified_import_survives_database_restart() {
     assert_eq!(resource.path, course_root.join("lesson.mp4"));
     assert_eq!(resource.media_type, "video/mp4");
     assert_eq!(resource.byte_length, 23);
+    assert_eq!(library.torrent_info_hash("course_recovery").unwrap(), None);
+}
+
+#[test]
+fn network_profile_defaults_to_local_network_and_persists() {
+    let temp = TempRoot::new();
+    let database = temp.path().join("library.sqlite3");
+    {
+        let mut library = CourseLibrary::open(&database, ImportLimits::default()).unwrap();
+        assert_eq!(
+            library.network_profile().unwrap(),
+            NetworkProfile::LocalNetwork
+        );
+        library
+            .set_network_profile(NetworkProfile::Internet)
+            .unwrap();
+    }
+    let library = CourseLibrary::open(&database, ImportLimits::default()).unwrap();
+    assert_eq!(library.network_profile().unwrap(), NetworkProfile::Internet);
 }
 
 #[test]

@@ -21,22 +21,13 @@ const NETWORK_PROFILE_KEY: &str = "network_profile";
 /// Stable storage and IPC name of a network profile.
 #[must_use]
 pub const fn network_profile_name(profile: NetworkProfile) -> &'static str {
-    match profile {
-        NetworkProfile::Loopback => "loopback",
-        NetworkProfile::LocalNetwork => "local_network",
-        NetworkProfile::Internet => "internet",
-    }
+    profile.name()
 }
 
 /// Parse a network profile name.
 #[must_use]
 pub fn parse_network_profile(value: &str) -> Option<NetworkProfile> {
-    match value {
-        "loopback" => Some(NetworkProfile::Loopback),
-        "local_network" => Some(NetworkProfile::LocalNetwork),
-        "internet" => Some(NetworkProfile::Internet),
-        _ => None,
-    }
+    NetworkProfile::from_name(value)
 }
 
 impl PublisherDrafts {

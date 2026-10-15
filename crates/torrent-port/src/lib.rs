@@ -53,6 +53,26 @@ pub enum NetworkProfile {
     Internet,
 }
 
+impl NetworkProfile {
+    /// Stable storage and IPC name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Loopback => "loopback",
+            Self::LocalNetwork => "local_network",
+            Self::Internet => "internet",
+        }
+    }
+
+    /// Parse a stable name produced by [`Self::name`].
+    #[must_use]
+    pub fn from_name(value: &str) -> Option<Self> {
+        [Self::Loopback, Self::LocalNetwork, Self::Internet]
+            .into_iter()
+            .find(|profile| profile.name() == value)
+    }
+}
+
 /// Seed an immutable, already complete content directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeedRequest {
@@ -225,5 +245,17 @@ mod tests {
         for bad in ["", "abc", &"g".repeat(40), &"a".repeat(41)] {
             assert!(InfoHash::parse(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn network_profile_names_round_trip() {
+        for profile in [
+            NetworkProfile::Loopback,
+            NetworkProfile::LocalNetwork,
+            NetworkProfile::Internet,
+        ] {
+            assert_eq!(NetworkProfile::from_name(profile.name()), Some(profile));
+        }
+        assert_eq!(NetworkProfile::from_name("LocalNetwork"), None);
     }
 }

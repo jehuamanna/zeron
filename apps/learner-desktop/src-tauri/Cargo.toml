@@ -20,6 +20,7 @@ serde.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
 tokio.workspace = true
+torrent-librqbit = { path = "../../../crates/torrent-librqbit" }
 
 [lints]
 workspace = true

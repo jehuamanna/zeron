@@ -1,10 +1,13 @@
 use std::path::{Path, PathBuf};
 
 use course_format::CourseManifest;
-use learning_storage::{Storage, StorageError, StoredCourseSummary};
+use learning_storage::{Storage, StorageError, StoredCourseSummary, TorrentCourseSource};
 use thiserror::Error;
+use torrent_port::NetworkProfile;
 
 use crate::{CancellationFlag, ImportError, ImportLimits, import_local_course};
+
+const NETWORK_PROFILE_KEY: &str = "network_profile";
 
 /// Result of a verified and durably persisted local course import.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +114,72 @@ impl CourseLibrary {
         Ok(receipt)
     }
 
+    /// Persist a course whose manifest was validated from a torrent. Only
+    /// `course.json` is verified; resources stay unavailable to playback.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] when persistence fails.
+    pub fn save_torrent_course(
+        &mut self,
+        manifest: &CourseManifest,
+        total_resource_bytes: u64,
+        content_root: &Path,
+        info_hash: &str,
+        metainfo: &[u8],
+    ) -> Result<StoredCourseSummary, LibraryError> {
+        Ok(self.storage.save_torrent_course(
+            manifest,
+            total_resource_bytes,
+            content_root,
+            info_hash,
+            metainfo,
+        )?)
+    }
+
+    /// Torrent-sourced courses for engine restore. Paths stay in the backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on query failure.
+    pub fn torrent_course_sources(&self) -> Result<Vec<TorrentCourseSource>, LibraryError> {
+        Ok(self.storage.torrent_course_sources()?)
+    }
+
+    /// Info hash of a torrent-sourced course, or `None` for local imports.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on query failure.
+    pub fn torrent_info_hash(&self, course_id: &str) -> Result<Option<String>, LibraryError> {
+        Ok(self.storage.course_torrent_info_hash(course_id)?)
+    }
+
+    /// Configured network profile; local network unless the learner chose otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on query failure.
+    pub fn network_profile(&self) -> Result<NetworkProfile, LibraryError> {
+        Ok(self
+            .storage
+            .setting(NETWORK_PROFILE_KEY)?
+            .as_deref()
+            .and_then(NetworkProfile::from_name)
+            .unwrap_or(NetworkProfile::LocalNetwork))
+    }
+
+    /// Persist the network profile used the next time the engine starts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on write failure.
+    pub fn set_network_profile(&mut self, profile: NetworkProfile) -> Result<(), LibraryError> {
+        Ok(self
+            .storage
+            .set_setting(NETWORK_PROFILE_KEY, profile.name())?)
+    }
+
     /// List durably imported courses.
     ///
     /// # Errors
@@ -158,6 +227,9 @@ impl CourseLibrary {
         course_id: &str,
         resource_id: &str,
     ) -> Result<Option<std::path::PathBuf>, LibraryError> {
+        if self.storage.course_torrent_info_hash(course_id)?.is_some() {
+            return Ok(None);
+        }
         let Some(manifest) = self.storage.course_manifest(course_id)? else {
             return Ok(None);
         };
@@ -185,6 +257,9 @@ impl CourseLibrary {
         course_id: &str,
         resource_id: &str,
     ) -> Result<Option<LocalResource>, LibraryError> {
+        if self.storage.course_torrent_info_hash(course_id)?.is_some() {
+            return Ok(None);
+        }
         let Some(manifest) = self.storage.course_manifest(course_id)? else {
             return Ok(None);
         };

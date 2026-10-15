@@ -8,11 +8,18 @@ publish.workspace = true
 [dependencies]
 course-format = { path = "../course-format" }
 learning-storage = { path = "../learning-storage" }
+getrandom.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "time"] }
+torrent-port = { path = "../torrent-port" }
 
 [dev-dependencies]
+publisher-application = { path = "../publisher-application" }
 serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+torrent-librqbit = { path = "../torrent-librqbit" }
+torrent-metainfo = { path = "../torrent-metainfo" }
 
 [lints]
 workspace = true

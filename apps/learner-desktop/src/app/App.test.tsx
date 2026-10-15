@@ -6,13 +6,19 @@ import { libraryApi } from "../services/library";
 import { App } from "./App";
 import { useLibraryUi } from "../stores/library";
 
-vi.mock("../services/library", () => ({
+vi.mock("../services/library", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/library")>()),
   libraryApi: {
     readiness: vi.fn(),
     list: vi.fn(),
     chooseAndImport: vi.fn(),
     detail: vi.fn(),
     registerMedia: vi.fn(),
+    chooseTorrentFile: vi.fn(),
+    importMagnet: vi.fn(),
+    getTorrentImport: vi.fn(),
+    cancelTorrentImport: vi.fn(),
+    onTorrentImport: vi.fn(() => Promise.resolve(() => {})),
   },
 }));
 
@@ -28,10 +34,13 @@ function renderApp() {
 }
 
 describe("learner library", () => {
-  beforeEach(() => useLibraryUi.getState().selectCourse(null));
+  beforeEach(() => {
+    useLibraryUi.getState().selectCourse(null);
+    useLibraryUi.getState().dismissTorrentImport();
+  });
 
   it("shows a durable course summary without a filesystem path", async () => {
-    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready" });
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
     vi.mocked(libraryApi.list).mockResolvedValue([
       {
         courseId: "course_one",
@@ -41,6 +50,8 @@ describe("learner library", () => {
         language: "en",
         totalResourceBytes: 2_000_000,
         importedAtUnixSeconds: 1,
+        source: "local",
+        torrentInfoHash: null,
       },
     ]);
 
@@ -51,7 +62,7 @@ describe("learner library", () => {
   });
 
   it("shows the recoverable empty-library state", async () => {
-    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready" });
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
     vi.mocked(libraryApi.list).mockResolvedValue([]);
 
     const view = renderApp();
@@ -59,7 +70,7 @@ describe("learner library", () => {
   });
 
   it("opens a path-free course outline", async () => {
-    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready" });
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
     vi.mocked(libraryApi.list).mockResolvedValue([
       {
         courseId: "course_one",
@@ -69,6 +80,8 @@ describe("learner library", () => {
         language: "en",
         totalResourceBytes: 2_000_000,
         importedAtUnixSeconds: 1,
+        source: "local",
+        torrentInfoHash: null,
       },
     ]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
@@ -77,6 +90,8 @@ describe("learner library", () => {
       title: "Distributed Systems",
       description: "Course detail",
       publisherName: "Zeron Tests",
+      source: "local",
+      torrentInfoHash: null,
       modules: [
         {
           id: "module_one",
@@ -116,11 +131,11 @@ describe("learner library", () => {
 
   it("requests an opaque URL when a video is selected", async () => {
     useLibraryUi.getState().selectCourse("course_one");
-    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready" });
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
     vi.mocked(libraryApi.list).mockResolvedValue([]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
       courseId: "course_one", courseVersion: "1.0.0", title: "Media Course", description: null,
-      publisherName: "Zeron Tests", modules: [{ id: "module", title: "Module", lessons: [{
+      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, modules: [{ id: "module", title: "Module", lessons: [{
         id: "lesson", title: "Lesson", resources: [{ id: "video", kind: "video", mediaType: "video/mp4", byteLength: 10, durationSeconds: null }],
       }] }],
     });
@@ -137,5 +152,40 @@ describe("learner library", () => {
     fireEvent.click(play);
     await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("/v1/media/opaque/secret"));
     expect(libraryApi.registerMedia).toHaveBeenCalledWith("course_one", "video");
+  });
+
+  it("labels torrent courses and withholds playback until media is downloaded", async () => {
+    useLibraryUi.getState().selectCourse("course_torrent");
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "course_torrent", courseVersion: "1.0.0", title: "Torrent Course", description: null,
+      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), modules: [{ id: "module", title: "Module", lessons: [{
+        id: "lesson", title: "Lesson", resources: [{ id: "video", kind: "video", mediaType: "video/mp4", byteLength: 10, durationSeconds: null }],
+      }] }],
+    });
+
+    const view = renderApp();
+    await waitFor(() => expect(view.container.textContent).toContain("verified its outline (course.json) only"));
+    expect(view.container.textContent).toContain("Video · not downloaded");
+    const play = Array.from(view.container.querySelectorAll("button")).find((candidate) => candidate.textContent?.includes("Play video"));
+    expect(play).toBeUndefined();
+    expect(libraryApi.registerMedia).not.toHaveBeenCalled();
+  });
+
+  it("shows the source of each course in the library", async () => {
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready" });
+    const summary = {
+      courseVersion: "1.0.0", publisherName: "Zeron Tests", language: "en", totalResourceBytes: 1, importedAtUnixSeconds: 1,
+    };
+    vi.mocked(libraryApi.list).mockResolvedValue([
+      { ...summary, courseId: "local", title: "Local Course", source: "local", torrentInfoHash: null },
+      { ...summary, courseId: "torrent", title: "Torrent Course", source: "torrent", torrentInfoHash: "ab".repeat(20) },
+    ]);
+
+    const view = renderApp();
+    await waitFor(() => expect(view.container.textContent).toContain("Torrent Course"));
+    expect(view.container.textContent).toContain("Local · verified");
+    expect(view.container.textContent).toContain("Torrent · outline only");
   });
 });

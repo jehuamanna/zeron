@@ -61,7 +61,7 @@ Phase 3 (local seeding and metadata-first learner torrent import) is next. The u
 - Seeding the read-only release directories requires a custom read-only `StorageFactory`; the default storage opens files read/write. The spike's ≈80-line adapter (`spikes/librqbit-local/src/main.rs`) worked and left the release byte-identical.
 - `Session::new_with_opts` always binds a UDP tracker socket on `[::]:0`. Use `bind_device_name = "lo"` for CI and local tests on Linux, and set every network option explicitly in production.
 
-The user approved Phase 3 integration. Done: `torrent-port` + `torrent-librqbit` (ADR `docs/decisions/0004-librqbit-engine-adapter.md`, `docs/releases/phase-3-engine-adapter.md`). Admin seeding is done too (`docs/releases/phase-3-admin-seeding.md`): `SeedingService`, schema v3 intents and settings, a Distribution workspace, and a default Local-network profile. Next: learner `.torrent`/magnet import with manifest-first validation. The uncovered spike items (WebView playback per OS, peer interruption, lookahead) are acceptance criteria for the Phase 3/4 playback slices. Confirm with the user before adding the dependency to the workspace if the scope differs from this plan.
+The user approved Phase 3 integration. Done: `torrent-port` + `torrent-librqbit` (ADR `docs/decisions/0004-librqbit-engine-adapter.md`, `docs/releases/phase-3-engine-adapter.md`). Admin seeding is done too (`docs/releases/phase-3-admin-seeding.md`): `SeedingService`, schema v3 intents and settings, a Distribution workspace, and a default Local-network profile. Learner metadata-first import is done (`docs/releases/phase-3-learner-torrent-import.md`): `learning_application::TorrentImports`, learner schema v3 torrent sources and settings, Learner commands and `torrent-import` events, the torrent import panel, and outline-only torrent courses whose media is withheld from playback. Next: remaining Phase 3 learner items (dashboard-local metrics, explicit upload controls, a learner network-profile setting), then Phase 4 resource download and verified streaming through the gateway. The uncovered spike items (WebView playback per OS, peer interruption, lookahead) are acceptance criteria for the Phase 3/4 playback slices. Confirm with the user before adding the dependency to the workspace if the scope differs from this plan.
 
 When testing UI in the browser pane, Tauri IPC can be faked by assigning `window.__TAURI_INTERNALS__ = { invoke, transformCallback }` after the page loads, then using the app (the initial list query will already have failed).
 
@@ -74,13 +74,15 @@ When testing UI in the browser pane, Tauri IPC can be faked by assigning `window
 - `learning-application`: learner import/library use cases.
 - `learning-storage`: learner persistence.
 - `media-gateway`: authenticated loopback HTTP delivery; no Tauri or torrent dependency.
+- `torrent-port`: engine-neutral torrent contract (seed, resolve, fetch, stats, network profiles).
+- `torrent-librqbit`: the only crate depending on librqbit; read-only seeding storage and explicit per-profile session options.
 - Desktop apps: composition and path-free DTO translation only.
 
 Published package bytes are immutable. Drafts and releases must never share writable state. Learner-owned data stays outside package directories. Long-running work must be cancellable and bounded.
 
 ## Roadmap position
 
-Phase 1 is functionally established, including complete local-file playback. Phase 2 is complete (Admin builder, reproducible publishing, immutable releases, CLI parity). Phase 3 is next and needs a dependency decision.
+Phase 1 is functionally established, including complete local-file playback. Phase 2 is complete (Admin builder, reproducible publishing, immutable releases, CLI parity). Phase 3 is in progress: the engine adapter, Admin seeding, and learner metadata-first import are done.
 
 Continue Phase 2 in small slices:
 
@@ -91,7 +93,7 @@ Continue Phase 2 in small slices:
 5. ~~Media inspection warnings without silent transcoding.~~ Done.
 6. ~~Deterministic BitTorrent v1 metainfo generation and independent verification.~~ Done (backend).
 7. ~~Atomic immutable release activation and release history.~~ Done.
-8. Local seeding management through the shared torrent adapter (roadmap places this in Phase 3 with the librqbit adapter).
+8. ~~Local seeding management through the shared torrent adapter.~~ Done in Phase 3 (`docs/releases/phase-3-admin-seeding.md`).
 
 Then proceed through Phases 3–10 in [docs/roadmap.md](../roadmap.md). Do not jump to librqbit integration until the current Phase 2 slice has a green committed boundary.
 

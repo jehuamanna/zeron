@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, ChevronLeft, Download, File, HardDrive, Play, Search } from "lucide-react";
+import { BookOpen, ChevronLeft, Download, File, HardDrive, Magnet, Play, Search } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
-import { libraryApi } from "../services/library";
+import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
+import { asCommandError, libraryApi } from "../services/library";
 import { useLibraryUi } from "../stores/library";
 
 const formatBytes = (bytes: number) =>
@@ -36,6 +37,8 @@ export function App() {
     mutationFn: (resourceId: string) => libraryApi.registerMedia(selectedCourseId!, resourceId),
     onSuccess: (registration) => setMediaUrl(registration.url),
   });
+
+  const torrentCourse = detail.data?.source === "torrent";
 
   const leaveCourse = () => {
     setMediaUrl(null);
@@ -79,6 +82,11 @@ export function App() {
                     <p className="mb-2 text-xs font-bold uppercase tracking-[0.24em] text-cyan-300">Course workspace</p>
                     <h1 className="text-4xl font-semibold tracking-tight">{detail.data.title}</h1>
                     <p className="mt-3 max-w-2xl text-slate-400">{detail.data.description ?? `Published by ${detail.data.publisherName}`}</p>
+                    {torrentCourse ? (
+                      <p className="mt-5 max-w-2xl rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
+                        This course came from a torrent. Zeron has verified its outline (course.json) only; lesson media has not been downloaded, so nothing can be played yet.
+                      </p>
+                    ) : null}
                     <div className="mt-10 rounded-3xl border border-white/10 bg-black/20 p-8">
                       {mediaUrl ? (
                         <video key={mediaUrl} className="aspect-video w-full rounded-2xl bg-black" src={mediaUrl} controls autoPlay preload="metadata">
@@ -88,11 +96,17 @@ export function App() {
                         <div className="grid aspect-video place-items-center rounded-2xl bg-[#03080d] text-slate-500">
                           <div className="text-center">
                             <Play className="mx-auto mb-3" size={30} />
-                            <p>Choose a video lesson to begin</p>
+                            <p>{torrentCourse ? "Lessons become playable once their media is downloaded" : "Choose a video lesson to begin"}</p>
                           </div>
                         </div>
                       )}
-                      {openMedia.isError ? <p role="alert" className="mt-3 text-sm text-red-300">This verified media file is no longer available.</p> : null}
+                      {openMedia.isError ? (
+                        <p role="alert" className="mt-3 text-sm text-red-300">
+                          {asCommandError(openMedia.error)?.code === "media_not_downloaded"
+                            ? "This lesson's media has not been downloaded yet."
+                            : "This verified media file is no longer available."}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                   <aside aria-label="Course contents" className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
@@ -106,7 +120,11 @@ export function App() {
                               <div key={lesson.id} className="rounded-xl border border-white/10 bg-black/10 p-3">
                                 <p className="text-sm font-medium">{lesson.title}</p>
                                 <div className="mt-2 flex flex-wrap gap-2">
-                                  {lesson.resources.map((resource) => resource.kind === "video" ? (
+                                  {lesson.resources.map((resource) => resource.kind === "video" && torrentCourse ? (
+                                    <span key={resource.id} className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-400">
+                                      <Play size={12} /> Video · not downloaded
+                                    </span>
+                                  ) : resource.kind === "video" ? (
                                     <button
                                       type="button"
                                       key={resource.id}
@@ -145,6 +163,8 @@ export function App() {
             </div>
           </div>
 
+          <TorrentImportPanel engine={readiness.data?.torrentImport ?? "pending"} />
+
           {readiness.isError || courses.isError || importCourse.isError ? (
             <div role="alert" className="rounded-2xl border border-red-400/30 bg-red-400/10 p-5 text-red-100">
               Zeron could not open the local library. Restart the app and check that its data directory is writable.
@@ -155,8 +175,13 @@ export function App() {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {courses.data.map((course) => (
                 <button type="button" onClick={() => selectCourse(course.courseId)} key={course.courseId} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-left shadow-2xl shadow-black/10 transition hover:-translate-y-0.5 hover:border-cyan-300/40">
-                  <div className="mb-8 grid size-11 place-items-center rounded-xl bg-cyan-300/10 text-cyan-300">
-                    <HardDrive size={20} />
+                  <div className="mb-8 flex items-start justify-between gap-3">
+                    <div className="grid size-11 place-items-center rounded-xl bg-cyan-300/10 text-cyan-300">
+                      {course.source === "torrent" ? <Magnet size={20} /> : <HardDrive size={20} />}
+                    </div>
+                    <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-slate-400">
+                      {course.source === "torrent" ? "Torrent · outline only" : "Local · verified"}
+                    </span>
                   </div>
                   <h2 className="text-lg font-semibold">{course.title}</h2>
                   <p className="mt-1 text-sm text-slate-400">{course.publisherName}</p>
@@ -173,7 +198,7 @@ export function App() {
                 <BookOpen size={26} />
               </div>
               <h2 className="text-xl font-semibold">Your library is ready</h2>
-              <p className="mx-auto mt-2 max-w-md text-slate-400">Import a verified local course folder to begin. Torrent courses join this same library in Phase 3.</p>
+              <p className="mx-auto mt-2 max-w-md text-slate-400">Import a verified local course folder, or add a course from a .torrent file or magnet link.</p>
             </div>
           )}
           </>
