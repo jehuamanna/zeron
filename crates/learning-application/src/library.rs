@@ -419,6 +419,7 @@ impl CourseLibrary {
         if !self.has_resource(course_id, resource_id)? {
             return Ok(false);
         }
+        self.complete_if_watched(course_id, resource_id, position_seconds, duration_seconds)?;
         let position = if duration_seconds - position_seconds <= FINISHED_WITHIN_SECONDS {
             0.0
         } else {

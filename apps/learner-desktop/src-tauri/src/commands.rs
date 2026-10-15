@@ -44,6 +44,26 @@ pub(crate) struct CourseSummaryDto {
     source: &'static str,
     torrent_info_hash: Option<String>,
     sharing: bool,
+    completed_lessons: usize,
+    total_lessons: usize,
+}
+
+/// Progress of a course and of each of its lessons.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CourseProgressDto {
+    completed_lessons: usize,
+    total_lessons: usize,
+    percent: u8,
+    lessons: Vec<LessonProgressDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LessonProgressDto {
+    lesson_id: String,
+    /// `not_started`, `in_progress`, or `completed`.
+    status: &'static str,
 }
 
 #[derive(Serialize)]
@@ -258,22 +278,35 @@ pub(crate) async fn list_courses(
     let library = Arc::clone(&state.library);
     run_blocking(move || {
         let library = lock_library(&library)?;
+        let progress = |course_id: &str| {
+            library
+                .course_progress(course_id)
+                .ok()
+                .flatten()
+                .map(|view| view.summary)
+                .unwrap_or_default()
+        };
         library
             .courses()
             .map(|courses| {
                 courses
                     .into_iter()
-                    .map(|course| CourseSummaryDto {
-                        course_id: course.course_id,
-                        course_version: course.course_version,
-                        title: course.title,
-                        publisher_name: course.publisher_name,
-                        language: course.language,
-                        total_resource_bytes: course.total_resource_bytes,
-                        imported_at_unix_seconds: course.imported_at_unix_seconds,
-                        source: source_name(course.torrent_info_hash.as_deref()),
-                        torrent_info_hash: course.torrent_info_hash,
-                        sharing: course.sharing,
+                    .map(|course| {
+                        let summary = progress(&course.course_id);
+                        CourseSummaryDto {
+                            completed_lessons: summary.completed,
+                            total_lessons: summary.total,
+                            course_id: course.course_id,
+                            course_version: course.course_version,
+                            title: course.title,
+                            publisher_name: course.publisher_name,
+                            language: course.language,
+                            total_resource_bytes: course.total_resource_bytes,
+                            imported_at_unix_seconds: course.imported_at_unix_seconds,
+                            source: source_name(course.torrent_info_hash.as_deref()),
+                            torrent_info_hash: course.torrent_info_hash,
+                            sharing: course.sharing,
+                        }
                     })
                     .collect()
             })
@@ -657,7 +690,9 @@ pub(crate) async fn register_media(
     let library = Arc::clone(&state.library);
     let playing = course_id.clone();
     let media = run_blocking(move || {
-        let library = lock_library(&library)?;
+        let mut library = lock_library(&library)?;
+        // Opening a lesson starts it; a failure to record that never blocks playback.
+        let _ = library.record_resource_opened(&course_id, &resource_id);
         let failed = |error| command_error("media_lookup_failed", error);
         let not_found = || CommandError {
             code: "media_not_found",
@@ -975,6 +1010,64 @@ fn cache_error(error: CacheError) -> CommandError {
             message: "the library could not be read".to_owned(),
         },
     }
+}
+
+/// Progress of a course and its lessons.
+#[tauri::command]
+pub(crate) async fn get_course_progress(
+    course_id: String,
+    state: State<'_, AppState>,
+) -> Result<CourseProgressDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || progress(&*lock_library(&library)?, &course_id)).await
+}
+
+/// Mark a lesson completed or not, and return the course's progress.
+#[tauri::command]
+pub(crate) async fn set_lesson_completed(
+    course_id: String,
+    lesson_id: String,
+    completed: bool,
+    state: State<'_, AppState>,
+) -> Result<CourseProgressDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        let mut library = lock_library(&library)?;
+        if !library
+            .set_lesson_completed(&course_id, &lesson_id, completed)
+            .map_err(|error| command_error("library_write_failed", error))?
+        {
+            return Err(CommandError {
+                code: "lesson_not_found",
+                message: "the lesson is not part of this course".to_owned(),
+            });
+        }
+        progress(&library, &course_id)
+    })
+    .await
+}
+
+fn progress(library: &CourseLibrary, course_id: &str) -> Result<CourseProgressDto, CommandError> {
+    let view = library
+        .course_progress(course_id)
+        .map_err(|error| command_error("library_query_failed", error))?
+        .ok_or_else(|| CommandError {
+            code: "course_not_found",
+            message: "the course is not in the library".to_owned(),
+        })?;
+    Ok(CourseProgressDto {
+        completed_lessons: view.summary.completed,
+        total_lessons: view.summary.total,
+        percent: view.summary.percent(),
+        lessons: view
+            .lessons
+            .into_iter()
+            .map(|(lesson_id, status)| LessonProgressDto {
+                lesson_id,
+                status: status.as_str(),
+            })
+            .collect(),
+    })
 }
 
 /// Pause or resume a torrent course's transfer. Verified lessons keep
@@ -1368,6 +1461,16 @@ mod tests {
             error.message.contains("leaves 1.0 GB free"),
             "{}",
             error.message
+        );
+    }
+
+    #[test]
+    fn progress_of_unknown_courses_is_an_error() {
+        let library =
+            CourseLibrary::open_in_memory(learning_application::ImportLimits::default()).unwrap();
+        assert_eq!(
+            progress(&library, "course").unwrap_err().code,
+            "course_not_found"
         );
     }
 

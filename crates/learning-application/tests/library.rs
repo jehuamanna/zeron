@@ -259,3 +259,66 @@ fn rate_limits_default_to_unlimited_and_persist() {
     library.set_rate_limits(RateLimits::default()).unwrap();
     assert_eq!(library.rate_limits().unwrap(), RateLimits::default());
 }
+
+#[test]
+fn progress_follows_opening_watching_and_manual_marks_across_restarts() {
+    use learning_application::LessonStatus;
+
+    let root = TempRoot::new();
+    let course_root = create_course(root.path());
+    let database = root.path().join("library.sqlite3");
+    let status = |library: &CourseLibrary| {
+        let view = library.course_progress("course_recovery").unwrap().unwrap();
+        (
+            view.lessons[0].1,
+            view.summary.completed,
+            view.summary.total,
+        )
+    };
+    {
+        let mut library = CourseLibrary::open(&database, ImportLimits::default()).unwrap();
+        library
+            .import_local_folder(&course_root, &CancellationFlag::default())
+            .unwrap();
+        assert!(library.course_progress("course_missing").unwrap().is_none());
+        assert_eq!(status(&library), (LessonStatus::NotStarted, 0, 1));
+        assert!(
+            !library
+                .record_resource_opened("course_recovery", "missing")
+                .unwrap()
+        );
+        assert!(
+            library
+                .record_resource_opened("course_recovery", "resource_video")
+                .unwrap()
+        );
+        assert_eq!(status(&library), (LessonStatus::InProgress, 0, 1));
+        library
+            .save_playback_position("course_recovery", "resource_video", 120.0, 600.0)
+            .unwrap();
+        assert_eq!(status(&library).0, LessonStatus::InProgress);
+        library
+            .save_playback_position("course_recovery", "resource_video", 560.0, 600.0)
+            .unwrap();
+        assert_eq!(status(&library), (LessonStatus::Completed, 1, 1));
+    }
+    let mut library = CourseLibrary::open(&database, ImportLimits::default()).unwrap();
+    assert_eq!(status(&library), (LessonStatus::Completed, 1, 1));
+    assert!(
+        !library
+            .set_lesson_completed("course_recovery", "lesson_missing", true)
+            .unwrap()
+    );
+    assert!(
+        library
+            .set_lesson_completed("course_recovery", "lesson_one", false)
+            .unwrap()
+    );
+    assert_eq!(status(&library), (LessonStatus::InProgress, 0, 1));
+    assert!(
+        library
+            .set_lesson_completed("course_recovery", "lesson_one", true)
+            .unwrap()
+    );
+    assert_eq!(status(&library).0, LessonStatus::Completed);
+}

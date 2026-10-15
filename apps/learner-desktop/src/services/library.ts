@@ -34,6 +34,17 @@ export interface CourseSummary {
   source: CourseSource;
   torrentInfoHash: string | null;
   sharing: boolean;
+  completedLessons: number;
+  totalLessons: number;
+}
+
+export type LessonStatus = "not_started" | "in_progress" | "completed";
+
+export interface CourseProgress {
+  completedLessons: number;
+  totalLessons: number;
+  percent: number;
+  lessons: Array<{ lessonId: string; status: LessonStatus }>;
 }
 
 export interface ImportReceipt {
@@ -202,6 +213,9 @@ export const libraryApi = {
   storage: () => invoke<StorageUse>("get_storage"),
   /** Caps streamed lessons; null for no cap. Applies at once. */
   setCacheLimit: (limitBytes: number | null) => invoke<RemovalReport>("set_cache_limit", { limitBytes }),
+  progress: (courseId: string) => invoke<CourseProgress>("get_course_progress", { courseId }),
+  setLessonCompleted: (courseId: string, lessonId: string, completed: boolean) =>
+    invoke<CourseProgress>("set_lesson_completed", { courseId, lessonId, completed }),
   availability: (courseId: string) => invoke<ResourceAvailability[]>("get_course_availability", { courseId }),
   getCourseSharing: (courseId: string) => invoke<CourseSharing | null>("get_course_sharing", { courseId }),
   setCourseSharing: (courseId: string, sharing: boolean) =>

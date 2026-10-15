@@ -29,6 +29,8 @@ vi.mock("../services/library", async (importOriginal) => ({
     setDownload: vi.fn(),
     setPaused: vi.fn(),
     removeDownloads: vi.fn(),
+    progress: vi.fn(() => Promise.resolve({ completedLessons: 0, totalLessons: 0, percent: 0, lessons: [] })),
+    setLessonCompleted: vi.fn(),
     storage: vi.fn(() => Promise.resolve({ streamedBytes: 0, cacheLimitBytes: null, availableBytes: 50 * 1024 ** 3, lowDisk: false })),
     savePlaybackPosition: vi.fn(() => Promise.resolve(true)),
   },
@@ -68,6 +70,8 @@ describe("learner library", () => {
         source: "local",
         torrentInfoHash: null,
         sharing: false,
+        completedLessons: 0,
+        totalLessons: 1,
       },
     ]);
 
@@ -99,6 +103,8 @@ describe("learner library", () => {
         source: "local",
         torrentInfoHash: null,
         sharing: false,
+        completedLessons: 0,
+        totalLessons: 1,
       },
     ]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
@@ -296,6 +302,7 @@ describe("learner library", () => {
     vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
     const summary = {
       courseVersion: "1.0.0", publisherName: "Zeron Tests", language: "en", totalResourceBytes: 1, importedAtUnixSeconds: 1,
+      completedLessons: 3, totalLessons: 13,
     };
     vi.mocked(libraryApi.list).mockResolvedValue([
       { ...summary, courseId: "local", title: "Local Course", source: "local", torrentInfoHash: null, sharing: false },
@@ -307,6 +314,38 @@ describe("learner library", () => {
     expect(view.container.textContent).toContain("Local · verified");
     expect(view.container.textContent).toContain("Torrent · outline only");
     expect(view.container.textContent).toContain("Sharing");
+    expect(view.getByRole("progressbar", { name: "Torrent Course progress" }).getAttribute("aria-valuenow")).toBe("3");
+    expect(view.container.textContent).toContain("3 of 13 lessons complete");
+  });
+
+  it("shows lesson progress and lets the learner mark lessons complete", async () => {
+    useLibraryUi.getState().selectCourse("course_one");
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "course_one", courseVersion: "1.0.0", title: "Course", description: null,
+      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, modules: [{ id: "module", title: "Module", lessons: [
+        { id: "lesson_a", title: "First", resources: [] },
+        { id: "lesson_b", title: "Second", resources: [] },
+      ] }],
+    });
+    vi.mocked(libraryApi.progress).mockResolvedValue({
+      completedLessons: 1, totalLessons: 2, percent: 50,
+      lessons: [{ lessonId: "lesson_a", status: "completed" }, { lessonId: "lesson_b", status: "in_progress" }],
+    });
+    vi.mocked(libraryApi.setLessonCompleted).mockResolvedValue({
+      completedLessons: 2, totalLessons: 2, percent: 100,
+      lessons: [{ lessonId: "lesson_a", status: "completed" }, { lessonId: "lesson_b", status: "completed" }],
+    });
+    const view = renderApp();
+    await waitFor(() => expect(view.container.textContent).toContain("1 of 2 lessons complete"));
+    const statuses = () => Array.from(view.container.querySelectorAll("[data-lesson-status]")).map((item) => item.getAttribute("data-lesson-status"));
+    expect(statuses()).toEqual(["completed", "in_progress"]);
+    expect(view.getByRole("button", { name: "Mark First complete" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(view.getByRole("button", { name: "Mark Second complete" }));
+    await waitFor(() => expect(libraryApi.setLessonCompleted).toHaveBeenCalledWith("course_one", "lesson_b", true));
+    await waitFor(() => expect(view.container.textContent).toContain("2 of 2 lessons complete"));
+    expect(statuses()).toEqual(["completed", "completed"]);
   });
 
   it("opens network settings from the header and returns to the library", async () => {

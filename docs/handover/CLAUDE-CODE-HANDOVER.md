@@ -209,6 +209,8 @@ Done so far: engine file selection (`phase-5-file-selection.md`, ADR 0004 decisi
 
 ### Phase 6 — learning workspace
 
+Done so far: lesson and course progress (`phase-6-progress.md`, new `learning-domain` crate, learner schema v8). Remaining below.
+
 - Progress tracking per lesson and course.
 - Tiptap notes with typed anchors: a video timestamp or a PDF page and region.
 - PDF.js viewing and an annotation workflow.
@@ -258,6 +260,7 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 - `torrent-metainfo`: deterministic v1 metainfo writing and inspection.
 - `torrent-port`: engine-neutral contract, including `NetworkProfile` and `PeerReachability`.
 - `torrent-librqbit`: the only crate that depends on librqbit; read-only seeding storage and explicit session options.
+- `learning-domain`: pure learner rules (progress now, annotations next).
 - `learning-application` / `learning-storage`: learner import, library, torrent imports, sharing, and routing.
 - `media-gateway`: authenticated loopback HTTP(S) delivery, with no dependency on Tauri or torrents.
 - `apps/*/src-tauri`: composition and path-free DTO translation only. Command bodies are plain functions tested against in-memory storage. Errors carry `code`, plus `field` or `currentRevision` where relevant.

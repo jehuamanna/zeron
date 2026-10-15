@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 course-format = { path = "../course-format" }
+learning-domain = { path = "../learning-domain" }
 learning-storage = { path = "../learning-storage" }
 getrandom.workspace = true
 sha2.workspace = true

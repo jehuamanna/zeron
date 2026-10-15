@@ -2376,6 +2376,7 @@ version = "0.1.0"
 dependencies = [
  "course-format",
  "getrandom 0.4.3",
+ "learning-domain",
  "learning-storage",
  "nix",
  "publisher-application",
@@ -2387,6 +2388,10 @@ dependencies = [
  "torrent-metainfo",
  "torrent-port",
 ]
+
+[[package]]
+name = "learning-domain"
+version = "0.1.0"
 
 [[package]]
 name = "learning-storage"

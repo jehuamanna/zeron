@@ -129,6 +129,8 @@ pub fn run() {
             commands::set_course_download,
             commands::set_course_paused,
             commands::remove_downloads,
+            commands::get_course_progress,
+            commands::set_lesson_completed,
             commands::get_storage,
             commands::set_cache_limit,
             commands::get_playback_position,

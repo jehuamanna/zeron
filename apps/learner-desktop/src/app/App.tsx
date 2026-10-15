@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
 import { AvailabilityLabel, formatSize, KeepOfflineToggle, PauseTransfersButton, useCourseDownloads } from "../features/downloads/downloads";
 import { LessonPlayer } from "../features/player/LessonPlayer";
+import { LessonStatusIcon, MarkCompleteButton, ProgressBar, useCourseProgress } from "../features/progress/progress";
 import { CourseSharingCard } from "../features/sharing/CourseSharingCard";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
 import { asCommandError, libraryApi } from "../services/library";
@@ -54,7 +55,11 @@ export function App() {
     },
   });
   const savePosition = (courseId: string, resourceId: string) => (positionSeconds: number, durationSeconds: number) => {
-    void libraryApi.savePlaybackPosition(courseId, resourceId, positionSeconds, durationSeconds).catch(() => undefined);
+    void libraryApi
+      .savePlaybackPosition(courseId, resourceId, positionSeconds, durationSeconds)
+      // Watching far enough completes the lesson, so refresh its progress.
+      .then(() => queryClient.invalidateQueries({ queryKey: ["progress", courseId] }))
+      .catch(() => undefined);
   };
 
   const torrentCourse = detail.data?.source === "torrent";
@@ -76,6 +81,7 @@ export function App() {
 
   const availabilityById = new Map((availability.data ?? []).map((item) => [item.resourceId, item]));
   const offline = useCourseDownloads(selectedCourseId ?? "", selectedCourseId !== null && torrentCourse);
+  const lessonProgress = useCourseProgress(selectedCourseId);
   const storage = useQuery({
     queryKey: ["storage"],
     queryFn: libraryApi.storage,
@@ -142,6 +148,11 @@ export function App() {
                   <div>
                     <p className="mb-2 text-xs font-bold uppercase tracking-[0.24em] text-cyan-300">Course workspace</p>
                     <h1 className="text-4xl font-semibold tracking-tight">{detail.data.title}</h1>
+                    {lessonProgress.progress ? (
+                      <div className="mt-4 max-w-sm">
+                        <ProgressBar label="Course progress" completed={lessonProgress.progress.completedLessons} total={lessonProgress.progress.totalLessons} />
+                      </div>
+                    ) : null}
                     <p className="mt-3 max-w-2xl text-slate-400">{detail.data.description ?? `Published by ${detail.data.publisherName}`}</p>
                     {torrentCourse ? (
                       <p className="mt-5 max-w-2xl rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
@@ -233,7 +244,17 @@ export function App() {
                             {module.lessons.map((lesson) => (
                               <div key={lesson.id} className="rounded-xl border border-white/10 bg-black/10 p-3">
                                 <div className="flex items-start justify-between gap-2">
-                                  <p className="text-sm font-medium">{lesson.title}</p>
+                                  <p className="flex items-start gap-2 text-sm font-medium">
+                                    <LessonStatusIcon status={lessonProgress.statusOf(lesson.id)} />
+                                    {lesson.title}
+                                  </p>
+                                  <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                                  <MarkCompleteButton
+                                    lessonTitle={lesson.title}
+                                    completed={lessonProgress.statusOf(lesson.id) === "completed"}
+                                    disabled={lessonProgress.mark.isPending}
+                                    onToggle={(completed) => lessonProgress.mark.mutate({ lessonId: lesson.id, completed })}
+                                  />
                                   {torrentCourse ? (
                                     <KeepOfflineToggle
                                       label={`Keep lesson ${lesson.title} offline`}
@@ -243,6 +264,7 @@ export function App() {
                                       onToggle={(keep) => offline.change.mutate({ scope: { kind: "lesson", id: lesson.id }, keep })}
                                     />
                                   ) : null}
+                                  </div>
                                 </div>
                                 <div className="mt-2 flex flex-wrap gap-2">
                                   {lesson.resources.map((resource) => resource.kind === "video" ? (
@@ -326,6 +348,11 @@ export function App() {
                   </div>
                   <h2 className="text-lg font-semibold">{course.title}</h2>
                   <p className="mt-1 text-sm text-slate-400">{course.publisherName}</p>
+                  {course.totalLessons > 0 ? (
+                    <div className="mt-4">
+                      <ProgressBar label={`${course.title} progress`} completed={course.completedLessons} total={course.totalLessons} />
+                    </div>
+                  ) : null}
                   <div className="mt-5 flex items-center justify-between border-t border-white/10 pt-4 text-xs text-slate-400">
                     <span>Version {course.courseVersion}</span>
                     <span>{formatBytes(course.totalResourceBytes)}</span>

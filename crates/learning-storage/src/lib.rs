@@ -13,8 +13,17 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 7;
+const CURRENT_SCHEMA_VERSION: i64 = 8;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
+
+/// What is recorded about one lesson.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LessonProgressRecord {
+    /// Stable lesson ID from the manifest.
+    pub lesson_id: String,
+    /// Whether the lesson was completed.
+    pub completed: bool,
+}
 
 /// Where a learner stopped in one lesson resource.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -430,6 +439,70 @@ impl Storage {
         rows.collect::<Result<_, _>>().map_err(StorageError::from)
     }
 
+    /// Record that a lesson was opened. Recording it again changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock or `SQLite` failures, including an
+    /// unknown course.
+    pub fn mark_lesson_started(
+        &mut self,
+        course_id: &str,
+        lesson_id: &str,
+    ) -> Result<(), StorageError> {
+        let now = unix_now()?;
+        self.connection.execute(
+            "INSERT INTO lesson_progress (course_id, lesson_id, started_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(course_id, lesson_id) DO NOTHING",
+            params![course_id, lesson_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a lesson completed or not completed; either way it counts as started.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock or `SQLite` failures, including an
+    /// unknown course.
+    pub fn set_lesson_completed(
+        &mut self,
+        course_id: &str,
+        lesson_id: &str,
+        completed: bool,
+    ) -> Result<(), StorageError> {
+        let now = unix_now()?;
+        self.connection.execute(
+            "INSERT INTO lesson_progress (course_id, lesson_id, started_at, completed_at)
+             VALUES (?1, ?2, ?3, CASE WHEN ?4 THEN ?3 END)
+             ON CONFLICT(course_id, lesson_id) DO UPDATE SET
+               completed_at = CASE WHEN ?4 THEN coalesce(lesson_progress.completed_at, ?3) END",
+            params![course_id, lesson_id, now, completed],
+        )?;
+        Ok(())
+    }
+
+    /// Every recorded lesson of a course.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn lesson_progress(
+        &self,
+        course_id: &str,
+    ) -> Result<Vec<LessonProgressRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT lesson_id, completed_at IS NOT NULL FROM lesson_progress WHERE course_id = ?1 ORDER BY lesson_id",
+        )?;
+        let rows = statement.query_map([course_id], |row| {
+            Ok(LessonProgressRecord {
+                lesson_id: row.get(0)?,
+                completed: row.get(1)?,
+            })
+        })?;
+        rows.collect::<Result<_, _>>().map_err(StorageError::from)
+    }
+
     /// Read a learner setting.
     ///
     /// # Errors
@@ -651,6 +724,9 @@ impl Storage {
     }
 }
 
+/// One schema step, upgrading by exactly one version.
+type Migration = fn(&mut Connection) -> Result<(), StorageError>;
+
 fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let mut found: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if found > CURRENT_SCHEMA_VERSION {
@@ -737,16 +813,18 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         tx.commit()?;
         found = 4;
     }
-    if found == 4 {
-        add_playback_positions(connection)?;
-        found = 5;
-    }
-    if found == 5 {
-        add_download_commitments(connection)?;
-        found = 6;
-    }
-    if found == 6 {
-        add_pause_flag(connection)?;
+    // Later versions each add one table or column; they run in order.
+    let steps: [(i64, Migration); 4] = [
+        (4, add_playback_positions),
+        (5, add_download_commitments),
+        (6, add_pause_flag),
+        (7, add_lesson_progress),
+    ];
+    for (from, step) in steps {
+        if found == from {
+            step(connection)?;
+            found += 1;
+        }
     }
     Ok(())
 }
@@ -795,6 +873,24 @@ fn add_pause_flag(connection: &mut Connection) -> Result<(), StorageError> {
         "ALTER TABLE course_torrent_sources
            ADD COLUMN paused INTEGER NOT NULL DEFAULT 0 CHECK(paused IN (0, 1));
          PRAGMA user_version = 7;",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Schema 8. When each lesson was first opened and, if so, completed. Keyed
+/// by course only, so a re-import keeps the learner's progress.
+fn add_lesson_progress(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE lesson_progress (
+           course_id TEXT NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+           lesson_id TEXT NOT NULL,
+           started_at INTEGER NOT NULL CHECK(started_at >= 0),
+           completed_at INTEGER CHECK(completed_at IS NULL OR completed_at >= 0),
+           PRIMARY KEY(course_id, lesson_id)
+         ) STRICT;
+         PRAGMA user_version = 8;",
     )?;
     tx.commit()?;
     Ok(())
@@ -862,6 +958,14 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredCourseSum
         torrent_info_hash: row.get(7)?,
         sharing: row.get(8)?,
     })
+}
+
+fn unix_now() -> Result<i64, StorageError> {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| StorageError::InvalidSystemClock)?
+        .as_secs();
+    sqlite_integer(seconds, "timestamp")
 }
 
 fn sqlite_integer(value: u64, name: &'static str) -> Result<i64, StorageError> {
@@ -1110,7 +1214,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "ALTER TABLE course_torrent_sources DROP COLUMN paused;
+                    "DROP TABLE lesson_progress;
+                     ALTER TABLE course_torrent_sources DROP COLUMN paused;
                      DROP TABLE download_commitments; DROP TABLE playback_positions;
                      PRAGMA user_version = 4;",
                 )
@@ -1179,6 +1284,38 @@ mod tests {
         assert_eq!(
             storage.download_commitments(&id).unwrap(),
             [("module".to_owned(), "m1".to_owned())]
+        );
+    }
+
+    #[test]
+    fn lesson_progress_records_starts_and_keeps_the_first_completion() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Rust", "systems");
+        let id = course.course_id.clone();
+        assert!(storage.mark_lesson_started(&id, "l1").is_err());
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/rust"))
+            .unwrap();
+        storage.mark_lesson_started(&id, "l1").unwrap();
+        storage.mark_lesson_started(&id, "l1").unwrap();
+        storage.set_lesson_completed(&id, "l2", true).unwrap();
+        let record = |lesson: &str, completed| LessonProgressRecord {
+            lesson_id: lesson.to_owned(),
+            completed,
+        };
+        assert_eq!(
+            storage.lesson_progress(&id).unwrap(),
+            [record("l1", false), record("l2", true)]
+        );
+        storage.set_lesson_completed(&id, "l2", true).unwrap();
+        storage.set_lesson_completed(&id, "l1", true).unwrap();
+        storage.set_lesson_completed(&id, "l2", false).unwrap();
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/rust"))
+            .unwrap();
+        assert_eq!(
+            storage.lesson_progress(&id).unwrap(),
+            [record("l1", true), record("l2", false)]
         );
     }
 
