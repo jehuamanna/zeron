@@ -6,7 +6,9 @@ Repository: `git@github.com:jehuamanna/zeron.git`
 
 Branch: `main`
 
-Last pushed commit: `930b4d5 feat: persist publisher drafts`
+Last completed implementation commit: `930b4d5 feat: persist publisher drafts`
+
+The Claude handover itself was added in commit `64293de`.
 
 ## Mission
 
