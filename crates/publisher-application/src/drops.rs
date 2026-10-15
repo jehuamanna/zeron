@@ -3,7 +3,9 @@
 //! Dropped paths are untrusted. Scanning is bounded, never follows symbolic
 //! links, skips hidden entries, and reports everything it leaves out by name
 //! only. Each top-level folder becomes a module whose media and PDF files
-//! become lessons in natural name order; loose files attach to one lesson.
+//! become lessons in natural name order. A folder holding only folders is a
+//! course folder: each folder inside it becomes a module. Loose files become
+//! lessons of one new module, or attach to a lesson the publisher chooses.
 
 use std::{
     cmp::Ordering,
@@ -50,7 +52,7 @@ pub enum SkipReason {
     Hidden,
     /// Symbolic links are never followed.
     SymbolicLink,
-    /// Only one folder level is imported.
+    /// Folders are imported at most one level below a course folder.
     NestedFolder,
     /// Inside a folder, only video, audio, and PDF files become lessons.
     UnsupportedType,
@@ -60,8 +62,6 @@ pub enum SkipReason {
     NoLessons,
     /// The drop exceeded [`DropLimits`].
     LimitReached,
-    /// Loose files need a target lesson.
-    NoTargetLesson,
 }
 
 impl SkipReason {
@@ -76,7 +76,6 @@ impl SkipReason {
             Self::Unreadable => "unreadable",
             Self::NoLessons => "no_lessons",
             Self::LimitReached => "limit_reached",
-            Self::NoTargetLesson => "no_target_lesson",
         }
     }
 }
@@ -116,8 +115,12 @@ pub struct PlannedModule {
 pub struct DropPlan {
     /// Folders that become modules, in natural name order.
     pub modules: Vec<PlannedModule>,
-    /// Files dropped directly, for attaching to one lesson.
+    /// Files dropped directly: lessons of one new module, or attachments
+    /// of one chosen lesson.
     pub loose_files: Vec<PlannedFile>,
+    /// Title for the module loose files become: their folder's name when
+    /// they share one.
+    pub loose_module_title: String,
     /// Everything left out.
     pub skipped: Vec<SkippedEntry>,
 }
@@ -163,11 +166,41 @@ pub fn plan_drop(paths: &[PathBuf], limits: DropLimits) -> DropPlan {
                 plan.skip(name, SkipReason::LimitReached);
                 continue;
             }
-            let module = scan_folder(path, &name, &mut budget, &mut plan.skipped);
-            if module.lessons.is_empty() {
-                plan.skip(name, SkipReason::NoLessons);
+            let (module, folders) = scan_folder(path, &name, &name, &mut budget);
+            if module.module.lessons.is_empty() && !folders.is_empty() {
+                // A course folder: each folder inside it is a module.
+                plan.skipped.extend(module.skipped);
+                for (folder, folder_name) in folders {
+                    if plan.modules.len() >= limits.max_folders {
+                        plan.skip(format!("{name}/{folder_name}"), SkipReason::LimitReached);
+                        continue;
+                    }
+                    let relative = format!("{name}/{folder_name}");
+                    let (inner, nested) =
+                        scan_folder(&folder, &folder_name, &relative, &mut budget);
+                    plan.skipped.extend(inner.skipped);
+                    for (_, nested_name) in nested {
+                        plan.skip(
+                            format!("{relative}/{nested_name}"),
+                            SkipReason::NestedFolder,
+                        );
+                    }
+                    if inner.module.lessons.is_empty() {
+                        plan.skip(relative, SkipReason::NoLessons);
+                    } else {
+                        plan.modules.push(inner.module);
+                    }
+                }
             } else {
-                plan.modules.push(module);
+                plan.skipped.extend(module.skipped);
+                for (_, folder_name) in folders {
+                    plan.skip(format!("{name}/{folder_name}"), SkipReason::NestedFolder);
+                }
+                if module.module.lessons.is_empty() {
+                    plan.skip(name, SkipReason::NoLessons);
+                } else {
+                    plan.modules.push(module.module);
+                }
             }
         } else if file_type.is_file() {
             if budget.file() {
@@ -179,7 +212,26 @@ pub fn plan_drop(paths: &[PathBuf], limits: DropLimits) -> DropPlan {
             plan.skip(name, SkipReason::Unreadable);
         }
     }
+    plan.loose_module_title = loose_module_title(paths, &plan.loose_files);
     plan
+}
+
+/// The shared folder name of the loose files, or "New module".
+fn loose_module_title(paths: &[PathBuf], loose: &[PlannedFile]) -> String {
+    let mut parents = loose.iter().filter_map(|file| {
+        paths
+            .iter()
+            .find(|path| path.as_path() == file.source.as_path())
+            .and_then(|path| path.parent())
+    });
+    let first = parents.next();
+    match first {
+        Some(parent) if parents.all(|other| other == parent) => parent.file_name().map_or_else(
+            || "New module".to_owned(),
+            |name| clean_title(&name.to_string_lossy(), false),
+        ),
+        _ => "New module".to_owned(),
+    }
 }
 
 struct Budget {
@@ -206,24 +258,37 @@ impl DropPlan {
     }
 }
 
+/// A scanned folder: the module its files make, and what it left out.
+struct ScannedFolder {
+    module: PlannedModule,
+    skipped: Vec<SkippedEntry>,
+}
+
+/// Scan one folder: its media and PDF files become lessons. Folders inside
+/// it are returned with their names, for the caller to decide about.
+/// `relative` names the folder in skip reports.
 fn scan_folder(
     folder: &Path,
     folder_name: &str,
+    relative: &str,
     budget: &mut Budget,
-    skipped: &mut Vec<SkippedEntry>,
-) -> PlannedModule {
-    let mut module = PlannedModule {
-        title: clean_title(folder_name, false),
-        lessons: Vec::new(),
+) -> (ScannedFolder, Vec<(PathBuf, String)>) {
+    let mut scanned = ScannedFolder {
+        module: PlannedModule {
+            title: clean_title(folder_name, false),
+            lessons: Vec::new(),
+        },
+        skipped: Vec::new(),
     };
+    let mut folders = Vec::new();
     let Ok(entries) = fs::read_dir(folder) else {
-        return module;
+        return (scanned, folders);
     };
     let mut children = Vec::new();
     for entry in entries {
         if !budget.entry() {
-            skipped.push(SkippedEntry {
-                name: format!("{folder_name}/…"),
+            scanned.skipped.push(SkippedEntry {
+                name: format!("{relative}/…"),
                 reason: SkipReason::LimitReached,
             });
             break;
@@ -234,19 +299,18 @@ fn scan_folder(
     children.sort_by(|a, b| natural_cmp(&display_name(a), &display_name(b)));
     for child in children {
         let name = display_name(&child);
-        let relative = format!("{folder_name}/{name}");
+        let child_relative = format!("{relative}/{name}");
         let reason = if name.starts_with('.') {
             Some(SkipReason::Hidden)
         } else {
             match fs::symlink_metadata(&child).map(|metadata| metadata.file_type()) {
                 Ok(kind) if kind.is_symlink() => Some(SkipReason::SymbolicLink),
-                Ok(kind) if kind.is_dir() => Some(SkipReason::NestedFolder),
+                Ok(kind) if kind.is_dir() => {
+                    folders.push((child, name));
+                    continue;
+                }
                 Ok(kind) if kind.is_file() => {
-                    let (resource_kind, _) = sources::classify(&child);
-                    if !matches!(
-                        resource_kind,
-                        ResourceKind::Video | ResourceKind::Audio | ResourceKind::Pdf
-                    ) {
+                    if !is_lesson_kind(sources::classify(&child).0) {
                         Some(SkipReason::UnsupportedType)
                     } else if budget.file() {
                         None
@@ -258,14 +322,22 @@ fn scan_folder(
             }
         };
         match reason {
-            Some(reason) => skipped.push(SkippedEntry {
-                name: relative,
+            Some(reason) => scanned.skipped.push(SkippedEntry {
+                name: child_relative,
                 reason,
             }),
-            None => module.lessons.push(planned(&child, name)),
+            None => scanned.module.lessons.push(planned(&child, name)),
         }
     }
-    module
+    (scanned, folders)
+}
+
+/// Only video, audio, and PDF files become lessons of their own.
+const fn is_lesson_kind(kind: ResourceKind) -> bool {
+    matches!(
+        kind,
+        ResourceKind::Video | ResourceKind::Audio | ResourceKind::Pdf
+    )
 }
 
 fn planned(path: &Path, file_name: String) -> PlannedFile {
@@ -380,19 +452,20 @@ pub struct DropOutcome {
     pub modules_added: usize,
     /// Lessons created inside those modules.
     pub lessons_added: usize,
-    /// Loose files attached to the target lesson.
+    /// Loose files attached to the chosen lesson.
     pub files_attached: usize,
     /// Entries left out while planning or applying.
     pub skipped: Vec<SkippedEntry>,
 }
 
 impl PublisherDrafts {
-    /// Apply a drop plan as one draft revision: folders become modules and
-    /// loose files attach to `lesson_id`. Files that vanished since the drop
+    /// Apply a drop plan as one draft revision: folders become modules, and
+    /// loose files attach to `lesson_id` or, without one, become the lessons
+    /// of one new module. Files that vanished since the drop
     /// are skipped. Nothing is copied; sources are recorded like picked files.
     ///
     /// # Errors
-    /// Rejects stale revisions, a missing target lesson, and plans that
+    /// Rejects stale revisions, an unknown target lesson, and plans that
     /// would add nothing.
     pub fn apply_drop(
         &mut self,
@@ -430,15 +503,33 @@ impl PublisherDrafts {
             });
         }
         let mut attachments = Vec::new();
+        let mut loose_lessons = Vec::new();
         for file in &plan.loose_files {
-            if lesson_id.is_none() {
+            if lesson_id.is_none() && !is_lesson_kind(file.kind) {
                 skipped.push(SkippedEntry {
                     name: file.file_name.clone(),
-                    reason: SkipReason::NoTargetLesson,
+                    reason: SkipReason::UnsupportedType,
                 });
             } else if let Some(resource) = resource_for(file, &file.file_name, &mut skipped)? {
-                attachments.push(resource);
+                if lesson_id.is_some() {
+                    attachments.push(resource);
+                } else {
+                    loose_lessons.push(DraftLesson {
+                        id: opaque_id("lesson")?,
+                        title: file.title.clone(),
+                        estimated_duration_seconds: None,
+                        resources: vec![resource],
+                    });
+                }
             }
+        }
+        if !loose_lessons.is_empty() {
+            lessons_added += loose_lessons.len();
+            modules.push(DraftModule {
+                id: opaque_id("module")?,
+                title: plan.loose_module_title.clone(),
+                lessons: loose_lessons,
+            });
         }
         if modules.is_empty() && attachments.is_empty() {
             return Err(DraftServiceError::InvalidInput {

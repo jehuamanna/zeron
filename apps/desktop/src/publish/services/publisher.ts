@@ -139,8 +139,7 @@ export type SkipReason =
   | "unsupported_type"
   | "unreadable"
   | "no_lessons"
-  | "limit_reached"
-  | "no_target_lesson";
+  | "limit_reached";
 
 export interface SkippedEntry {
   /** Relative to what was dropped, for example `Course/notes.txt`; never a filesystem path. */
@@ -162,6 +161,8 @@ export interface DropSummary {
   y: number;
   modules: Array<{ title: string; lessons: DropFile[] }>;
   looseFiles: DropFile[];
+  /** The module loose files become when no lesson is chosen. */
+  looseModuleTitle: string;
   skipped: SkippedEntry[];
 }
 
@@ -264,7 +265,12 @@ export const publisherApi = {
   refreshTrackerLists: () => invoke<TrackerListRefresh[]>("refresh_tracker_lists"),
   onDrag: (handler: (active: boolean) => void) => listen<{ active: boolean }>("builder-drag", (event) => handler(event.payload.active)),
   onDrop: (handler: (summary: DropSummary) => void) => listen<DropSummary>("builder-drop", (event) => handler(event.payload)),
-  /** Folders become new modules; loose files attach to `lessonId` when given. */
+  /**
+   * Opens a native picker for folders or files and scans them like a drop.
+   * Resolves `null` when the publisher cancels.
+   */
+  chooseLessonSources: (kind: "folders" | "files") => invoke<DropSummary | null>("choose_lesson_sources", { kind }),
+  /** Folders become new modules; loose files attach to `lessonId`, or without one become a new module. */
   applyDrop: (draftId: string, expectedRevision: number, token: string, lessonId: string | null) =>
     invoke<DropOutcome>("apply_drop", { draftId, expectedRevision, token, target: { lessonId } }),
   discardDrop: (token: string) => invoke<void>("discard_drop", { token }),

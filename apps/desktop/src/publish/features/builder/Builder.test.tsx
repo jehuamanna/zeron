@@ -7,7 +7,7 @@ import { Builder } from "./Builder";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { updateDraftMetadata: vi.fn(), editDraftStructure: vi.fn(), chooseAndAttachResource: vi.fn(), onDrag: vi.fn(), onDrop: vi.fn(), applyDrop: vi.fn(), discardDrop: vi.fn() },
+  publisherApi: { updateDraftMetadata: vi.fn(), editDraftStructure: vi.fn(), chooseAndAttachResource: vi.fn(), onDrag: vi.fn(), onDrop: vi.fn(), applyDrop: vi.fn(), discardDrop: vi.fn(), chooseLessonSources: vi.fn() },
 }));
 
 const initial: DraftDetail = {
@@ -247,6 +247,7 @@ function dropSummary(overrides: Partial<DropSummary> = {}): DropSummary {
     y: 60,
     modules: [{ title: "algoexpert-sdfshortcourse", lessons: [video("lesson1", "lesson1.mp4"), video("lesson2", "lesson2.mp4"), video("lesson10", "lesson10.mp4")] }],
     looseFiles: [{ title: "handout", fileName: "handout.pdf", kind: "pdf" }],
+    looseModuleTitle: "Week 1",
     skipped: [{ name: "algoexpert-sdfshortcourse/Design Fundamentals.txt", reason: "unsupported_type" }],
     ...overrides,
   };
@@ -290,11 +291,11 @@ describe("drag-and-drop import", () => {
     const lessonRow = view.container.querySelector(`[data-lesson-id="${lessonId}"]`)!;
     Object.defineProperty(document, "elementFromPoint", { configurable: true, value: vi.fn(() => lessonRow.firstElementChild) });
     act(() => dropHandler(dropSummary()));
-    const dialog = view.getByRole("dialog", { name: "Add dropped files" });
+    const dialog = view.getByRole("dialog", { name: "Add files and folders" });
     expect(document.elementFromPoint).toHaveBeenCalledWith(40, 60);
     expect(dialog.textContent).toContain("1 folder become 1 new module with 3 lessons");
     expect(within(dialog).getByRole("list", { name: "Modules to add" }).textContent).toContain("lesson10 (lesson10.mp4)");
-    expect((within(dialog).getByLabelText(/Attach 1 file \(handout.pdf\) to/) as HTMLSelectElement).value).toBe(lessonId);
+    expect((within(dialog).getByLabelText(/Add 1 file \(handout.pdf\) as/) as HTMLSelectElement).value).toBe(lessonId);
     expect(within(dialog).getByRole("list", { name: "Left out" }).textContent).toContain("Design Fundamentals.txt — not video, audio, or PDF");
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Add to course" }));
@@ -305,14 +306,16 @@ describe("drag-and-drop import", () => {
     expect(view.container.textContent).toContain("Draft revision r3");
   });
 
-  it("needs a lesson for loose files and discards dismissed or replaced drops", async () => {
+  it("adds loose files as a new module unless a lesson is chosen, and discards dismissed or replaced drops", async () => {
     const view = await builderWithLesson();
     act(() => dropHandler(dropSummary({ token: "drop_first", modules: [], skipped: [] })));
-    const dialog = view.getByRole("dialog", { name: "Add dropped files" });
-    const add = within(dialog).getByRole("button", { name: "Add to course" });
-    expect(add.hasAttribute("disabled")).toBe(true);
-    fireEvent.change(within(dialog).getByLabelText(/Attach 1 file/), { target: { value: server.modules[0]!.lessons[0]!.id } });
-    expect(add.hasAttribute("disabled")).toBe(false);
+    const dialog = view.getByRole("dialog", { name: "Add files and folders" });
+    const target = within(dialog).getByLabelText(/Add 1 file/) as HTMLSelectElement;
+    expect(target.value).toBe("");
+    expect(target.selectedOptions[0]!.textContent).toBe("Lessons of a new module, “Week 1”");
+    expect(within(dialog).getByRole("button", { name: "Add to course" }).hasAttribute("disabled")).toBe(false);
+    fireEvent.change(target, { target: { value: server.modules[0]!.lessons[0]!.id } });
+    expect(target.selectedOptions[0]!.textContent).toContain("Attachments of");
 
     act(() => dropHandler(dropSummary({ token: "drop_second" })));
     expect(publisherApi.discardDrop).toHaveBeenCalledWith("drop_first");
@@ -320,6 +323,39 @@ describe("drag-and-drop import", () => {
     expect(publisherApi.discardDrop).toHaveBeenCalledWith("drop_second");
     expect(view.queryByRole("dialog")).toBeNull();
     expect(publisherApi.applyDrop).not.toHaveBeenCalled();
+  });
+
+  it("picks folders or files in bulk and adds them like a drop", async () => {
+    const view = await builderWithLesson();
+    vi.mocked(publisherApi.chooseLessonSources)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(dropSummary({ token: "pick_one", looseFiles: [] }))
+      .mockResolvedValueOnce(dropSummary({ token: "pick_two", modules: [], skipped: [] }));
+    vi.mocked(publisherApi.applyDrop).mockImplementation(async (_draft, revision) => ({
+      draft: commit(revision, (draft) => ({ ...draft, modules: [...draft.modules, { id: "module_week", title: "Week 1", lessons: [{ id: "lesson_handout", title: "handout", resources: [] }] }] })),
+      modulesAdded: 1,
+      lessonsAdded: 1,
+      filesAttached: 0,
+      skipped: [],
+    }));
+
+    fireEvent.click(view.getByRole("button", { name: /Add folders/ }));
+    await waitFor(() => expect(publisherApi.chooseLessonSources).toHaveBeenCalledWith("folders"));
+    expect(view.queryByRole("dialog")).toBeNull();
+
+    fireEvent.click(view.getByRole("button", { name: /Add folders/ }));
+    const folders = await waitFor(() => view.getByRole("dialog", { name: "Add files and folders" }));
+    expect(folders.textContent).toContain("1 folder become 1 new module with 3 lessons");
+    fireEvent.click(within(folders).getByRole("button", { name: "Dismiss" }));
+    expect(publisherApi.discardDrop).toHaveBeenCalledWith("pick_one");
+
+    fireEvent.click(view.getByRole("button", { name: /Add files/ }));
+    await waitFor(() => expect(publisherApi.chooseLessonSources).toHaveBeenLastCalledWith("files"));
+    const files = await waitFor(() => view.getByRole("dialog", { name: "Add files and folders" }));
+    fireEvent.click(within(files).getByRole("button", { name: "Add to course" }));
+    await waitFor(() => expect(view.queryByRole("dialog")).toBeNull());
+    expect(publisherApi.applyDrop).toHaveBeenCalledWith("draft_one", 2, "pick_two", null);
+    await waitFor(() => expect(titles(view, /^Title of module/)).toEqual(["Untitled module", "Week 1"]));
   });
 
   it("explains expired drops and pauses on conflicts like any other edit", async () => {
@@ -339,7 +375,7 @@ describe("drag-and-drop import", () => {
     const view = await builderWithLesson();
     act(() => dropHandler(dropSummary({ modules: [], looseFiles: [], skipped: [{ name: "link.mp4", reason: "symbolic_link" }] })));
     const dialog = view.getByRole("dialog");
-    expect(dialog.textContent).toContain("Nothing in this drop can be added.");
+    expect(dialog.textContent).toContain("Nothing here can be added.");
     expect(dialog.textContent).toContain("link, not followed");
     expect(within(dialog).getByRole("button", { name: "Add to course" }).hasAttribute("disabled")).toBe(true);
   });

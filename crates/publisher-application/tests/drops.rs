@@ -305,27 +305,115 @@ fn applying_a_drop_is_one_revision_and_skips_vanished_files() {
 }
 
 #[test]
-fn loose_files_need_a_lesson_and_empty_drops_change_nothing() {
+fn loose_files_become_one_module_or_attach_to_a_chosen_lesson() {
     let scratch = Scratch::new("loose");
-    let loose = scratch.file("handout.pdf", b"%PDF-1.7");
-    let plan = plan_drop(std::slice::from_ref(&loose), DropLimits::default());
+    let files = [
+        scratch.file("Week 1/02 - Caching.mp4", b"x"),
+        scratch.file("Week 1/01 - Intro.mp4", b"x"),
+        scratch.file("Week 1/handout.pdf", b"%PDF-1.7"),
+        scratch.file("Week 1/notes.txt", b"x"),
+    ];
+    let plan = plan_drop(&files, DropLimits::default());
+    assert_eq!(plan.loose_module_title, "Week 1");
     let mut drafts = PublisherDrafts::open_in_memory().unwrap();
-    let (draft_id, _) = draft_with_lesson(&mut drafts);
-    assert!(matches!(
-        drafts.apply_drop(&draft_id, 2, &plan, None),
-        Err(DraftServiceError::InvalidInput { ref field, .. }) if field == "drop"
-    ));
+    let (draft_id, lesson_id) = draft_with_lesson(&mut drafts);
+
+    // Without a lesson, the files become the lessons of one new module.
+    let outcome = drafts.apply_drop(&draft_id, 2, &plan, None).unwrap();
+    assert_eq!(
+        (
+            outcome.modules_added,
+            outcome.lessons_added,
+            outcome.files_attached
+        ),
+        (1, 3, 0)
+    );
+    let module = outcome.draft.draft.modules.last().unwrap();
+    assert_eq!(module.title, "Week 1");
+    let titles: Vec<_> = module
+        .lessons
+        .iter()
+        .map(|lesson| lesson.title.as_str())
+        .collect();
+    assert_eq!(titles, ["Intro", "Caching", "handout"]);
+    assert_eq!(outcome.skipped.len(), 1);
+    assert_eq!(outcome.skipped[0].name, "notes.txt");
+    assert_eq!(outcome.skipped[0].reason, SkipReason::UnsupportedType);
+
+    // With a lesson, every file attaches to it, as before.
+    let attached = drafts
+        .apply_drop(&draft_id, 3, &plan, Some(&lesson_id))
+        .unwrap();
+    assert_eq!((attached.modules_added, attached.files_attached), (0, 4));
+
+    // Files from different folders get a generic module title.
+    let other = scratch.file("Elsewhere/extra.mp4", b"x");
+    let mixed = plan_drop(&[files[0].clone(), other], DropLimits::default());
+    assert_eq!(mixed.loose_module_title, "New module");
+
     let empty = plan_drop(&[scratch.0.join("missing")], DropLimits::default());
     assert!(empty.is_empty());
-    assert!(drafts.apply_drop(&draft_id, 2, &empty, None).is_err());
-    assert_eq!(drafts.draft(&draft_id).unwrap().unwrap().draft.revision, 2);
+    assert!(matches!(
+        drafts.apply_drop(&draft_id, 4, &empty, None),
+        Err(DraftServiceError::InvalidInput { ref field, .. }) if field == "drop"
+    ));
+    assert_eq!(drafts.draft(&draft_id).unwrap().unwrap().draft.revision, 4);
+}
 
-    scratch.file("Module/a.mp4", b"x");
-    let mixed = plan_drop(&[scratch.0.join("Module"), loose], DropLimits::default());
-    let outcome = drafts.apply_drop(&draft_id, 2, &mixed, None).unwrap();
-    assert_eq!((outcome.modules_added, outcome.files_attached), (1, 0));
-    assert_eq!(outcome.skipped[0].reason, SkipReason::NoTargetLesson);
-    assert_eq!(outcome.skipped[0].name, "handout.pdf");
+#[test]
+fn a_course_folder_turns_its_folders_into_modules() {
+    let scratch = Scratch::new("course");
+    scratch.file("Course/Module 10/a.mp4", b"x");
+    scratch.file("Course/Module 2/b.mp4", b"x");
+    scratch.file("Course/Module 2/deeper/c.mp4", b"x");
+    scratch.file("Course/Empty/readme.md", b"x");
+    scratch.file("Course/syllabus.txt", b"x");
+    let plan = plan_drop(&[scratch.0.join("Course")], DropLimits::default());
+    let modules: Vec<_> = plan
+        .modules
+        .iter()
+        .map(|module| module.title.as_str())
+        .collect();
+    assert_eq!(modules, ["Module 2", "Module 10"]);
+    assert_eq!(plan.modules[0].lessons[0].file_name, "b.mp4");
+    let mut reported = skipped(&plan);
+    reported.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        reported,
+        [
+            ("Course/Empty".to_owned(), SkipReason::NoLessons),
+            (
+                "Course/Empty/readme.md".to_owned(),
+                SkipReason::UnsupportedType
+            ),
+            (
+                "Course/Module 2/deeper".to_owned(),
+                SkipReason::NestedFolder
+            ),
+            (
+                "Course/syllabus.txt".to_owned(),
+                SkipReason::UnsupportedType
+            ),
+        ]
+    );
+
+    // A folder with lessons of its own stays one module; folders inside it
+    // are left out.
+    scratch.file("Course/intro.mp4", b"x");
+    let plan = plan_drop(&[scratch.0.join("Course")], DropLimits::default());
+    assert_eq!(plan.modules.len(), 1);
+    assert_eq!(plan.modules[0].title, "Course");
+    assert!(skipped(&plan).contains(&("Course/Module 2".to_owned(), SkipReason::NestedFolder)));
+
+    // The module limit also bounds a course folder.
+    let limited = plan_drop(
+        &[scratch.0.join("Course")],
+        DropLimits {
+            max_folders: 0,
+            ..DropLimits::default()
+        },
+    );
+    assert_eq!(limited.modules, []);
 }
 
 #[test]

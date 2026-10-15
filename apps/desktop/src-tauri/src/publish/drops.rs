@@ -1,5 +1,6 @@
-//! Builder drag-and-drop: dropped paths stay here; the UI sees a path-free
-//! summary and an opaque token it can apply to a draft.
+//! Builder drag-and-drop and bulk picking: dropped or picked paths stay
+//! here; the UI sees a path-free summary and an opaque token it can apply to
+//! a draft.
 
 use std::sync::Arc;
 
@@ -9,7 +10,8 @@ use publisher_application::{
     plan_drop,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{DragDropEvent, Emitter, Manager, State, Window};
+use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, Window};
+use tauri_plugin_dialog::DialogExt;
 
 use super::{
     PublishState,
@@ -36,6 +38,8 @@ pub(crate) struct DropSummaryDto {
     y: f64,
     modules: Vec<DropModuleDto>,
     loose_files: Vec<DropFileDto>,
+    /// Title of the module loose files become without a chosen lesson.
+    loose_module_title: String,
     skipped: Vec<SkippedDto>,
 }
 
@@ -71,7 +75,8 @@ pub(crate) struct ApplyDropDto {
     skipped: Vec<SkippedDto>,
 }
 
-/// Where to put loose files; folders always become new modules.
+/// Where to put loose files: a chosen lesson, or (`None`) one new module.
+/// Folders always become new modules.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DropTargetInput {
@@ -124,12 +129,65 @@ fn summarize(
             })
             .collect(),
         loose_files: plan.loose_files.iter().map(DropFileDto::from).collect(),
+        loose_module_title: plan.loose_module_title.clone(),
         skipped: plan.skipped.iter().map(SkippedDto::from).collect(),
     };
     let token = inbox
         .insert(plan)
         .map_err(|error| service_error("drop_failed", error))?;
     Ok(DropSummaryDto { token, ..summary })
+}
+
+/// What the native picker offers.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum PickKind {
+    /// Folders: each becomes a module, or a course folder's folders do.
+    Folders,
+    /// Files: lessons of one new module, or attachments of a lesson.
+    Files,
+}
+
+/// Pick folders or files with the native dialog and scan them like a drop.
+/// The paths stay here; the window gets the same path-free summary and token
+/// as for dropped files, or `None` when the publisher cancels.
+#[tauri::command]
+pub(crate) async fn choose_lesson_sources(
+    app: AppHandle,
+    kind: PickKind,
+    state: State<'_, PublishState>,
+) -> Result<Option<DropSummaryDto>, CommandError> {
+    let inbox = Arc::clone(&state.drops);
+    run_blocking(move || {
+        let dialog = app.dialog().file();
+        let picked = match kind {
+            PickKind::Folders => dialog.blocking_pick_folders(),
+            PickKind::Files => dialog
+                .add_filter(
+                    "Video, audio, or PDF",
+                    &[
+                        "mp4", "m4v", "webm", "mov", "mkv", "mp3", "m4a", "aac", "ogg", "oga",
+                        "opus", "wav", "flac", "pdf",
+                    ],
+                )
+                .blocking_pick_files(),
+        };
+        let Some(picked) = picked else {
+            return Ok(None);
+        };
+        let paths: Vec<_> = picked
+            .into_iter()
+            .filter_map(|path| path.into_path().ok())
+            .collect();
+        if paths.is_empty() {
+            return Err(CommandError::new(
+                "unsupported_file_location",
+                "the selected locations are not supported",
+            ));
+        }
+        summarize(&inbox, plan_drop(&paths, DropLimits::default()), 0.0, 0.0).map(Some)
+    })
+    .await
 }
 
 /// Apply a scanned drop to a draft as one revision.
@@ -244,13 +302,17 @@ mod tests {
         assert_eq!(json["modules"][0]["lessons"][0]["title"], "lesson2");
         assert_eq!(json["modules"][0]["lessons"][1]["kind"], "video");
         assert_eq!(json["looseFiles"][0]["fileName"], "handout.pdf");
+        assert_eq!(
+            json["looseModuleTitle"],
+            directory.file_name().unwrap().to_string_lossy().as_ref()
+        );
         let reasons: Vec<_> = json["skipped"]
             .as_array()
             .unwrap()
             .iter()
             .map(|entry| entry["reason"].as_str().unwrap())
             .collect();
-        assert_eq!(reasons, ["nested_folder", "unsupported_type"]);
+        assert_eq!(reasons, ["unsupported_type", "nested_folder"]);
         assert!(!json.to_string().contains(&*directory.to_string_lossy()));
 
         let mut drafts = PublisherDrafts::open_in_memory().unwrap();
@@ -260,11 +322,11 @@ mod tests {
         assert_eq!(stale.code(), "revision_conflict");
         let applied = apply(&mut drafts, &inbox, &draft_id, 0, &token, None).unwrap();
         let applied = serde_json::to_value(applied).unwrap();
-        assert_eq!(applied["modulesAdded"], 1);
-        assert_eq!(applied["lessonsAdded"], 2);
+        // Without a chosen lesson, the loose PDF becomes a module of its own.
+        assert_eq!(applied["modulesAdded"], 2);
+        assert_eq!(applied["lessonsAdded"], 3);
         assert_eq!(applied["draft"]["revision"], 1);
-        assert_eq!(applied["skipped"].as_array().unwrap().len(), 3);
-        assert_eq!(applied["skipped"][2]["reason"], "no_target_lesson");
+        assert_eq!(applied["skipped"].as_array().unwrap().len(), 2);
         assert!(!applied.to_string().contains(&*directory.to_string_lossy()));
         let reused = apply(&mut drafts, &inbox, &draft_id, 1, &token, None).unwrap_err();
         assert_eq!(reused.code(), "drop_expired");

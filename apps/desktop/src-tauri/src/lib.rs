@@ -208,6 +208,7 @@ pub fn run() {
             publish::commands::archive_release,
             publish::commands::delete_release_files,
             publish::drops::apply_drop,
+            publish::drops::choose_lesson_sources,
             publish::drops::discard_drop,
             publish::commands::get_release_details,
             publish::commands::export_release_torrent,

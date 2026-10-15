@@ -1,4 +1,4 @@
-import { FolderInput, X } from "lucide-react";
+import { FilePlus2, FolderInput, FolderPlus, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { asCommandError, publisherApi, type DraftDetail, type DropOutcome, type DropSummary, type SkipReason } from "../../services/publisher";
@@ -11,8 +11,7 @@ const reasons: Record<SkipReason, string> = {
   unsupported_type: "not video, audio, or PDF",
   unreadable: "could not be read",
   no_lessons: "no video, audio, or PDF inside",
-  limit_reached: "drop too large",
-  no_target_lesson: "no lesson chosen",
+  limit_reached: "too many files at once",
 };
 
 /** The lesson under a drop point, found through `data-lesson-id` on lesson rows. */
@@ -38,18 +37,41 @@ export function DropImport({ draft, writer, disabled }: { draft: DraftDetail; wr
     [draft.modules],
   );
 
+  const [picking, setPicking] = useState(false);
+
+  /** Show a scanned drop or pick, replacing any earlier one. */
+  const receive = (summary: DropSummary, targetLesson: string | null) => {
+    if (pendingToken.current) void publisherApi.discardDrop(pendingToken.current).catch(() => undefined);
+    pendingToken.current = summary.token;
+    setPending(summary);
+    setLessonId(targetLesson ?? "");
+    setError(null);
+    setResult(null);
+  };
+  const receiveRef = useRef(receive);
+  receiveRef.current = receive;
+
+  const pick = async (kind: "folders" | "files") => {
+    setPicking(true);
+    setError(null);
+    try {
+      const summary = await publisherApi.chooseLessonSources(kind);
+      if (summary) receive(summary, null);
+    } catch (failure) {
+      setError(asCommandError(failure)?.message ?? "The picked items could not be read.");
+    } finally {
+      setPicking(false);
+    }
+  };
+
   useEffect(() => {
     let active = true;
     const unlisten = [
       publisherApi.onDrag((value) => active && setDragging(value)),
       publisherApi.onDrop((summary) => {
         if (!active) return;
-        if (pendingToken.current) void publisherApi.discardDrop(pendingToken.current).catch(() => undefined);
-        pendingToken.current = summary.token;
-        setPending(summary);
-        setLessonId(summary.looseFiles.length ? (lessonAt(summary.x, summary.y) ?? "") : "");
-        setError(null);
-        setResult(null);
+        // Files dropped onto a lesson attach to it; elsewhere they become a module.
+        receiveRef.current(summary, summary.looseFiles.length ? lessonAt(summary.x, summary.y) : null);
       }),
     ];
     return () => {
@@ -88,13 +110,24 @@ export function DropImport({ draft, writer, disabled }: { draft: DraftDetail; wr
 
   const lessonCount = pending?.modules.reduce((total, module) => total + module.lessons.length, 0) ?? 0;
   const looseCount = pending?.looseFiles.length ?? 0;
-  const addsSomething = pending !== null && (pending.modules.length > 0 || (looseCount > 0 && lessonId !== ""));
+  const addsSomething = pending !== null && (pending.modules.length > 0 || looseCount > 0);
 
   return (
     <>
       {dragging && !pending ? (
         <div role="status" className="flex items-center gap-3 rounded-3xl border-2 border-dashed border-amber-300/60 bg-amber-300/[0.06] p-5 text-sm text-amber-100">
-          <FolderInput size={18} /> Drop folders to add them as modules, or drop files onto a lesson to attach them.
+          <FolderInput size={18} /> Drop folders to add them as modules, drop files to add them as a module, or drop files onto a lesson to attach them.
+        </div>
+      ) : !pending ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-3xl border border-dashed border-white/15 bg-white/[0.02] px-5 py-4 text-sm text-slate-300">
+          <span className="mr-auto">Add many lessons at once: each folder becomes a module, and a course folder's folders become modules. You can also drag them here.</span>
+          <button type="button" onClick={() => void pick("folders")} disabled={disabled || picking} className="flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 font-medium hover:bg-white/15 disabled:opacity-50">
+            <FolderPlus size={15} /> Add folders…
+          </button>
+          <button type="button" onClick={() => void pick("files")} disabled={disabled || picking} className="flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 font-medium hover:bg-white/15 disabled:opacity-50">
+            <FilePlus2 size={15} /> Add files…
+          </button>
+          {error ? <p role="alert" className="w-full text-xs text-red-200">{error}</p> : null}
         </div>
       ) : null}
 
@@ -110,8 +143,8 @@ export function DropImport({ draft, writer, disabled }: { draft: DraftDetail; wr
       ) : null}
 
       {pending ? (
-        <section role="dialog" aria-label="Add dropped files" className="space-y-4 rounded-3xl border border-amber-300/30 bg-amber-300/[0.05] p-6 text-sm">
-          <h2 className="flex items-center gap-2 font-semibold"><FolderInput size={17} className="text-amber-300" /> Add dropped files</h2>
+        <section role="dialog" aria-label="Add files and folders" className="space-y-4 rounded-3xl border border-amber-300/30 bg-amber-300/[0.05] p-6 text-sm">
+          <h2 className="flex items-center gap-2 font-semibold"><FolderInput size={17} className="text-amber-300" /> Add files and folders</h2>
 
           {pending.modules.length ? (
             <div>
@@ -134,11 +167,11 @@ export function DropImport({ draft, writer, disabled }: { draft: DraftDetail; wr
           {looseCount ? (
             <div>
               <label htmlFor="drop-target-lesson" className="block">
-                Attach {plural(looseCount, "file")} ({pending.looseFiles.map((file) => file.fileName).join(", ")}) to
+                Add {plural(looseCount, "file")} ({pending.looseFiles.map((file) => file.fileName).join(", ")}) as
               </label>
               <select id="drop-target-lesson" value={lessonId} onChange={(event) => setLessonId(event.target.value)} className="mt-1 w-full max-w-md rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm">
-                <option value="">{lessons.length ? "Choose a lesson…" : "Add a lesson first"}</option>
-                {lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.label}</option>)}
+                <option value="">Lessons of a new module, “{pending.looseModuleTitle}”</option>
+                {lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>Attachments of {lesson.label}</option>)}
               </select>
             </div>
           ) : null}
@@ -152,7 +185,7 @@ export function DropImport({ draft, writer, disabled }: { draft: DraftDetail; wr
             </details>
           ) : null}
 
-          {!pending.modules.length && !looseCount ? <p className="text-slate-300">Nothing in this drop can be added.</p> : null}
+          {!pending.modules.length && !looseCount ? <p className="text-slate-300">Nothing here can be added.</p> : null}
           {error ? <p role="alert" className="text-xs text-red-200">{error}</p> : null}
 
           <div className="flex gap-2">

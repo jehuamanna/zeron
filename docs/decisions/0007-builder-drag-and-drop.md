@@ -21,9 +21,14 @@ Tauri 2.12 delivers native drops as `WindowEvent::DragDrop`. Its default handler
 3. The plan is kept in a `DropInbox` under an opaque `drop_<hex>` token. The inbox holds at most four plans, for ten minutes each. The UI receives a path-free `builder-drop` summary: the token, the drop point in CSS pixels, module and lesson titles, file names, kinds, and skipped entries.
 4. The UI finds the lesson under the drop point (`elementFromPoint` → `[data-lesson-id]`) and preselects it for loose files. It then calls `apply_drop { draftId, expectedRevision, token, target: { lessonId } }` through the Builder's `draftWriter`. `PublisherDrafts::apply_drop` re-checks every file (regular file, canonical path), skips any that vanished, inspects media headers, and saves everything as one revision with the new `DraftCourse::import`. A successful apply consumes the token.
 
+5. **Amendment, 2026-10-16: bulk adding** (user decisions of 2026-10-16).
+   - **Pickers:** "Add folders…" and "Add files…" open the native multi-select picker in Rust (`choose_lesson_sources { kind }`). The picked paths go through the same `plan_drop`, inbox, token, and `apply_drop` as a drop, so React still never sees a path.
+   - **Course folders:** a folder with no lessons of its own but with folders inside is a course folder, and each folder inside it becomes a module. Folders deeper than that are reported, not flattened. A folder with lessons of its own stays one module, as before.
+   - **Loose files:** without a chosen lesson, they become the lessons of one new module, in name order. The module is named after their shared folder, or "New module" when they come from different folders. Only video, audio, and PDF become lessons; other files are reported. Files dropped onto a lesson still preselect it, and attaching to a lesson still accepts any file. The `no_target_lesson` reason is gone.
+
 ## Consequences
 
 - Dropped paths reach the webview's event bus through Tauri's built-in event, but no Zeron code reads them, and the CSP allows only bundled scripts. The scope widening has no effect, because the Admin app enables neither the fs plugin nor the asset protocol. Enabling either would require revisiting this ADR.
 - A drop is applied atomically. A stale revision triggers the same conflict banner as any other edit, and a drop can be retried until its token expires.
-- Only one folder level is imported. Nested folders are reported, not flattened.
+- At most one folder level below a course folder is imported. Deeper folders are reported, not flattened.
 - The native drag gesture itself cannot be automated with WebDriver. The scan and apply logic is tested against real course folders in Rust, and the UI against scripted events.
