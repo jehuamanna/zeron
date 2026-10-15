@@ -16,8 +16,8 @@ use std::{
 };
 
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListenerMode,
-    ListenerOptions, ManagedTorrent, Session, SessionOptions, TorrentStatsState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ConnectionOptions, DhtSessionConfig,
+    ListenerMode, ListenerOptions, ManagedTorrent, Session, SessionOptions, TorrentStatsState,
     api::TorrentIdOrHash, storage::StorageFactoryExt,
 };
 pub use torrent_port::PeerReachability;
@@ -49,6 +49,26 @@ pub struct EngineConfig {
     /// Whether peers may download from this engine. When off, the engine
     /// advertises no pieces, rejects every piece request, and cannot seed.
     pub allow_uploads: bool,
+}
+
+/// Peer transports an engine listens on and connects with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PeerTransports {
+    /// TCP and uTP, as in common torrent clients. Outgoing connections try
+    /// TCP first and add uTP after one second or when TCP fails.
+    #[default]
+    TcpAndUtp,
+    /// uTP only. For diagnostics and tests that must prove uTP works.
+    UtpOnly,
+}
+
+/// Successful peer connections this session has made, by transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectionCounts {
+    /// Outgoing TCP connections that succeeded.
+    pub tcp: u64,
+    /// Outgoing uTP connections that succeeded.
+    pub utp: u64,
 }
 
 struct Active {
@@ -142,9 +162,20 @@ impl LibrqbitEngine {
     /// # Errors
     /// Returns [`EngineError::Engine`] when the session cannot start.
     pub async fn start(config: EngineConfig) -> Result<Self, EngineError> {
+        Self::start_with_transports(config, PeerTransports::default()).await
+    }
+
+    /// Like [`Self::start`], with an explicit transport choice.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Engine`] when the session cannot start.
+    pub async fn start_with_transports(
+        config: EngineConfig,
+        transports: PeerTransports,
+    ) -> Result<Self, EngineError> {
         std::fs::create_dir_all(&config.state_directory)
             .map_err(|error| EngineError::Engine(format!("cannot create engine state: {error}")))?;
-        let options = session_options(&config);
+        let options = session_options(&config, transports);
         let resolve_folder = config.state_directory.join("resolving");
         let session = Session::new_with_opts(config.state_directory, options)
             .await
@@ -158,6 +189,16 @@ impl LibrqbitEngine {
             // hold librqbit permits, leaving the rest for piece I/O.
             open_files: Arc::new(tokio::sync::Semaphore::new(MAX_OPEN_FILES)),
         })
+    }
+
+    /// Successful outgoing peer connections so far, by transport.
+    #[must_use]
+    pub fn connection_counts(&self) -> ConnectionCounts {
+        let connections = self.session.stats_snapshot().connections;
+        ConnectionCounts {
+            tcp: connections.tcp.v4.successes + connections.tcp.v6.successes,
+            utp: connections.utp.v4.successes + connections.utp.v6.successes,
+        }
     }
 
     /// Stop every transfer and close all sockets. Content is never deleted.
@@ -688,7 +729,7 @@ fn transfer_stats(info_hash: &InfoHash, active: &Active) -> TransferStats {
     }
 }
 
-fn session_options(config: &EngineConfig) -> SessionOptions {
+fn session_options(config: &EngineConfig, transports: PeerTransports) -> SessionOptions {
     let reachability = config.reachability.for_profile(config.profile);
     let port = reachability.port.unwrap_or(0);
     let loopback = config.profile == NetworkProfile::Loopback;
@@ -713,13 +754,20 @@ fn session_options(config: &EngineConfig) -> SessionOptions {
         persistence: None,
         ipv4_only: loopback,
         listen: Some(ListenerOptions {
-            mode: ListenerMode::TcpOnly,
+            mode: match transports {
+                PeerTransports::TcpAndUtp => ListenerMode::TcpAndUtp,
+                PeerTransports::UtpOnly => ListenerMode::UtpOnly,
+            },
             listen_addr,
             enable_upnp_port_forwarding: reachability.port_forwarding,
             ipv4_only: loopback,
             ..ListenerOptions::default()
         }),
         disable_upload: !config.allow_uploads,
+        connect: Some(ConnectionOptions {
+            enable_tcp: transports == PeerTransports::TcpAndUtp,
+            ..ConnectionOptions::default()
+        }),
         ..SessionOptions::default()
     }
 }
@@ -743,12 +791,15 @@ mod tests {
     use super::*;
 
     fn listener(profile: NetworkProfile, reachability: PeerReachability) -> ListenerOptions {
-        session_options(&EngineConfig {
-            profile,
-            state_directory: PathBuf::new(),
-            reachability,
-            allow_uploads: true,
-        })
+        session_options(
+            &EngineConfig {
+                profile,
+                state_directory: PathBuf::new(),
+                reachability,
+                allow_uploads: true,
+            },
+            PeerTransports::default(),
+        )
         .listen
         .unwrap()
     }
@@ -760,12 +811,15 @@ mod tests {
             (NetworkProfile::LocalNetwork, false),
             (NetworkProfile::Internet, true),
         ] {
-            let options = session_options(&EngineConfig {
-                profile,
-                state_directory: PathBuf::new(),
-                reachability: PeerReachability::default(),
-                allow_uploads: true,
-            });
+            let options = session_options(
+                &EngineConfig {
+                    profile,
+                    state_directory: PathBuf::new(),
+                    reachability: PeerReachability::default(),
+                    allow_uploads: true,
+                },
+                PeerTransports::default(),
+            );
             assert_eq!(options.disable_trackers, !internet, "{profile:?}");
             assert_eq!(options.dht.is_some(), internet, "{profile:?}");
         }

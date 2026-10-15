@@ -13,7 +13,7 @@ use librqbit::{
 use publisher_application::{
     DistributionOptions, MetadataEdit, PublishJobs, PublisherDrafts, StructureEdit,
 };
-use torrent_librqbit::{EngineConfig, LibrqbitEngine, PeerReachability};
+use torrent_librqbit::{EngineConfig, LibrqbitEngine, PeerReachability, PeerTransports};
 use torrent_port::{
     EngineError, InfoHash, NetworkProfile, SeedRequest, TorrentEngine, TransferState,
 };
@@ -446,6 +446,70 @@ async fn learners_resolve_metadata_and_fetch_only_selected_files() {
         .await
         .unwrap();
     wait_for_file(&learner, &fetched, largest.index, largest.length).await;
+    learner.shutdown().await;
+    seeder.shutdown().await;
+}
+
+/// A learner that can only use uTP still resolves the magnet and downloads
+/// the whole course byte for byte from a seeder listening on TCP and uTP.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_utp_only_learner_downloads_a_course_from_a_seeder() {
+    use torrent_port::{FetchRequest, ResolveRequest, TorrentSource};
+
+    let scratch = Scratch::new("utp");
+    let release = publish(&scratch.0);
+    let seeder = engine(&scratch.0).await;
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    wait_for_state(&seeder, &info_hash, TransferState::Seeding).await;
+    let seeder_address = seeder.listen_address().unwrap();
+
+    let learner = LibrqbitEngine::start_with_transports(
+        EngineConfig {
+            profile: NetworkProfile::Loopback,
+            state_directory: scratch.0.join("learner-engine"),
+            reachability: PeerReachability::default(),
+            allow_uploads: false,
+        },
+        PeerTransports::UtpOnly,
+    )
+    .await
+    .unwrap();
+    let resolved = learner
+        .resolve(ResolveRequest {
+            source: TorrentSource::Magnet(format!("magnet:?xt=urn:btih:{}", release.info_hash)),
+            initial_peers: vec![seeder_address],
+        })
+        .await
+        .unwrap();
+    let content = scratch.0.join("learner-cache");
+    let all: Vec<usize> = (0..resolved.files.len()).collect();
+    learner
+        .fetch(FetchRequest {
+            metainfo: resolved.metainfo.clone(),
+            content_root: content.clone(),
+            files: all,
+            initial_peers: vec![seeder_address],
+        })
+        .await
+        .unwrap();
+    for file in &resolved.files {
+        wait_for_file(&learner, &info_hash, file.index, file.length).await;
+        assert_eq!(
+            std::fs::read(content.join(&file.path)).unwrap(),
+            std::fs::read(release.package.join(&file.path)).unwrap(),
+            "{}",
+            file.path
+        );
+    }
+    let counts = learner.connection_counts();
+    assert_eq!(counts.tcp, 0, "TCP is off for this learner");
+    assert!(counts.utp >= 1, "{counts:?}");
     learner.shutdown().await;
     seeder.shutdown().await;
 }
