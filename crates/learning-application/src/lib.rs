@@ -4,6 +4,7 @@ mod cache;
 mod disk;
 mod documents;
 mod downloads;
+mod drawings;
 mod library;
 mod local_import;
 mod notes;
@@ -18,7 +19,10 @@ pub use documents::{
     DocumentError, DocumentSource, MAX_DOCUMENT_BYTES, read_local_document, read_torrent_document,
 };
 pub use downloads::{Availability, DownloadScope};
-pub use learning_domain::{Anchor, CourseProgress, LessonStatus, NoteError, Region};
+pub use drawings::{Drawing, DrawingSave};
+pub use learning_domain::{
+    Anchor, CourseProgress, DrawingError, DrawingFile, LessonStatus, NoteError, Region,
+};
 pub use library::{
     CourseImportReceipt, CourseLibrary, LibraryError, LocalResource, TorrentResource,
 };

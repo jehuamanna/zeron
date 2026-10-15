@@ -13,7 +13,7 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 9;
+const CURRENT_SCHEMA_VERSION: i64 = 10;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
 
 /// A stored learner note.
@@ -51,6 +51,32 @@ pub enum NoteWrite {
     },
     /// No such note.
     Missing,
+}
+
+/// A stored lesson drawing with its images.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrawingRecord {
+    /// Serialized Excalidraw scene.
+    pub scene_json: String,
+    /// Increases with every save; saves must name it.
+    pub revision: u64,
+    /// `(file_id, mime_type, data_url)` of every stored image.
+    pub files: Vec<(String, String, String)>,
+}
+
+/// Outcome of a compare-and-swap drawing save.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawingWrite {
+    /// Saved at this revision.
+    Saved {
+        /// The new revision.
+        revision: u64,
+    },
+    /// Another save got there first; nothing was written.
+    Conflict {
+        /// Revision to reload.
+        current_revision: u64,
+    },
 }
 
 /// What is recorded about one lesson.
@@ -695,6 +721,107 @@ impl Storage {
         rows.collect::<Result<_, _>>().map_err(StorageError::from)
     }
 
+    /// The drawing of a lesson, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn drawing(
+        &self,
+        course_id: &str,
+        lesson_id: &str,
+    ) -> Result<Option<DrawingRecord>, StorageError> {
+        let Some((scene_json, revision)) = self
+            .connection
+            .query_row(
+                "SELECT scene_json, revision FROM lesson_drawings WHERE course_id = ?1 AND lesson_id = ?2",
+                [course_id, lesson_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        let mut statement = self.connection.prepare(
+            "SELECT file_id, mime_type, data_url FROM drawing_files WHERE course_id = ?1 AND lesson_id = ?2 ORDER BY created_at, file_id",
+        )?;
+        let files = statement
+            .query_map([course_id, lesson_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(DrawingRecord {
+            scene_json,
+            revision: u64::try_from(revision)
+                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(1, revision))?,
+            files,
+        }))
+    }
+
+    /// Save a lesson's drawing and any new images in one transaction:
+    /// create it when `expected_revision` is `None`, otherwise replace it
+    /// only if it is still at that revision. Images already stored under the
+    /// same ID are kept as they are.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock or `SQLite` failures, including an
+    /// unknown course.
+    pub fn save_drawing(
+        &mut self,
+        course_id: &str,
+        lesson_id: &str,
+        expected_revision: Option<u64>,
+        scene_json: &str,
+        new_files: &[(String, String, String)],
+    ) -> Result<DrawingWrite, StorageError> {
+        let now = unix_now()?;
+        let tx = self.connection.transaction()?;
+        let current: Option<i64> = tx
+            .query_row(
+                "SELECT revision FROM lesson_drawings WHERE course_id = ?1 AND lesson_id = ?2",
+                [course_id, lesson_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current = current
+            .map(|revision| {
+                u64::try_from(revision)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, revision))
+            })
+            .transpose()?;
+        let revision = match (current, expected_revision) {
+            (None, None) => {
+                tx.execute(
+                    "INSERT INTO lesson_drawings (course_id, lesson_id, scene_json, revision, updated_at) VALUES (?1, ?2, ?3, 0, ?4)",
+                    params![course_id, lesson_id, scene_json, now],
+                )?;
+                0
+            }
+            (Some(current), Some(expected)) if current == expected => {
+                tx.execute(
+                    "UPDATE lesson_drawings SET scene_json = ?3, revision = revision + 1, updated_at = ?4 WHERE course_id = ?1 AND lesson_id = ?2",
+                    params![course_id, lesson_id, scene_json, now],
+                )?;
+                current + 1
+            }
+            (current, _) => {
+                return Ok(DrawingWrite::Conflict {
+                    current_revision: current.unwrap_or(0),
+                });
+            }
+        };
+        for (file_id, mime_type, data_url) in new_files {
+            tx.execute(
+                "INSERT INTO drawing_files (course_id, lesson_id, file_id, mime_type, data_url, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT DO NOTHING",
+                params![course_id, lesson_id, file_id, mime_type, data_url, now],
+            )?;
+        }
+        tx.commit()?;
+        Ok(DrawingWrite::Saved { revision })
+    }
+
     /// Read a learner setting.
     ///
     /// # Errors
@@ -1006,12 +1133,13 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         found = 4;
     }
     // Later versions each add one table or column; they run in order.
-    let steps: [(i64, Migration); 5] = [
+    let steps: [(i64, Migration); 6] = [
         (4, add_playback_positions),
         (5, add_download_commitments),
         (6, add_pause_flag),
         (7, add_lesson_progress),
         (8, add_notes),
+        (9, add_drawings),
     ];
     for (from, step) in steps {
         if found == from {
@@ -1107,6 +1235,35 @@ fn add_notes(connection: &mut Connection) -> Result<(), StorageError> {
          ) STRICT;
          CREATE INDEX notes_by_lesson ON notes (course_id, lesson_id, created_at);
          PRAGMA user_version = 9;",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Schema 10. One Excalidraw drawing per lesson, saved compare-and-swap on
+/// `revision`, and the images placed in it, which never change once stored.
+fn add_drawings(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE lesson_drawings (
+           course_id TEXT NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+           lesson_id TEXT NOT NULL,
+           scene_json TEXT NOT NULL,
+           revision INTEGER NOT NULL CHECK(revision >= 0),
+           updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+           PRIMARY KEY(course_id, lesson_id)
+         ) STRICT;
+         CREATE TABLE drawing_files (
+           course_id TEXT NOT NULL,
+           lesson_id TEXT NOT NULL,
+           file_id TEXT NOT NULL,
+           mime_type TEXT NOT NULL,
+           data_url TEXT NOT NULL,
+           created_at INTEGER NOT NULL CHECK(created_at >= 0),
+           PRIMARY KEY(course_id, lesson_id, file_id),
+           FOREIGN KEY(course_id, lesson_id) REFERENCES lesson_drawings(course_id, lesson_id) ON DELETE CASCADE
+         ) STRICT;
+         PRAGMA user_version = 10;",
     )?;
     tx.commit()?;
     Ok(())
@@ -1430,7 +1587,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE notes; DROP TABLE lesson_progress;
+                    "DROP TABLE drawing_files; DROP TABLE lesson_drawings;
+                     DROP TABLE notes; DROP TABLE lesson_progress;
                      ALTER TABLE course_torrent_sources DROP COLUMN paused;
                      DROP TABLE download_commitments; DROP TABLE playback_positions;
                      PRAGMA user_version = 4;",
@@ -1590,6 +1748,64 @@ mod tests {
             .save_imported_course(&course, 10, Path::new("/courses/rust"))
             .unwrap();
         assert_eq!(storage.notes(&id, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn drawings_are_saved_compare_and_swap_with_immutable_images() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Rust", "systems");
+        let id = course.course_id.clone();
+        assert!(storage.save_drawing(&id, "l1", None, "{}", &[]).is_err());
+        storage
+            .save_drawing(&id, "l1", None, "{}", &[])
+            .unwrap_err();
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/rust"))
+            .unwrap();
+        assert_eq!(storage.drawing(&id, "l1").unwrap(), None);
+        let image = |content: &str| {
+            (
+                "img1".to_owned(),
+                "image/png".to_owned(),
+                content.to_owned(),
+            )
+        };
+        assert_eq!(
+            storage
+                .save_drawing(&id, "l1", None, "s0", &[image("first")])
+                .unwrap(),
+            DrawingWrite::Saved { revision: 0 }
+        );
+        assert_eq!(
+            storage.save_drawing(&id, "l1", None, "again", &[]).unwrap(),
+            DrawingWrite::Conflict {
+                current_revision: 0
+            }
+        );
+        assert_eq!(
+            storage
+                .save_drawing(&id, "l1", Some(0), "s1", &[image("replaced?")])
+                .unwrap(),
+            DrawingWrite::Saved { revision: 1 }
+        );
+        assert_eq!(
+            storage
+                .save_drawing(&id, "l1", Some(0), "stale", &[])
+                .unwrap(),
+            DrawingWrite::Conflict {
+                current_revision: 1
+            }
+        );
+        let stored = storage.drawing(&id, "l1").unwrap().unwrap();
+        assert_eq!((stored.scene_json.as_str(), stored.revision), ("s1", 1));
+        assert_eq!(stored.files, [image("first")]);
+        assert_eq!(
+            storage.save_drawing(&id, "l2", Some(3), "s", &[]).unwrap(),
+            DrawingWrite::Conflict {
+                current_revision: 0
+            }
+        );
+        assert_eq!(storage.drawing(&id, "l2").unwrap(), None);
     }
 
     #[test]

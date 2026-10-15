@@ -152,7 +152,7 @@ impl CourseLibrary {
     }
 }
 
-fn check_target(
+pub(crate) fn check_target(
     manifest: &CourseManifest,
     lesson_id: &str,
     resource_id: Option<&str>,

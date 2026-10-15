@@ -75,6 +75,9 @@ pub enum LibraryError {
     /// A note's anchor or document is not valid.
     #[error(transparent)]
     Note(#[from] learning_domain::NoteError),
+    /// A drawing or one of its images is not valid.
+    #[error(transparent)]
+    Drawing(#[from] learning_domain::DrawingError),
     /// A note points at a lesson or resource the course does not have.
     #[error("{0}")]
     NoteTarget(&'static str),

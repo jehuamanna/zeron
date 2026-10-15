@@ -7,10 +7,10 @@ use course_format::ResourceKind;
 use learning_application::{
     Anchor, Availability, CacheError, CancellationFlag, CourseImportReceipt, CourseLibrary,
     CourseSharingStatus, DISK_RESERVE_BYTES, DocumentError, DocumentSource, DownloadScope,
-    EngineError, ImportError, InfoHash, LibraryError, LocalResource, NetworkProfile, Note,
-    NoteChange, PeerReachability, RateLimits, SharingError, TorrentEngine, TorrentImportSnapshot,
-    TorrentImportStage, TorrentResource, TorrentSource, TransferState, fits, read_local_document,
-    read_torrent_document,
+    DrawingFile, DrawingSave, EngineError, ImportError, InfoHash, LibraryError, LocalResource,
+    NetworkProfile, Note, NoteChange, PeerReachability, RateLimits, SharingError, TorrentEngine,
+    TorrentImportSnapshot, TorrentImportStage, TorrentResource, TorrentSource, TransferState, fits,
+    read_local_document, read_torrent_document,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::{Deserialize, Serialize};
@@ -100,6 +100,37 @@ impl From<NoteChange> for NoteChangeDto {
             NoteChange::NotFound => Self::NotFound,
         }
     }
+}
+
+/// A lesson drawing as the window receives and sends it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DrawingDto {
+    scene_json: String,
+    revision: u64,
+    files: Vec<DrawingFileDto>,
+}
+
+/// An image in a drawing.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DrawingFileDto {
+    id: String,
+    mime_type: String,
+    data_url: String,
+}
+
+/// Result of saving a drawing; a conflict overwrites nothing.
+#[derive(Debug, Serialize)]
+#[serde(tag = "outcome", rename_all = "camelCase")]
+pub(crate) enum DrawingSaveDto {
+    Saved {
+        revision: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Conflict {
+        current_revision: u64,
+    },
 }
 
 /// Progress of a course and of each of its lessons.
@@ -431,7 +462,7 @@ fn local_import_error(error: LibraryError) -> CommandError {
         // Remaining import failures name only manifest-relative paths, which
         // `course.json` validation keeps relative.
         LibraryError::Import(_) => command_error("course_import_failed", error),
-        LibraryError::InvalidPlaybackTime(_) | LibraryError::Note(_) => {
+        LibraryError::InvalidPlaybackTime(_) | LibraryError::Note(_) | LibraryError::Drawing(_) => {
             command_error("invalid_input", error)
         }
         LibraryError::NoteTarget(_) => command_error("note_target_invalid", error),
@@ -1208,7 +1239,7 @@ pub(crate) async fn delete_note(
 
 fn note_error(error: LibraryError) -> CommandError {
     match error {
-        LibraryError::Note(_) => command_error("invalid_input", error),
+        LibraryError::Note(_) | LibraryError::Drawing(_) => command_error("invalid_input", error),
         LibraryError::NoteTarget(_) => command_error("note_target_invalid", error),
         // Storage errors can name the database location; keep them in Rust.
         _ => CommandError {
@@ -1216,6 +1247,75 @@ fn note_error(error: LibraryError) -> CommandError {
             message: "the note could not be saved".to_owned(),
         },
     }
+}
+
+/// The learner's drawing for a lesson, or `null`.
+#[tauri::command]
+pub(crate) async fn get_drawing(
+    course_id: String,
+    lesson_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<DrawingDto>, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        let drawing = lock_library(&library)?
+            .drawing(&course_id, &lesson_id)
+            .map_err(note_error)?;
+        Ok(drawing.map(|drawing| DrawingDto {
+            scene_json: drawing.scene_json,
+            revision: drawing.revision,
+            files: drawing
+                .files
+                .into_iter()
+                .map(|file| DrawingFileDto {
+                    id: file.id,
+                    mime_type: file.mime_type,
+                    data_url: file.data_url,
+                })
+                .collect(),
+        }))
+    })
+    .await
+}
+
+/// Save a lesson's drawing from `expectedRevision` (`null` for a new one).
+/// `files` may repeat stored images; only new ones are kept.
+#[tauri::command]
+pub(crate) async fn save_drawing(
+    course_id: String,
+    lesson_id: String,
+    expected_revision: Option<u64>,
+    scene_json: String,
+    files: Vec<DrawingFileDto>,
+    state: State<'_, AppState>,
+) -> Result<DrawingSaveDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        let files: Vec<DrawingFile> = files
+            .into_iter()
+            .map(|file| DrawingFile {
+                id: file.id,
+                mime_type: file.mime_type,
+                data_url: file.data_url,
+            })
+            .collect();
+        let saved = lock_library(&library)?
+            .save_drawing(
+                &course_id,
+                &lesson_id,
+                expected_revision,
+                &scene_json,
+                &files,
+            )
+            .map_err(note_error)?;
+        Ok(match saved {
+            DrawingSave::Saved { revision } => DrawingSaveDto::Saved { revision },
+            DrawingSave::Conflict { current_revision } => {
+                DrawingSaveDto::Conflict { current_revision }
+            }
+        })
+    })
+    .await
 }
 
 /// Progress of a course and its lessons.

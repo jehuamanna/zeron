@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
 import { AvailabilityLabel, formatSize, KeepOfflineToggle, PauseTransfersButton, useCourseDownloads } from "../features/downloads/downloads";
 import { DocumentViewer } from "../features/documents/DocumentViewer";
+import { DrawingPanel } from "../features/drawings/DrawingPanel";
 import { NotesPanel } from "../features/notes/NotesPanel";
 import { LessonPlayer, type PlayerHandle } from "../features/player/LessonPlayer";
 import { LessonStatusIcon, MarkCompleteButton, ProgressBar, useCourseProgress } from "../features/progress/progress";
@@ -258,6 +259,9 @@ export function App() {
                         documentAnchor={pdfView ? { kind: "pdfPage", resourceId: pdfView.resourceId, page: pdfView.page, region: pdfView.region } : null}
                         onNoteCreated={() => pdfView && setPdfView({ ...pdfView, region: null })}
                       />
+                    ) : null}
+                    {activeLesson ? (
+                      <DrawingPanel key={`drawing-${activeLesson.id}`} courseId={detail.data.courseId} lessonId={activeLesson.id} lessonTitle={activeLesson.title} />
                     ) : null}
                   </div>
                   <aside aria-label="Course contents" className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">

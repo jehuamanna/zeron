@@ -24,7 +24,7 @@ Assets include learner notes/history, publisher source media, immutable releases
 
 ## Desktop capability policy
 
-Each Tauri app gets a minimal allowlist. Dialog selection does not grant the frontend general filesystem APIs. Shell and arbitrary URL-opening capabilities are absent by default. Admin-only publishing access is not included in learner capabilities. CSP is explicit; development relaxations cannot ship. The loopback origin and dynamic port strategy must be validated per platform before final CSP is fixed.
+Each Tauri app gets a minimal allowlist. Dialog selection does not grant the frontend general filesystem APIs. Shell and arbitrary URL-opening capabilities are absent by default. Admin-only publishing access is not included in learner capabilities. CSP is explicit; development relaxations cannot ship. The loopback origin and dynamic port strategy must be validated per platform before final CSP is fixed. The Learner refuses top-level navigation away from the bundled app (ADR 0010).
 
 ## Cryptography and authenticity
 

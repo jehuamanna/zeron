@@ -563,3 +563,98 @@ fn pdf_documents_are_read_only_while_they_match_the_course() {
             .is_none()
     );
 }
+
+#[test]
+fn drawings_save_from_their_current_revision_and_keep_images() {
+    use learning_application::{DrawingFile, DrawingSave, LibraryError};
+
+    let (_root, mut library) = notes_fixture();
+    let scene = |label: &str| json!({ "elements": [], "appState": { "name": label } }).to_string();
+    let png = |id: &str, data: &str| DrawingFile {
+        id: id.to_owned(),
+        mime_type: "image/png".to_owned(),
+        data_url: format!("data:image/png;base64,{data}"),
+    };
+    assert_eq!(
+        library.drawing("course_recovery", "lesson_one").unwrap(),
+        None
+    );
+    assert_eq!(
+        library
+            .save_drawing(
+                "course_recovery",
+                "lesson_one",
+                None,
+                &scene("a"),
+                &[png("img", "AAAA")]
+            )
+            .unwrap(),
+        DrawingSave::Saved { revision: 0 }
+    );
+    assert_eq!(
+        library
+            .save_drawing(
+                "course_recovery",
+                "lesson_one",
+                Some(0),
+                &scene("b"),
+                &[png("img", "BBBB"), png("img2", "CCCC")],
+            )
+            .unwrap(),
+        DrawingSave::Saved { revision: 1 }
+    );
+    assert_eq!(
+        library
+            .save_drawing(
+                "course_recovery",
+                "lesson_one",
+                Some(0),
+                &scene("stale"),
+                &[]
+            )
+            .unwrap(),
+        DrawingSave::Conflict {
+            current_revision: 1
+        }
+    );
+    let drawing = library
+        .drawing("course_recovery", "lesson_one")
+        .unwrap()
+        .unwrap();
+    assert_eq!((drawing.scene_json, drawing.revision), (scene("b"), 1));
+    assert_eq!(drawing.files, [png("img", "AAAA"), png("img2", "CCCC")]);
+
+    for (lesson, scene_json, files) in [
+        ("lesson_missing", scene("x"), vec![]),
+        ("lesson_one", "{}".to_owned(), vec![]),
+        (
+            "lesson_one",
+            scene("x"),
+            vec![DrawingFile {
+                id: "svg".to_owned(),
+                mime_type: "image/svg+xml".to_owned(),
+                data_url: "data:image/svg+xml;base64,AAAA".to_owned(),
+            }],
+        ),
+    ] {
+        assert!(matches!(
+            library.save_drawing("course_recovery", lesson, Some(1), &scene_json, &files),
+            Err(LibraryError::NoteTarget(_) | LibraryError::Drawing(_))
+        ));
+    }
+    let many: Vec<_> = (0..64)
+        .map(|index| png(&format!("f{index}"), "AAAA"))
+        .collect();
+    assert!(matches!(
+        library.save_drawing("course_recovery", "lesson_one", Some(1), &scene("x"), &many),
+        Err(LibraryError::Drawing(_))
+    ));
+    assert_eq!(
+        library
+            .drawing("course_recovery", "lesson_one")
+            .unwrap()
+            .unwrap()
+            .revision,
+        1
+    );
+}

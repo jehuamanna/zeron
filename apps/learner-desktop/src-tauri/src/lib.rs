@@ -2,6 +2,7 @@
 
 mod commands;
 mod media;
+mod navigation;
 
 use std::{
     path::PathBuf,
@@ -60,6 +61,7 @@ const DISK_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(navigation::guard())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data = app.path().app_data_dir()?;
@@ -134,6 +136,8 @@ pub fn run() {
             commands::list_notes,
             commands::create_note,
             commands::update_note,
+            commands::get_drawing,
+            commands::save_drawing,
             commands::delete_note,
             commands::set_lesson_completed,
             commands::get_storage,

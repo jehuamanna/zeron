@@ -62,6 +62,20 @@ export interface Note {
   updatedAtUnixSeconds: number;
 }
 
+export interface DrawingFile {
+  id: string;
+  mimeType: string;
+  dataUrl: string;
+}
+
+export interface Drawing {
+  sceneJson: string;
+  revision: number;
+  files: DrawingFile[];
+}
+
+export type DrawingSave = { outcome: "saved"; revision: number } | { outcome: "conflict"; currentRevision: number };
+
 export type NoteChange = { outcome: "saved"; note: Note } | { outcome: "conflict"; currentRevision: number } | { outcome: "notFound" };
 
 export type LessonStatus = "not_started" | "in_progress" | "completed";
@@ -247,6 +261,9 @@ export const libraryApi = {
   /** Saves only if the note is still at `expectedRevision`; never overwrites a newer note. */
   updateNote: (noteId: string, expectedRevision: number, anchor: NoteAnchor, body: string) =>
     invoke<NoteChange>("update_note", { noteId, expectedRevision, anchor, body }),
+  drawing: (courseId: string, lessonId: string) => invoke<Drawing | null>("get_drawing", { courseId, lessonId }),
+  saveDrawing: (courseId: string, lessonId: string, expectedRevision: number | null, sceneJson: string, files: DrawingFile[]) =>
+    invoke<DrawingSave>("save_drawing", { courseId, lessonId, expectedRevision, sceneJson, files }),
   deleteNote: (noteId: string, expectedRevision: number) => invoke<NoteChange>("delete_note", { noteId, expectedRevision }),
   progress: (courseId: string) => invoke<CourseProgress>("get_course_progress", { courseId }),
   setLessonCompleted: (courseId: string, lessonId: string, completed: boolean) =>
