@@ -58,14 +58,11 @@ function renderPanel(revision = 4) {
 }
 
 function readyPrepareButton(view: ReturnType<typeof renderPanel>) {
-  return waitFor(
-    () => {
-      const button = view.getByRole("button", { name: /prepare release/i }) as HTMLButtonElement;
-      expect(button.disabled).toBe(false);
-      return button;
-    },
-    { timeout: 3000 },
-  );
+  return waitFor(() => {
+    const button = view.getByRole("button", { name: /prepare release/i }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    return button;
+  });
 }
 
 describe("release preparation", () => {

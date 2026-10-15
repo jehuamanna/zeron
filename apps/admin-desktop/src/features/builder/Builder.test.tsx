@@ -90,7 +90,6 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("course structure builder", () => {
-  // Many sequential UI steps: about 1 s alone, but over 5 s when both app suites run under load.
   it("adds, renames, and reorders modules and lessons", async () => {
     const view = render(<Harness onReload={vi.fn()} />);
     fireEvent.click(view.getByRole("button", { name: "Add module" }));
@@ -122,7 +121,7 @@ describe("course structure builder", () => {
     expect(view.container.textContent).toContain("Moved “Hello” to position 2 of 2.");
     expect(server.modules[1]!.lessons.map((l) => l.title)).toEqual(["Untitled lesson", "Hello"]);
     expect(view.queryByRole("alert")).toBeNull();
-  }, 15_000);
+  });
 
   it("asks before removing a module that still has lessons", async () => {
     const view = render(<Harness onReload={vi.fn()} />);
