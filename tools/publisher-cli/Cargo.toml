@@ -1,0 +1,16 @@
+[package]
+name = "publisher-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+course-publisher = { path = "../../crates/course-publisher" }
+publisher-application = { path = "../../crates/publisher-application" }
+
+[dev-dependencies]
+learning-application = { path = "../../crates/learning-application" }
+
+[lints]
+workspace = true

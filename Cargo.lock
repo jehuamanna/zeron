@@ -2570,6 +2570,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "publisher-cli"
+version = "0.1.0"
+dependencies = [
+ "course-publisher",
+ "learning-application",
+ "publisher-application",
+]
+
+[[package]]
 name = "publisher-storage"
 version = "0.1.0"
 dependencies = [

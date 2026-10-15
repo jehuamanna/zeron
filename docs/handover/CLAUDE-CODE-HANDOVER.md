@@ -49,14 +49,13 @@ The last fully green baseline at `930b4d5` passed Rust formatting, Clippy with w
 - Deterministic BitTorrent v1 metainfo (`docs/releases/phase-2-torrent-metainfo.md`, ADR `docs/decisions/0002-torrent-metainfo-writer.md`). New crate `torrent-metainfo`; `publisher_application::generate_torrent` / `verify_staged_torrent` operate on completed staging attempts.
 - Admin release preparation job (`docs/releases/phase-2-publish-preparation-job.md`). `publisher_application::PublishJobs`; Admin commands `start_publish_preparation` / `get_publish_job` / `cancel_publish_job` plus `publish-job` events; `PublishPanel` UI.
 - Immutable release activation and history (`docs/releases/phase-2-release-activation.md`, ADR `docs/decisions/0003-release-activation.md`). Publisher DB schema v2 (`releases`), `PublisherDrafts::activate_release` / `recover_releases`, `PublishJobs::activate`, Admin `activate_release` / `list_releases`, Releases list on the Courses page.
+- Publisher CLI parity (`docs/releases/phase-2-publisher-cli.md`). `tools/publisher-cli` and `PublisherDrafts::verify_release`. Phase 2 is complete.
 
 Local tooling note: `pnpm` is not on `PATH` in this environment; it is available as `corepack pnpm` from `~/.nvm/versions/node/v22.22.2/bin`. The root scripts invoke nested `pnpm`, so put a `pnpm` shim that execs `corepack pnpm` on `PATH` before running the JS gates.
 
 ## Next slice
 
-Phase 2 CLI parity: a `tools/publisher-cli` binary over the same data-directory layout (`publisher.sqlite3`, `releases/`) that can list drafts and releases, run a prepare dry run, publish with an explicit confirmation flag, and fully re-verify a recorded release. It must stage in its own `cli-staging/` root and never run the Admin startup cleanup on `staging/`.
-
-After that, Phase 3 (local seeding and learner torrent import) requires integrating librqbit behind the engine-neutral port. That is a dependency and network-behaviour decision (version pin, DHT and peer-exchange defaults, listening ports) gated by the Phase 0 spike in `docs/architecture/system-overview.md`; confirm with the user before adding it.
+Phase 3 (local seeding and metadata-first learner torrent import) is next. It requires integrating librqbit behind the engine-neutral port. That is a dependency and network-behaviour decision (exact version pin, DHT/peer-exchange/UPnP defaults, listening ports, whether the full HTTP API stays disabled) and is gated by the Phase 0 spike described in `docs/architecture/system-overview.md` and `docs/research/dependency-feasibility.md`. Confirm the approach with the user before adding the dependency. Groundwork already in place: deterministic v1 torrents, `inspect_torrent`/`verify_torrent`, `PublisherDrafts::verify_release` for the seeding-start check, and release directories with `package/` and `release.torrent`.
 
 When testing UI in the browser pane, Tauri IPC can be faked by assigning `window.__TAURI_INTERNALS__ = { invoke, transformCallback }` after the page loads, then using the app (the initial list query will already have failed).
 
@@ -75,7 +74,7 @@ Published package bytes are immutable. Drafts and releases must never share writ
 
 ## Roadmap position
 
-Phase 1 is functionally established, including complete local-file playback. Phase 2 is active.
+Phase 1 is functionally established, including complete local-file playback. Phase 2 is complete (Admin builder, reproducible publishing, immutable releases, CLI parity). Phase 3 is next and needs a dependency decision.
 
 Continue Phase 2 in small slices:
 

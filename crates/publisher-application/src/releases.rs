@@ -3,8 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use course_publisher::PackagingCancellation;
 use publisher_storage::{NewRelease, ReleaseRecord};
-use torrent_metainfo::{TorrentError, inspect_torrent};
+use torrent_metainfo::{HashProgress, TorrentError, inspect_torrent, verify_torrent};
 
 use crate::{
     DraftServiceError, PreparedRelease, PublisherDrafts, opaque_id,
@@ -113,6 +114,48 @@ impl PublisherDrafts {
             }
         };
         finalize(&partial, &releases_root.join(&release_id))?;
+        Ok(record)
+    }
+
+    /// Fully re-verify a recorded release: exact package tree, manifest digest,
+    /// torrent structure, info hash, and every piece hash.
+    ///
+    /// # Errors
+    /// Returns [`DraftServiceError::InvalidAttempt`] for unknown releases or
+    /// mismatched records and a torrent error for any byte that differs.
+    pub fn verify_release(
+        &self,
+        releases_root: &Path,
+        release_id: &str,
+        cancellation: &PackagingCancellation,
+        progress: &mut dyn FnMut(HashProgress),
+    ) -> Result<ReleaseRecord, DraftServiceError> {
+        let unknown = || DraftServiceError::InvalidAttempt("unknown release");
+        let directory = release_directory(releases_root, release_id).ok_or_else(unknown)?;
+        let record = self.storage.release(release_id)?.ok_or_else(unknown)?;
+        let package = StagedAttempt::open_package(
+            directory.join(RELEASE_PACKAGE_DIRECTORY),
+            directory.join(RELEASE_TORRENT_FILE),
+        )?;
+        if package.manifest_sha256 != record.release.manifest_sha256 {
+            return Err(DraftServiceError::InvalidAttempt(
+                "the released course.json differs from its record",
+            ));
+        }
+        let cancelled = || cancellation.is_cancelled();
+        let verified = verify_torrent(
+            &read_torrent(&package.torrent_path())?,
+            &package.root,
+            &package.files,
+            &cancelled,
+            progress,
+        )
+        .map_err(DraftServiceError::Torrent)?;
+        if verified.info_hash != record.release.info_hash {
+            return Err(DraftServiceError::InvalidAttempt(
+                "the released torrent differs from its record",
+            ));
+        }
         Ok(record)
     }
 

@@ -11,6 +11,7 @@ members = [
     "crates/publisher-storage",
     "crates/torrent-metainfo",
     "tools/course-cli",
+    "tools/publisher-cli",
 ]
 resolver = "3"
 

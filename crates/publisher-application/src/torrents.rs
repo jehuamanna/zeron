@@ -175,9 +175,10 @@ pub fn verify_staged_torrent(
         .map_err(DraftServiceError::Torrent)
 }
 
+/// A package directory whose file tree exactly matches its validated
+/// `course.json`, together with the location of its torrent file.
 pub(crate) struct StagedAttempt {
-    staging_root: PathBuf,
-    attempt_id: String,
+    torrent_path: PathBuf,
     pub(crate) root: PathBuf,
     pub(crate) course_id: String,
     pub(crate) course_version: String,
@@ -191,11 +192,22 @@ impl StagedAttempt {
         if !is_completed_attempt(attempt_id) {
             return Err(DraftServiceError::InvalidAttempt("unknown staging attempt"));
         }
-        let root = staging_root.join(attempt_id);
+        Self::open_package(
+            staging_root.join(attempt_id),
+            staging_root.join(format!("{attempt_id}.torrent")),
+        )
+    }
+
+    pub(crate) fn open_package(
+        root: PathBuf,
+        torrent_path: PathBuf,
+    ) -> Result<Self, DraftServiceError> {
         let metadata = fs::symlink_metadata(&root)
-            .map_err(|_| DraftServiceError::InvalidAttempt("unknown staging attempt"))?;
+            .map_err(|_| DraftServiceError::InvalidAttempt("unknown package directory"))?;
         if !metadata.file_type().is_dir() {
-            return Err(DraftServiceError::InvalidAttempt("unknown staging attempt"));
+            return Err(DraftServiceError::InvalidAttempt(
+                "unknown package directory",
+            ));
         }
         let manifest_bytes = read_bounded(&root.join(MANIFEST_FILE_NAME), MAX_MANIFEST_BYTES)
             .map_err(|_| {
@@ -230,8 +242,7 @@ impl StagedAttempt {
             let _ = write!(manifest_sha256, "{byte:02x}");
         }
         Ok(Self {
-            staging_root: staging_root.to_path_buf(),
-            attempt_id: attempt_id.to_owned(),
+            torrent_path,
             root,
             course_id: manifest.course_id,
             course_version: manifest.version,
@@ -242,8 +253,7 @@ impl StagedAttempt {
     }
 
     pub(crate) fn torrent_path(&self) -> PathBuf {
-        self.staging_root
-            .join(format!("{}.torrent", self.attempt_id))
+        self.torrent_path.clone()
     }
 }
 

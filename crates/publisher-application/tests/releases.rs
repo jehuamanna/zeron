@@ -337,3 +337,85 @@ fn startup_recovery_completes_recorded_activations_and_drops_unrecorded_ones() {
     assert_eq!(restarted.recover().unwrap(), 2);
     assert!(Scratch::entries(&fixture.scratch.staging()).is_empty());
 }
+
+#[test]
+fn recorded_releases_can_be_fully_reverified() {
+    let mut fixture = Fixture::new("reverify");
+    let job_id = fixture.prepare();
+    let (record, _) = fixture
+        .jobs
+        .activate(&job_id, &mut fixture.drafts, &fixture.scratch.releases())
+        .unwrap();
+    let release_id = record.release.release_id.clone();
+    let cancellation = publisher_application::PackagingCancellation::default();
+    let mut hashed = 0;
+    let verified = fixture
+        .drafts
+        .verify_release(
+            &fixture.scratch.releases(),
+            &release_id,
+            &cancellation,
+            &mut |progress| {
+                hashed = progress.hashed_bytes;
+            },
+        )
+        .unwrap();
+    assert_eq!(verified, record);
+    assert_eq!(hashed, record.release.total_bytes);
+
+    for id in [
+        "release_missing",
+        "../releases",
+        "release_0123456789abcdef0123456789abcdef",
+    ] {
+        assert!(matches!(
+            fixture.drafts.verify_release(
+                &fixture.scratch.releases(),
+                id,
+                &cancellation,
+                &mut |_| {}
+            ),
+            Err(DraftServiceError::InvalidAttempt(_))
+        ));
+    }
+
+    let package = fixture
+        .scratch
+        .releases()
+        .join(&release_id)
+        .join(RELEASE_PACKAGE_DIRECTORY)
+        .join("resources");
+    let resource_directory = fs::read_dir(&package)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let resource = fs::read_dir(&resource_directory)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut permissions = fs::metadata(&resource).unwrap().permissions();
+    #[expect(
+        clippy::permissions_set_readonly_false,
+        reason = "simulating tampering"
+    )]
+    permissions.set_readonly(false);
+    fs::set_permissions(&resource, permissions).unwrap();
+    let mut bytes = fs::read(&resource).unwrap();
+    bytes[0] ^= 0xff;
+    fs::write(&resource, bytes).unwrap();
+    assert!(matches!(
+        fixture.drafts.verify_release(
+            &fixture.scratch.releases(),
+            &release_id,
+            &cancellation,
+            &mut |_| {}
+        ),
+        Err(DraftServiceError::Torrent(
+            publisher_application::TorrentError::Verification(_)
+        ))
+    ));
+}
