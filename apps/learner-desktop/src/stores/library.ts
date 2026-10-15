@@ -8,6 +8,8 @@ interface LibraryUiState {
   torrentImport: { jobId: string; source: TorrentImportSource } | null;
   trackTorrentImport: (jobId: string, source: TorrentImportSource) => void;
   dismissTorrentImport: () => void;
+  networkOpen: boolean;
+  showNetwork: (open: boolean) => void;
 }
 
 export const useLibraryUi = create<LibraryUiState>((set) => ({
@@ -16,4 +18,6 @@ export const useLibraryUi = create<LibraryUiState>((set) => ({
   torrentImport: null,
   trackTorrentImport: (jobId, source) => set({ torrentImport: { jobId, source } }),
   dismissTorrentImport: () => set({ torrentImport: null }),
+  networkOpen: false,
+  showNetwork: (networkOpen) => set({ networkOpen }),
 }));

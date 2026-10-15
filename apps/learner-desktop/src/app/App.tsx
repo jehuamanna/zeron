@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, ChevronLeft, Download, File, HardDrive, Magnet, Play, Search } from "lucide-react";
+import { BookOpen, ChevronLeft, Download, File, HardDrive, Magnet, Network, Play, Search } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
+import { NetworkSettings } from "../features/network/NetworkSettings";
 import { CourseSharingCard } from "../features/sharing/CourseSharingCard";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
 import { asCommandError, libraryApi } from "../services/library";
@@ -15,7 +16,7 @@ const formatBytes = (bytes: number) =>
 
 export function App() {
   const queryClient = useQueryClient();
-  const { selectedCourseId, selectCourse } = useLibraryUi();
+  const { selectedCourseId, selectCourse, networkOpen, showNetwork } = useLibraryUi();
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const readiness = useQuery({ queryKey: ["readiness"], queryFn: libraryApi.readiness });
   const courses = useQuery({
@@ -49,7 +50,7 @@ export function App() {
   return (
     <main className="min-h-screen bg-[#071018] text-slate-100">
       <div className="mx-auto max-w-7xl px-6 py-8">
-        <header className="flex items-center justify-between border-b border-white/10 pb-6">
+        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-6">
           <div className="flex items-center gap-3">
             <div className="grid size-10 place-items-center rounded-xl bg-cyan-300 text-slate-950">
               <BookOpen size={22} />
@@ -59,14 +60,21 @@ export function App() {
               <p className="text-sm text-slate-400">Your learning, available offline.</p>
             </div>
           </div>
-          <Button onClick={() => importCourse.mutate()} disabled={importCourse.isPending}>
-            <Download size={17} />
-            {importCourse.isPending ? "Verifying…" : "Import local course"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => showNetwork(true)} aria-pressed={networkOpen}>
+              <Network size={17} /> Network
+            </Button>
+            <Button onClick={() => importCourse.mutate()} disabled={importCourse.isPending}>
+              <Download size={17} />
+              {importCourse.isPending ? "Verifying…" : "Import local course"}
+            </Button>
+          </div>
         </header>
 
         <section className="py-10">
-          {selectedCourseId ? (
+          {networkOpen ? (
+            <NetworkSettings onBack={() => showNetwork(false)} />
+          ) : selectedCourseId ? (
             <div>
               <Button variant="ghost" onClick={leaveCourse} className="mb-7">
                 <ChevronLeft size={17} /> Back to library

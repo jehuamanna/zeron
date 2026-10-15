@@ -7,6 +7,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use learning_application::TorrentEngine as _;
 use learning_application::{
     CourseLibrary, CourseSharing, ImportLimits, NetworkProfile, TorrentImportTimeouts,
     TorrentImports, TransferRouter,
@@ -29,6 +30,10 @@ pub(crate) type Router = TransferRouter<LibrqbitEngine>;
 pub(crate) struct Torrents {
     pub(crate) profile: NetworkProfile,
     pub(crate) engines: Vec<Arc<LibrqbitEngine>>,
+    /// Peer port of the private engine, which downloads and never uploads.
+    pub(crate) download_port: Option<u16>,
+    /// Peer port of the engine that serves shared courses.
+    pub(crate) sharing_port: Option<u16>,
     pub(crate) imports: Option<Arc<TorrentImports<Router>>>,
     pub(crate) sharing: Option<Arc<CourseSharing<LibrqbitEngine>>>,
 }
@@ -80,6 +85,8 @@ pub fn run() {
             commands::cancel_torrent_import,
             commands::get_course_sharing,
             commands::set_course_sharing,
+            commands::get_network_settings,
+            commands::set_network_profile,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Zeron Learner Desktop");
@@ -115,6 +122,8 @@ fn start_torrents(
         return Torrents {
             profile,
             engines: Vec::new(),
+            download_port: None,
+            sharing_port: None,
             imports: None,
             sharing: None,
         };
@@ -122,8 +131,11 @@ fn start_torrents(
     let shared = start("engine-sharing", true);
     let router = Arc::new(TransferRouter::new(Arc::clone(&private), shared.clone()));
     let courses_root: PathBuf = app_data.join("courses");
+    let port = |engine: &Arc<LibrqbitEngine>| engine.listen_address().map(|address| address.port());
     Torrents {
         profile,
+        download_port: port(&private),
+        sharing_port: shared.as_ref().and_then(port),
         engines: std::iter::once(private).chain(shared).collect(),
         imports: Some(Arc::new(TorrentImports::new(
             Arc::clone(&router),

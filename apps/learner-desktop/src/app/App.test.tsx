@@ -20,6 +20,8 @@ vi.mock("../services/library", async (importOriginal) => ({
     cancelTorrentImport: vi.fn(),
     onTorrentImport: vi.fn(() => Promise.resolve(() => {})),
     getCourseSharing: vi.fn(() => Promise.resolve(null)),
+    getNetworkSettings: vi.fn(),
+    setNetworkProfile: vi.fn(),
     setCourseSharing: vi.fn(),
   },
 }));
@@ -39,6 +41,7 @@ describe("learner library", () => {
   beforeEach(() => {
     useLibraryUi.getState().selectCourse(null);
     useLibraryUi.getState().dismissTorrentImport();
+    useLibraryUi.getState().showNetwork(false);
   });
 
   it("shows a durable course summary without a filesystem path", async () => {
@@ -192,5 +195,27 @@ describe("learner library", () => {
     expect(view.container.textContent).toContain("Local · verified");
     expect(view.container.textContent).toContain("Torrent · outline only");
     expect(view.container.textContent).toContain("Sharing");
+  });
+
+  it("opens network settings from the header and returns to the library", async () => {
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.getNetworkSettings).mockResolvedValue({
+      configuredProfile: "local_network",
+      activeProfile: "local_network",
+      torrentEngine: "ready",
+      downloadPort: 1,
+      sharingPort: 2,
+    });
+
+    const view = renderApp();
+    const button = (label: string) =>
+      Array.from(view.container.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === label);
+    await waitFor(() => expect(view.container.textContent).toContain("Your library is ready"));
+    fireEvent.click(button("Network")!);
+    await waitFor(() => expect(view.container.textContent).toContain("Where Zeron looks for torrent courses"));
+    expect(view.container.textContent).not.toContain("Your library is ready");
+    fireEvent.click(button("Back")!);
+    await waitFor(() => expect(view.container.textContent).toContain("Your library is ready"));
   });
 });

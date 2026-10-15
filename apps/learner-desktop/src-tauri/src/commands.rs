@@ -121,6 +121,17 @@ struct TorrentImportFailureDto {
     message: String,
 }
 
+/// Configured and active network profile, with this session's peer ports.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NetworkSettingsDto {
+    configured_profile: &'static str,
+    active_profile: &'static str,
+    torrent_engine: &'static str,
+    download_port: Option<u16>,
+    sharing_port: Option<u16>,
+}
+
 /// A torrent course's sharing choice and metrics measured by this computer.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -410,6 +421,52 @@ pub(crate) async fn set_course_sharing(
             code: "not_torrent_course",
             message: "only courses imported from a torrent can be shared".to_owned(),
         })
+}
+
+#[tauri::command]
+pub(crate) async fn get_network_settings(
+    state: State<'_, AppState>,
+) -> Result<NetworkSettingsDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    let torrents = &state.torrents;
+    let (active, available, download_port, sharing_port) = (
+        torrents.profile,
+        torrents.imports.is_some(),
+        torrents.download_port,
+        torrents.sharing_port,
+    );
+    let configured = run_blocking(move || {
+        lock_library(&library)?
+            .network_profile()
+            .map_err(|error| command_error("settings_failed", error))
+    })
+    .await?;
+    Ok(NetworkSettingsDto {
+        configured_profile: configured.name(),
+        active_profile: active.name(),
+        torrent_engine: if available { "ready" } else { "unavailable" },
+        download_port,
+        sharing_port,
+    })
+}
+
+/// Store the profile used the next time the engines start.
+#[tauri::command]
+pub(crate) async fn set_network_profile(
+    profile: String,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    let profile = NetworkProfile::from_name(&profile).ok_or_else(|| CommandError {
+        code: "invalid_input",
+        message: "unknown network profile".to_owned(),
+    })?;
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .set_network_profile(profile)
+            .map_err(|error| command_error("settings_failed", error))
+    })
+    .await
 }
 
 #[tauri::command]

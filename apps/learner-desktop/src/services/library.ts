@@ -3,6 +3,16 @@ import { listen } from "@tauri-apps/api/event";
 
 export type CourseSource = "local" | "torrent";
 
+export type NetworkProfile = "loopback" | "local_network" | "internet";
+
+export interface NetworkSettings {
+  configuredProfile: NetworkProfile;
+  activeProfile: NetworkProfile;
+  torrentEngine: "ready" | "unavailable";
+  downloadPort: number | null;
+  sharingPort: number | null;
+}
+
 export interface CourseSummary {
   courseId: string;
   courseVersion: string;
@@ -34,7 +44,7 @@ export interface CourseSharing {
   courseId: string;
   available: boolean;
   sharing: boolean;
-  networkProfile: "loopback" | "local_network" | "internet";
+  networkProfile: NetworkProfile;
   state: "inactive" | "checking" | "downloading" | "ready" | "failed";
   connectedPeers: number;
   uploadedBytes: number;
@@ -119,6 +129,8 @@ export const libraryApi = {
   importMagnet: (uri: string) => invoke<TorrentImport>("import_magnet", { uri }),
   getTorrentImport: (jobId: string) => invoke<TorrentImport | null>("get_torrent_import", { jobId }),
   cancelTorrentImport: (jobId: string) => invoke<boolean>("cancel_torrent_import", { jobId }),
+  getNetworkSettings: () => invoke<NetworkSettings>("get_network_settings"),
+  setNetworkProfile: (profile: NetworkProfile) => invoke<void>("set_network_profile", { profile }),
   getCourseSharing: (courseId: string) => invoke<CourseSharing | null>("get_course_sharing", { courseId }),
   setCourseSharing: (courseId: string, sharing: boolean) =>
     invoke<CourseSharing>("set_course_sharing", { courseId, sharing }),
