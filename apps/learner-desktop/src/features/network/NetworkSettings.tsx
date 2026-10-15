@@ -109,7 +109,7 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
                 Active now
                 {data.downloadPort ? ` · downloads use port ${data.downloadPort}` : ""}
                 {data.sharingPort ? ` · shared courses are served on port ${data.sharingPort}` : ""}.{" "}
-                {data.activePortForwarding ? "Your router is asked to forward the sharing port with UPnP." : "UPnP is off."}
+                {data.activePortForwarding ? "Your router is asked to forward these ports with UPnP." : "UPnP is off."}
               </p>
             )}
             {!data.restartRequired && data.torrentEngine === "ready" && data.sharingPort === null ? (

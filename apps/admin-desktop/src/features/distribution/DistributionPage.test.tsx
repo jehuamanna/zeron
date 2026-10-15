@@ -158,7 +158,7 @@ describe("distribution workspace", () => {
     const port = await waitFor(() => view.getByLabelText("Peer port"));
     expect(view.container.textContent).toContain("UPnP is off.");
     fireEvent.change(port, { target: { value: "51413" } });
-    fireEvent.click(view.getByRole("checkbox", { name: /forward the port/ }));
+    fireEvent.click(view.getByRole("checkbox", { name: /forward/ }));
     fireEvent.click(view.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(view.getByRole("status").textContent).toContain("Restart Zeron Publisher"));
     expect(publisherApi.setPeerReachability).toHaveBeenCalledWith(51413, true);
@@ -168,7 +168,7 @@ describe("distribution workspace", () => {
   it("keeps UPnP off outside the internet profile and rejects bad ports", async () => {
     const view = renderPage();
     const port = await waitFor(() => view.getByLabelText("Peer port"));
-    expect((view.getByRole("checkbox", { name: /forward the port/ }) as HTMLInputElement).disabled).toBe(true);
+    expect((view.getByRole("checkbox", { name: /forward/ }) as HTMLInputElement).disabled).toBe(true);
     fireEvent.change(port, { target: { value: "443" } });
     fireEvent.click(view.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(view.getByRole("alert").textContent).toContain("Choose a port from 1024 to 65535"));

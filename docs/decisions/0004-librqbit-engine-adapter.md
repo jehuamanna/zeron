@@ -50,7 +50,13 @@ AGENTS.md requires engine types to stay behind a capability port and every engin
    | `LocalNetwork` | applies | never |
    | `Internet` | applies | when chosen |
 
-   Forwarding uses librqbit's own `enable_upnp_port_forwarding`, which maps the TCP listen port with a 60 s lease that it renews while the session runs. The mapping therefore lapses within about a minute of shutdown, and no stale router state outlives the app. Both are off by default. The Learner applies them to its sharing engine only, because the private engine never serves peers.
+   Forwarding uses librqbit's own `enable_upnp_port_forwarding`, which maps the TCP listen port with a 60 s lease that it renews while the session runs. The mapping therefore lapses within about a minute of shutdown, and no stale router state outlives the app. A fixed port is off by default. Forwarding was opt-in at first; since 2026-10-16 it is **on by default** (amended below). The Learner's fixed port applies to its sharing engine only.
+
+   **Amendment, 2026-10-16: forwarding on by default, on every engine.** A real two-machine test failed: the publisher's router offered no UPnP, NAT-PMP, or PCP, and the learner's port was never mapped. Neither side could accept a connection, so the learner searched for metadata forever. Common BitTorrent clients avoid this by mapping ports by default on both sides. Only one side of a connection must be reachable, and a seeder that can upload dials out to every peer it discovers; librqbit's DHT re-queries at least every 60 s. Zeron now does the same:
+   - a stored setting without an explicit "off" means forwarding on;
+   - the Learner's private download engine also maps its ephemeral port, so a seeder behind a router without port mapping can still reach the learner.
+
+   Forwarding still applies only under `Internet`, and both apps can turn it off. The user asked for this on 2026-10-16 ("make it just utorrent work").
 
    This supersedes the earlier "UPnP off in all profiles" rule. Reaching seeders across the internet behind home routers requires an inbound port, and the user chose an opt-in toggle over manual forwarding alone. The risk is that any LAN device can make the same UPnP request, and the router opens a port to the internet. That is why it is opt-in, scoped to `Internet`, and explained in both apps.
 

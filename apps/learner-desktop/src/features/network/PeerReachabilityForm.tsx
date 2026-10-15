@@ -47,7 +47,7 @@ export function PeerReachabilityForm({
     <form onSubmit={submit} aria-labelledby="reachability-heading" className="mt-6 border-t border-white/10 pt-5">
       <h2 id="reachability-heading" className="text-sm font-semibold">Reaching people who download from you</h2>
       <p className="mt-1 text-xs text-slate-400">
-        Applies to courses you share. Behind a home router, people on the internet can connect only if this port is forwarded to this computer.
+        Behind a home router, other computers can connect to you only if the router forwards a port to this computer. The fixed port applies to courses you share.
       </p>
       <label htmlFor="peer-port" className="mt-4 block text-xs font-medium text-slate-300">Port for shared courses</label>
       <input
@@ -70,10 +70,10 @@ export function PeerReachabilityForm({
           className="mt-1 accent-cyan-300"
         />
         <span>
-          <span className="block text-sm font-medium">Ask my router to forward the port (UPnP)</span>
+          <span className="block text-sm font-medium">Ask my router to forward Zeron's ports (UPnP)</span>
           <span className="block text-xs text-slate-400">
             {internet
-              ? "While Zeron runs, it asks your router to forward the port. Any device on your network can make the same request, and some routers have UPnP turned off."
+              ? "On by default, like most BitTorrent apps. It lets seeders behind their own routers reach you to deliver a course, and others download what you share. While Zeron runs, it asks your router to forward the ports. Any device on your network can make the same request, and some routers have UPnP turned off."
               : "Available with the Internet profile."}
           </span>
         </span>

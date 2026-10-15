@@ -139,7 +139,11 @@ fn network_profile_defaults_to_local_network_and_persists() {
             .unwrap();
         assert_eq!(
             library.peer_reachability().unwrap(),
-            PeerReachability::default()
+            PeerReachability {
+                port: None,
+                port_forwarding: true
+            },
+            "an ephemeral port with forwarding on by default"
         );
         library
             .set_peer_reachability(PeerReachability::new(Some(51413), true).unwrap())

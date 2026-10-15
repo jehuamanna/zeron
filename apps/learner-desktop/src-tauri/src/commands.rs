@@ -211,7 +211,7 @@ pub(crate) struct NetworkSettingsDto {
     peer_port: Option<u16>,
     /// Stored `UPnP` choice, honored under the Internet profile only.
     port_forwarding: bool,
-    /// Whether this session asks the router to forward the sharing port.
+    /// Whether this session asks the router to forward Zeron's ports.
     active_port_forwarding: bool,
     /// The stored network choice differs from the running engines'.
     restart_required: bool,
@@ -639,8 +639,9 @@ pub(crate) async fn get_network_settings(
         sharing_port,
         peer_port: reachability.port,
         port_forwarding: reachability.port_forwarding,
-        // Only a running sharing engine asks the router to forward its port.
-        active_port_forwarding: active.1.port_forwarding && sharing_port.is_some(),
+        // Any running engine asks the router to forward its port.
+        active_port_forwarding: active.1.port_forwarding
+            && (download_port.is_some() || sharing_port.is_some()),
         restart_required: (configured, reachability.for_profile(configured)) != active,
         download_limit_kib,
         upload_limit_kib,

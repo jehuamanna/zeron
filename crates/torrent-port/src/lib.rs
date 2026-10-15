@@ -126,8 +126,11 @@ impl PeerReachability {
         if self.port_forwarding { "on" } else { "off" }
     }
 
-    /// Read stored settings. Missing or invalid values fall back to an
-    /// ephemeral port without forwarding.
+    /// Read stored settings. A missing or invalid port means an ephemeral
+    /// port. Forwarding is on unless the user turned it off, as in common
+    /// torrent clients: without it, two peers behind home routers cannot
+    /// reach each other. It still applies only under
+    /// [`NetworkProfile::Internet`].
     #[must_use]
     pub fn from_settings(port: Option<&str>, port_forwarding: Option<&str>) -> Self {
         let port = port
@@ -135,7 +138,7 @@ impl PeerReachability {
             .filter(|port| *port >= Self::MIN_FIXED_PORT);
         Self {
             port,
-            port_forwarding: port_forwarding == Some("on"),
+            port_forwarding: port_forwarding != Some("off"),
         }
     }
 }
@@ -493,9 +496,14 @@ mod tests {
         for stored in [None, Some("80"), Some("70000"), Some("port")] {
             assert_eq!(
                 PeerReachability::from_settings(stored, None),
-                PeerReachability::default()
+                PeerReachability {
+                    port: None,
+                    port_forwarding: true
+                },
+                "forwarding defaults to on"
             );
         }
+        assert!(!PeerReachability::from_settings(None, Some("off")).port_forwarding);
 
         assert_eq!(chosen.for_profile(NetworkProfile::Internet), chosen);
         assert_eq!(

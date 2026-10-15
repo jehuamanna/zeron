@@ -37,3 +37,16 @@ Status: complete. Publishers and learners can choose a fixed peer port and opt i
 - Reaching a seeder from outside the local network was not tested. The verification router does not offer UPnP, and no outside host was available.
 - Without UPnP, a manual router forward of the fixed port is needed. Carrier-grade NAT blocks inbound connections entirely; uTP and hole punching are not used.
 - See ADR 0004 decision 8.
+
+## Update, 2026-10-16: forwarding on by default, like common BitTorrent clients
+
+- **Why:** a real two-machine test (Admin seeding under Internet, a Learner on another network) stayed at "finding metadata". The Admin's router answers none of UPnP, NAT-PMP, or PCP, and the Learner never mapped its own port, so neither side accepted connections.
+- **Change:**
+  - Forwarding is now on unless the user turns it off (`PeerReachability::from_settings`).
+  - The Learner's private download engine also asks for a mapping on its ephemeral port. A seeder behind a router without port mapping can then dial the learner after finding it through the DHT, which librqbit re-queries at least every 60 s.
+  - Forwarding still applies only under the Internet profile.
+- **UI:** both apps say forwarding is on by default; the Learner explains that it lets seeders behind routers reach you. "Active now" reports forwarding when any engine runs.
+- **Evidence:**
+  - Updated unit and persistence tests for the new default and the explicit "off".
+  - The Admin router probe (no UPnP, NAT-PMP, or PCP answers) and the public trackers listing the seeder on port 51413 are from the real test.
+  - A connection through the learner's mapped port still needs confirming on the learner's network. See ADR 0004 decision 8.

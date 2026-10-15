@@ -192,7 +192,8 @@ fn trust_media_gateway(app: &tauri::App, gateway: &MediaGateway) {
 fn trust_media_gateway(_: &tauri::App, _: &MediaGateway) {}
 
 /// Only the sharing engine serves peers, so only it takes the learner's fixed
-/// port and router forwarding; the private engine always uses a new port.
+/// port; the private engine always uses a new port. Both ask the router to
+/// forward their port when forwarding applies.
 fn start_torrents(
     profile: NetworkProfile,
     reachability: PeerReachability,
@@ -204,10 +205,16 @@ fn start_torrents(
         tauri::async_runtime::block_on(LibrqbitEngine::start(EngineConfig {
             profile,
             state_directory: app_data.join(directory),
+            // Both engines may ask the router to forward their port, so a
+            // seeder that cannot accept connections can still reach this
+            // learner. Only the sharing engine takes the fixed port.
             reachability: if allow_uploads {
                 reachability
             } else {
-                PeerReachability::default()
+                PeerReachability {
+                    port: None,
+                    port_forwarding: reachability.port_forwarding,
+                }
             },
             allow_uploads,
         }))

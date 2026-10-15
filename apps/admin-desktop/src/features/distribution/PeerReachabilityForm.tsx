@@ -71,7 +71,7 @@ export function PeerReachabilityForm({
           <span className="block text-sm font-medium">Ask my router to forward the port (UPnP)</span>
           <span className="block text-xs text-slate-400">
             {internet
-              ? "While Zeron Publisher runs, it asks your router to forward the port. Any device on your network can make the same request, and some routers have UPnP turned off."
+              ? "On by default, like most BitTorrent apps. While Zeron Publisher runs, it asks your router to forward the port. Any device on your network can make the same request, and some routers have UPnP turned off."
               : "Available with the Internet profile."}
           </span>
         </span>

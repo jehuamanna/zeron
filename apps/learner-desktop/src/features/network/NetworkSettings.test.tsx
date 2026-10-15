@@ -136,7 +136,7 @@ describe("network settings", () => {
     );
     const { view } = renderSettings();
 
-    await waitFor(() => expect(view.container.textContent).toContain("Your router is asked to forward the sharing port with UPnP."));
+    await waitFor(() => expect(view.container.textContent).toContain("Your router is asked to forward these ports with UPnP."));
     expect(view.container.textContent).toContain("Sharing could not start, possibly because port 51413 is in use");
   });
 

@@ -402,7 +402,11 @@ fn the_network_profile_defaults_to_the_local_network() {
 
     assert_eq!(
         drafts.peer_reachability().unwrap(),
-        PeerReachability::default()
+        PeerReachability {
+            port: None,
+            port_forwarding: true
+        },
+        "an ephemeral port with forwarding on by default"
     );
     let chosen = PeerReachability::new(Some(51413), true).unwrap();
     drafts.set_peer_reachability(chosen).unwrap();
