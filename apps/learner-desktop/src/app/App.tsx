@@ -5,12 +5,13 @@ import { useRef, useState } from "react";
 import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
 import { AvailabilityLabel, formatSize, KeepOfflineToggle, PauseTransfersButton, useCourseDownloads } from "../features/downloads/downloads";
+import { DocumentViewer } from "../features/documents/DocumentViewer";
 import { NotesPanel } from "../features/notes/NotesPanel";
 import { LessonPlayer, type PlayerHandle } from "../features/player/LessonPlayer";
 import { LessonStatusIcon, MarkCompleteButton, ProgressBar, useCourseProgress } from "../features/progress/progress";
 import { CourseSharingCard } from "../features/sharing/CourseSharingCard";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
-import { asCommandError, libraryApi } from "../services/library";
+import { asCommandError, libraryApi, type Region } from "../services/library";
 import { useLibraryUi } from "../stores/library";
 
 const formatBytes = (bytes: number) =>
@@ -25,6 +26,7 @@ export function App() {
   const [playing, setPlaying] = useState<string | null>(null);
   const [startAt, setStartAt] = useState<number | null>(null);
   const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
+  const [pdfView, setPdfView] = useState<{ resourceId: string; title: string; page: number; region: Region | null } | null>(null);
   const player = useRef<PlayerHandle>(null);
   // A note's timestamp to start at when it opens a video that is not playing.
   const pendingSeek = useRef<number | null>(null);
@@ -56,6 +58,7 @@ export function App() {
     onSuccess: ({ registration, position }, resourceId) => {
       setStartAt(pendingSeek.current ?? position);
       pendingSeek.current = null;
+      setPdfView(null);
       setMediaUrl(registration.url);
       setPlaying(resourceId);
       setActiveLessonId(lessonOf(resourceId)?.id ?? null);
@@ -101,6 +104,25 @@ export function App() {
     detail.data?.modules.flatMap((module) => module.lessons).find((lesson) => lesson.resources.some((resource) => resource.id === resourceId));
   const activeLesson = detail.data?.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === activeLessonId) ?? null;
   const playingInActiveLesson = playing !== null && activeLesson?.resources.some((resource) => resource.id === playing) ? playing : null;
+  const openDocument = (resourceId: string, page = 1) => {
+    const lesson = lessonOf(resourceId);
+    const resource = lesson?.resources.find((candidate) => candidate.id === resourceId);
+    if (!lesson || !resource) return;
+    setMediaUrl(null);
+    setPlaying(null);
+    setActiveLessonId(lesson.id);
+    setPdfView({ resourceId, title: `${lesson.title} · PDF`, page, region: null });
+  };
+  const lessonNotes = useQuery({
+    queryKey: ["notes", detail.data?.courseId, activeLessonId],
+    queryFn: () => libraryApi.notes(detail.data!.courseId, activeLessonId),
+    enabled: pdfView !== null && activeLessonId !== null && detail.data !== undefined,
+  });
+  const pageHighlights = (lessonNotes.data ?? []).flatMap((note) =>
+    note.anchor.kind === "pdfPage" && note.anchor.resourceId === pdfView?.resourceId && note.anchor.page === pdfView.page && note.anchor.region
+      ? [note.anchor.region]
+      : [],
+  );
   const seekTo = (resourceId: string, seconds: number) => {
     if (playing === resourceId) {
       player.current?.seek(seconds);
@@ -114,6 +136,7 @@ export function App() {
     setMediaUrl(null);
     setPlaying(null);
     setActiveLessonId(null);
+    setPdfView(null);
     selectCourse(null);
   };
 
@@ -182,7 +205,19 @@ export function App() {
                     ) : null}
                     {torrentCourse ? <CourseSharingCard courseId={detail.data.courseId} /> : null}
                     <div className="mt-10 rounded-3xl border border-white/10 bg-black/20 p-8">
-                      {mediaUrl && playing ? (
+                      {pdfView ? (
+                        <DocumentViewer
+                          key={pdfView.resourceId}
+                          courseId={detail.data.courseId}
+                          resourceId={pdfView.resourceId}
+                          title={pdfView.title}
+                          page={pdfView.page}
+                          onPage={(page) => setPdfView({ ...pdfView, page, region: null })}
+                          highlights={pageHighlights}
+                          pendingRegion={pdfView.region}
+                          onRegion={(region) => setPdfView({ ...pdfView, region })}
+                        />
+                      ) : mediaUrl && playing ? (
                         <LessonPlayer
                           handle={player}
                           key={mediaUrl}
@@ -219,6 +254,9 @@ export function App() {
                         videoResourceId={playingInActiveLesson}
                         currentTime={() => player.current?.currentTime() ?? 0}
                         onSeek={seekTo}
+                        onOpenPage={(resourceId, page) => openDocument(resourceId, page)}
+                        documentAnchor={pdfView ? { kind: "pdfPage", resourceId: pdfView.resourceId, page: pdfView.page, region: pdfView.region } : null}
+                        onNoteCreated={() => pdfView && setPdfView({ ...pdfView, region: null })}
                       />
                     ) : null}
                   </div>
@@ -335,9 +373,21 @@ export function App() {
                                     ) : null}
                                     </span>
                                   ) : (
-                                    <span key={resource.id} className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-400">
-                                      <File size={12} /> {resource.kind}
-                                    </span>
+                                    resource.kind === "pdf" ? (
+                                      <button
+                                        type="button"
+                                        key={resource.id}
+                                        aria-current={pdfView?.resourceId === resource.id ? "true" : undefined}
+                                        onClick={() => openDocument(resource.id)}
+                                        className="inline-flex items-center gap-1 rounded-md bg-amber-300/10 px-2 py-1 text-xs text-amber-100 hover:bg-amber-300/20"
+                                      >
+                                        <File size={12} /> {pdfView?.resourceId === resource.id ? "Reading" : "Open PDF"}
+                                      </button>
+                                    ) : (
+                                      <span key={resource.id} className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-400">
+                                        <File size={12} /> {resource.kind}
+                                      </span>
+                                    )
                                   ))}
                                 </div>
                               </div>

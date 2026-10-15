@@ -466,3 +466,96 @@ fn notes_change_only_from_their_current_revision() {
     );
     assert_eq!(library.notes("course_recovery", None).unwrap().len(), 1);
 }
+
+#[test]
+fn pdf_documents_are_read_only_while_they_match_the_course() {
+    use learning_application::{
+        DocumentError, DocumentSource, MAX_DOCUMENT_BYTES, read_local_document,
+    };
+
+    let root = TempRoot::new();
+    let course = root.path().join("documents");
+    fs::create_dir(&course).unwrap();
+    let pdf = b"%PDF-1.4\n% tiny test document\n";
+    fs::write(course.join("handout.pdf"), pdf).unwrap();
+    let digest = Sha256::digest(pdf)
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            write!(&mut hex, "{byte:02x}").unwrap();
+            hex
+        });
+    let manifest = json!({
+        "schemaVersion": 1, "courseId": "course_documents", "version": "1.0.0", "title": "Documents",
+        "publisher": { "name": "Zeron Tests" }, "language": "en",
+        "modules": [{ "id": "module_one", "title": "Module", "position": 0, "lessons": [{
+            "id": "lesson_one", "title": "Lesson", "position": 0,
+            "resources": [{ "id": "resource_pdf", "kind": "pdf", "path": "handout.pdf", "mediaType": "application/pdf", "byteLength": pdf.len(), "sha256": digest }]
+        }] }]
+    });
+    fs::write(
+        course.join("course.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let mut library = CourseLibrary::open(
+        &root.path().join("library.sqlite3"),
+        ImportLimits::default(),
+    )
+    .unwrap();
+    library
+        .import_local_folder(&course, &CancellationFlag::default())
+        .unwrap();
+
+    assert!(
+        library
+            .document_source("course_documents", "resource_missing")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        library
+            .document_source("course_missing", "resource_pdf")
+            .unwrap()
+            .is_none()
+    );
+    let Some(DocumentSource::Local {
+        path,
+        sha256,
+        byte_length,
+    }) = library
+        .document_source("course_documents", "resource_pdf")
+        .unwrap()
+    else {
+        panic!("a local document");
+    };
+    assert_eq!(
+        read_local_document(&path, &sha256, byte_length).unwrap(),
+        pdf
+    );
+    assert!(matches!(
+        read_local_document(&path, &sha256, MAX_DOCUMENT_BYTES + 1),
+        Err(DocumentError::TooLarge)
+    ));
+    fs::write(&path, b"%PDF-1.4\n% changed after import\n").unwrap();
+    assert!(matches!(
+        read_local_document(&path, &sha256, byte_length),
+        Err(DocumentError::Changed)
+    ));
+    fs::remove_file(&path).unwrap();
+    assert!(matches!(
+        read_local_document(&path, &sha256, byte_length),
+        Err(DocumentError::Unavailable)
+    ));
+
+    // Video resources are not documents.
+    let video_root = create_course(root.path());
+    library
+        .import_local_folder(&video_root, &CancellationFlag::default())
+        .unwrap();
+    assert!(
+        library
+            .document_source("course_recovery", "resource_video")
+            .unwrap()
+            .is_none()
+    );
+}

@@ -209,7 +209,7 @@ Done so far: engine file selection (`phase-5-file-selection.md`, ADR 0004 decisi
 
 ### Phase 6 — learning workspace
 
-Done so far: lesson and course progress (`phase-6-progress.md`, new `learning-domain` crate, learner schema v8) and Tiptap notes with typed anchors (`phase-6-notes.md`, ADR 0009, learner schema v9). Remaining below.
+Done so far: lesson and course progress (`phase-6-progress.md`, new `learning-domain` crate, learner schema v8) Tiptap notes with typed anchors (`phase-6-notes.md`, ADR 0009, learner schema v9), and PDF viewing with page and highlight notes (`phase-6-pdf-viewer.md`). Remaining below.
 
 - Progress tracking per lesson and course.
 - Tiptap notes with typed anchors: a video timestamp or a PDF page and region.

@@ -38,10 +38,17 @@ export interface CourseSummary {
   totalLessons: number;
 }
 
+export interface Region {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export type NoteAnchor =
   | { kind: "lesson" }
   | { kind: "videoTime"; resourceId: string; seconds: number }
-  | { kind: "pdfPage"; resourceId: string; page: number; region: { x: number; y: number; width: number; height: number } | null };
+  | { kind: "pdfPage"; resourceId: string; page: number; region: Region | null };
 
 export interface Note {
   noteId: string;
@@ -232,6 +239,8 @@ export const libraryApi = {
   storage: () => invoke<StorageUse>("get_storage"),
   /** Caps streamed lessons; null for no cap. Applies at once. */
   setCacheLimit: (limitBytes: number | null) => invoke<RemovalReport>("set_cache_limit", { limitBytes }),
+  /** Verified bytes of a PDF resource. */
+  readDocument: (courseId: string, resourceId: string) => invoke<ArrayBuffer>("read_document", { courseId, resourceId }),
   notes: (courseId: string, lessonId: string | null) => invoke<Note[]>("list_notes", { courseId, lessonId }),
   createNote: (courseId: string, lessonId: string, anchor: NoteAnchor, body: string) =>
     invoke<Note>("create_note", { courseId, lessonId, anchor, body }),

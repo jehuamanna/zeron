@@ -1354,3 +1354,42 @@ async fn low_disk_space_pauses_downloads_and_recovery_resumes_only_those() {
     course.learner.shutdown().await;
     course.seeder.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn torrent_documents_are_read_whole_through_the_verified_stream() {
+    use learning_application::{DocumentError, MAX_DOCUMENT_BYTES, read_torrent_document};
+
+    let course = imported_course("document").await;
+    let resource = course
+        .library
+        .lock()
+        .unwrap()
+        .torrent_resources(&course.course_id)
+        .unwrap()
+        .remove(0);
+    let bytes = read_torrent_document(
+        &*course.learner,
+        course.info_hash.as_str(),
+        resource.file_index,
+        resource.byte_length,
+    )
+    .await
+    .unwrap();
+    assert_eq!(bytes.len() as u64, resource.byte_length);
+    assert!(
+        bytes.iter().all(|&byte| byte == 4),
+        "the published lesson bytes"
+    );
+    assert!(matches!(
+        read_torrent_document(
+            &*course.learner,
+            course.info_hash.as_str(),
+            resource.file_index,
+            MAX_DOCUMENT_BYTES + 1
+        )
+        .await,
+        Err(DocumentError::TooLarge)
+    ));
+    course.learner.shutdown().await;
+    course.seeder.shutdown().await;
+}

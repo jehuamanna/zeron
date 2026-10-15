@@ -101,4 +101,20 @@ describe("lesson notes", () => {
     await waitFor(() => expect(libraryApi.deleteNote).toHaveBeenCalledWith("note_1", 4));
     expect(view.queryByRole("button", { name: /Add note at/ })).toBeNull();
   });
+
+  it("adds notes on the open PDF page or its highlighted area", async () => {
+    vi.mocked(libraryApi.notes).mockResolvedValue([note({ noteId: "note_pdf", anchor: { kind: "pdfPage", resourceId: "pdf_1", page: 4, region: null } })]);
+    vi.mocked(libraryApi.createNote).mockResolvedValue(note({}));
+    const onOpenPage = vi.fn();
+    const onNoteCreated = vi.fn();
+    const region = { x: 0.1, y: 0.2, width: 0.3, height: 0.1 };
+    const { view } = renderPanel({ videoResourceId: null, onOpenPage, onNoteCreated, documentAnchor: { kind: "pdfPage", resourceId: "pdf_1", page: 2, region } });
+    fireEvent.click(await waitFor(() => view.getByRole("button", { name: "Go to Page 4" })));
+    expect(onOpenPage).toHaveBeenCalledWith("pdf_1", 4);
+    fireEvent.click(view.getByRole("button", { name: "Add note on highlight" }));
+    fireEvent.change(view.getByLabelText("Note text"), { target: { value: "Consistent hashing diagram" } });
+    fireEvent.click(view.getByRole("button", { name: "Save note" }));
+    await waitFor(() => expect(libraryApi.createNote).toHaveBeenCalledWith("course_1", "lesson_1", { kind: "pdfPage", resourceId: "pdf_1", page: 2, region }, doc("Consistent hashing diagram")));
+    await waitFor(() => expect(onNoteCreated).toHaveBeenCalled());
+  });
 });

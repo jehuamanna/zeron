@@ -6,10 +6,11 @@ use std::{
 use course_format::ResourceKind;
 use learning_application::{
     Anchor, Availability, CacheError, CancellationFlag, CourseImportReceipt, CourseLibrary,
-    CourseSharingStatus, DISK_RESERVE_BYTES, DownloadScope, EngineError, ImportError, InfoHash,
-    LibraryError, LocalResource, NetworkProfile, Note, NoteChange, PeerReachability, RateLimits,
-    SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage, TorrentResource,
-    TorrentSource, TransferState, fits,
+    CourseSharingStatus, DISK_RESERVE_BYTES, DocumentError, DocumentSource, DownloadScope,
+    EngineError, ImportError, InfoHash, LibraryError, LocalResource, NetworkProfile, Note,
+    NoteChange, PeerReachability, RateLimits, SharingError, TorrentEngine, TorrentImportSnapshot,
+    TorrentImportStage, TorrentResource, TorrentSource, TransferState, fits, read_local_document,
+    read_torrent_document,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::{Deserialize, Serialize};
@@ -1068,6 +1069,68 @@ fn cache_error(error: CacheError) -> CommandError {
     }
 }
 
+/// The verified bytes of a PDF resource, as a raw binary response. Paths
+/// never cross IPC; local files are re-hashed against the manifest.
+#[tauri::command]
+pub(crate) async fn read_document(
+    course_id: String,
+    resource_id: String,
+    state: State<'_, AppState>,
+) -> Result<tauri::ipc::Response, CommandError> {
+    let library = Arc::clone(&state.library);
+    let source = run_blocking(move || {
+        lock_library(&library)?
+            .document_source(&course_id, &resource_id)
+            .map_err(|error| document_error(DocumentError::Library(error)))
+    })
+    .await?
+    .ok_or_else(|| document_error(DocumentError::NotADocument))?;
+    let bytes = match source {
+        DocumentSource::Local {
+            path,
+            sha256,
+            byte_length,
+        } => {
+            run_blocking(move || {
+                read_local_document(&path, &sha256, byte_length).map_err(document_error)
+            })
+            .await?
+        }
+        DocumentSource::Torrent {
+            info_hash,
+            file_index,
+            byte_length,
+        } => {
+            let router = state
+                .torrents
+                .router
+                .clone()
+                .ok_or_else(|| document_error(DocumentError::Unavailable))?;
+            read_torrent_document(&*router, &info_hash, file_index, byte_length)
+                .await
+                .map_err(document_error)?
+        }
+    };
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+fn document_error(error: DocumentError) -> CommandError {
+    let code = match error {
+        DocumentError::NotADocument => "not_a_document",
+        DocumentError::TooLarge => "document_too_large",
+        DocumentError::Changed => "document_changed",
+        DocumentError::Unavailable => "document_unavailable",
+        // Library errors can name the database location; keep them in Rust.
+        DocumentError::Library(_) => {
+            return CommandError {
+                code: "library_query_failed",
+                message: "the library could not be read".to_owned(),
+            };
+        }
+    };
+    command_error(code, error)
+}
+
 /// Notes of a course, or of one lesson, oldest first.
 #[tauri::command]
 pub(crate) async fn list_notes(
@@ -1646,6 +1709,21 @@ mod tests {
             note_error(LibraryError::NoteTarget("x")).code,
             "note_target_invalid"
         );
+    }
+
+    #[test]
+    fn document_errors_have_codes_and_no_paths() {
+        assert_eq!(
+            document_error(DocumentError::Changed).code,
+            "document_changed"
+        );
+        assert_eq!(
+            document_error(DocumentError::TooLarge).code,
+            "document_too_large"
+        );
+        let library = document_error(DocumentError::Library(LibraryError::NoteTarget("x")));
+        assert_eq!(library.code, "library_query_failed");
+        assert!(!library.message.contains('/'));
     }
 
     #[test]

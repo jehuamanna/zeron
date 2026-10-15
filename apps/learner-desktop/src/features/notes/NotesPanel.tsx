@@ -28,7 +28,7 @@ function anchorLabel(anchor: NoteAnchor) {
 type Draft = { noteId: string | null; revision: number; anchor: NoteAnchor; body: string; text: string };
 
 /** Notes of one lesson. The player handle supplies timestamps and seeking. */
-export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, currentTime, onSeek, onOpenPage }: {
+export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, currentTime, onSeek, onOpenPage, documentAnchor = null, onNoteCreated }: {
   courseId: string;
   lessonId: string;
   lessonTitle: string;
@@ -37,6 +37,9 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
   currentTime: () => number;
   onSeek: (resourceId: string, seconds: number) => void;
   onOpenPage?: (resourceId: string, page: number) => void;
+  /** The open PDF page, and any highlighted area, for page notes. */
+  documentAnchor?: Extract<NoteAnchor, { kind: "pdfPage" }> | null;
+  onNoteCreated?: () => void;
 }) {
   const queryClient = useQueryClient();
   const key = ["notes", courseId, lessonId];
@@ -54,7 +57,8 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
       const change = await libraryApi.updateNote(current.noteId, current.revision, current.anchor, current.body);
       return change.outcome;
     },
-    onSuccess: (outcome) => {
+    onSuccess: (outcome, saved) => {
+      if (saved.noteId === null) onNoteCreated?.();
       if (outcome === "conflict") {
         // Keep the learner's text on screen; nothing was overwritten.
         setConflict(true);
@@ -84,6 +88,11 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
           {videoResourceId ? (
             <Button variant="ghost" disabled={draft !== null} onClick={() => start({ kind: "videoTime", resourceId: videoResourceId, seconds: Math.floor(currentTime()) })}>
               <Clock size={15} /> Add note at {formatTimestamp(currentTime())}
+            </Button>
+          ) : null}
+          {documentAnchor ? (
+            <Button variant="ghost" disabled={draft !== null} onClick={() => start(documentAnchor)}>
+              {documentAnchor.region ? "Add note on highlight" : `Add note on page ${documentAnchor.page}`}
             </Button>
           ) : null}
           <Button variant="ghost" disabled={draft !== null} onClick={() => start({ kind: "lesson" })}>Add lesson note</Button>
