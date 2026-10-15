@@ -4,13 +4,14 @@ Zeron is an offline-first, torrent-powered course publishing and learning platfo
 
 ## Current implementation
 
-The initial Rust workspace contains `course-format`, the framework-independent owner of the strict version-one `course.json` contract, and `learning-application`, which currently owns safe local-folder import. It provides:
+The initial Rust workspace contains `course-format`, the framework-independent owner of the strict version-one `course.json` contract; `learning-application`, which owns safe local-folder import; and `learning-storage`, which owns local persistence. It provides:
 
 - Serde types with unknown-field rejection;
 - semantic validation for stable IDs, ordering, SemVer, relations, hashes, media types, and HTTPS references;
 - portable package-path validation, NFC enforcement, and case-collision detection;
 - generated JSON Schema and a checked-in valid fixture.
 - bounded and cancellable local import with symlink rejection, containment checks, and exact length/SHA-256 verification.
+- bundled SQLite migrations, foreign-key enforcement, WAL negotiation, FTS5 capability checks, transactional course snapshots, and local metadata search.
 
 ## Development
 
