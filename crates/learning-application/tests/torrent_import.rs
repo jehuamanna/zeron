@@ -1018,3 +1018,37 @@ async fn module_and_course_scopes_cover_their_lessons_and_labels_follow_availabi
     course.learner.shutdown().await;
     course.seeder.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn paused_courses_are_restored_paused() {
+    let course = imported_course("paused").await;
+    {
+        let mut library = course.library.lock().unwrap();
+        assert!(!library.course_paused(&course.course_id).unwrap());
+        assert!(!library.set_course_paused("course_unknown", true).unwrap());
+        assert!(library.set_course_paused(&course.course_id, true).unwrap());
+        assert!(library.course_paused(&course.course_id).unwrap());
+    }
+    course.learner.shutdown().await;
+
+    let restarted = loopback_engine(&course.scratch.0, "learner-2", false).await;
+    let restorer = imports(
+        Arc::clone(&restarted),
+        &course.library,
+        course.courses.clone(),
+        TorrentImportTimeouts::default(),
+    );
+    assert_eq!(restorer.restore().await, 1);
+    assert_eq!(
+        restarted.transfer(&course.info_hash).unwrap().state,
+        TransferState::Paused
+    );
+    course
+        .library
+        .lock()
+        .unwrap()
+        .set_course_paused(&course.course_id, false)
+        .unwrap();
+    restarted.shutdown().await;
+    course.seeder.shutdown().await;
+}

@@ -58,6 +58,8 @@ export interface ResourceAvailability {
 export type AvailabilityState = "online_only" | "downloading" | "partially_available" | "available_offline";
 
 export interface CourseDownloads {
+  /** Whether the learner paused this course's transfer. */
+  paused: boolean;
   course: boolean;
   modules: string[];
   lessons: string[];
@@ -70,7 +72,7 @@ export interface CourseSharing {
   available: boolean;
   sharing: boolean;
   networkProfile: NetworkProfile;
-  state: "inactive" | "checking" | "downloading" | "ready" | "failed";
+  state: "inactive" | "checking" | "downloading" | "ready" | "failed" | "paused";
   connectedPeers: number;
   uploadedBytes: number;
   uploadBytesPerSecond: number;
@@ -168,6 +170,8 @@ export const libraryApi = {
   /** Keeping a scope offline downloads it in full; stopping keeps what is already verified. */
   setDownload: (courseId: string, scope: DownloadScope, keep: boolean) =>
     invoke<CourseDownloads>("set_course_download", { courseId, scope, keep }),
+  /** Pausing stops downloading and sharing; verified lessons still play. */
+  setPaused: (courseId: string, paused: boolean) => invoke<CourseDownloads>("set_course_paused", { courseId, paused }),
   availability: (courseId: string) => invoke<ResourceAvailability[]>("get_course_availability", { courseId }),
   getCourseSharing: (courseId: string) => invoke<CourseSharing | null>("get_course_sharing", { courseId }),
   setCourseSharing: (courseId: string, sharing: boolean) =>

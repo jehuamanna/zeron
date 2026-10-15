@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
-import { AvailabilityLabel, KeepOfflineToggle, useCourseDownloads } from "../features/downloads/downloads";
+import { AvailabilityLabel, KeepOfflineToggle, PauseTransfersButton, useCourseDownloads } from "../features/downloads/downloads";
 import { LessonPlayer } from "../features/player/LessonPlayer";
 import { CourseSharingCard } from "../features/sharing/CourseSharingCard";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
@@ -151,6 +151,7 @@ export function App() {
                           verifiedPercent={torrentCourse ? (downloaded.get(playing) ?? 0) : null}
                           onRetry={() => openMedia.mutate(playing)}
                           startAt={startAt}
+                          transfersPaused={offline.downloads?.paused ?? false}
                           onPosition={savePosition(detail.data.courseId, playing)}
                         />
                       ) : (
@@ -174,12 +175,20 @@ export function App() {
                     <h2 className="mb-3 font-semibold">Course contents</h2>
                     {torrentCourse ? (
                       <div className="mb-5 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                        <PauseTransfersButton
+                          paused={offline.downloads?.paused ?? false}
+                          disabled={offline.pause.isPending || !offline.downloads}
+                          onToggle={(paused) => offline.pause.mutate(paused)}
+                        />
                         <KeepOfflineToggle
                           label="Keep the whole course offline"
                           kept={offline.downloads?.course ?? false}
                           disabled={offline.change.isPending || !offline.downloads}
                           onToggle={(keep) => offline.change.mutate({ scope: { kind: "course" }, keep })}
                         />
+                        </div>
+                        {offline.downloads?.paused ? <p className="text-xs text-amber-200">Downloads and sharing are paused. Lessons already on this computer still play.</p> : null}
                         <p className="text-xs text-slate-500">Kept lessons download in full. Stopping keeps what is already on this computer.</p>
                         {offline.error ? <p role="alert" className="text-xs text-red-300">{offline.error}</p> : null}
                       </div>

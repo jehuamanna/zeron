@@ -159,6 +159,8 @@ pub(crate) struct ResourceAvailabilityDto {
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CourseDownloadsDto {
+    /// Whether the learner paused this course's transfer.
+    paused: bool,
     course: bool,
     modules: Vec<String>,
     lessons: Vec<String>,
@@ -790,11 +792,58 @@ pub(crate) async fn set_course_download(
     Ok(kept)
 }
 
+/// Pause or resume a torrent course's transfer. Verified lessons keep
+/// playing while paused; the choice survives a restart.
+#[tauri::command]
+pub(crate) async fn set_course_paused(
+    course_id: String,
+    paused: bool,
+    state: State<'_, AppState>,
+) -> Result<CourseDownloadsDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    let lookup = course_id.clone();
+    let info_hash = run_blocking(move || {
+        lock_library(&library)?
+            .torrent_info_hash(&lookup)
+            .map_err(|error| command_error("library_query_failed", error))
+    })
+    .await?
+    .ok_or_else(|| CommandError {
+        code: "not_torrent_course",
+        message: "only courses imported from a torrent can be paused".to_owned(),
+    })?;
+    if let Some(router) = state.torrents.router.clone() {
+        let info_hash = InfoHash::parse(&info_hash)
+            .map_err(|error| command_error("library_query_failed", error))?;
+        let applied = if paused {
+            router.pause(&info_hash).await
+        } else {
+            router.resume(&info_hash).await
+        };
+        // An inactive course picks the choice up when it is restored.
+        match applied {
+            Ok(()) | Err(EngineError::NotActive) => {}
+            Err(error) => return Err(command_error("pause_failed", error)),
+        }
+    }
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        let mut library = lock_library(&library)?;
+        library
+            .set_course_paused(&course_id, paused)
+            .map_err(|error| command_error("library_write_failed", error))?;
+        downloads(&library, &course_id)
+    })
+    .await
+}
+
 fn downloads(library: &CourseLibrary, course_id: &str) -> Result<CourseDownloadsDto, CommandError> {
-    let scopes = library
-        .downloads(course_id)
-        .map_err(|error| command_error("library_query_failed", error))?;
-    let mut dto = CourseDownloadsDto::default();
+    let failed = |error| command_error("library_query_failed", error);
+    let scopes = library.downloads(course_id).map_err(failed)?;
+    let mut dto = CourseDownloadsDto {
+        paused: library.course_paused(course_id).map_err(failed)?,
+        ..CourseDownloadsDto::default()
+    };
     for scope in scopes {
         match scope {
             DownloadScope::Course => dto.course = true,
@@ -943,6 +992,7 @@ impl CourseSharingDto {
                 TransferState::Downloading => "downloading",
                 TransferState::Seeding => "ready",
                 TransferState::Failed => "failed",
+                TransferState::Paused => "paused",
             }),
             connected_peers: transfer.map_or(0, |transfer| transfer.connected_peers),
             uploaded_bytes: transfer.map_or(0, |transfer| transfer.uploaded_bytes),
@@ -1055,7 +1105,7 @@ mod tests {
         let json = serde_json::to_value(downloads(&library, "course").unwrap()).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({ "course": false, "modules": [], "lessons": [] })
+            serde_json::json!({ "paused": false, "course": false, "modules": [], "lessons": [] })
         );
     }
 

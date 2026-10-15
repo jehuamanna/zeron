@@ -255,7 +255,8 @@ impl<E: TorrentEngine> TorrentImports<E> {
     }
 
     /// Re-activate every torrent-sourced course after a restart, selecting its
-    /// manifest and every lesson the learner keeps offline.
+    /// manifest and every lesson the learner keeps offline, and pausing the
+    /// courses the learner paused.
     /// Returns how many were restored; failures leave the library unchanged.
     pub async fn restore(&self) -> usize {
         let Ok(sources) = self.library().torrent_course_sources() else {
@@ -295,7 +296,12 @@ impl<E: TorrentEngine> TorrentImports<E> {
                     initial_peers: Vec::new(),
                 })
                 .await;
-            if fetched.is_ok() {
+            if let Ok(info_hash) = fetched {
+                if source.paused {
+                    // Best effort: a failure leaves the course running, and the
+                    // learner can pause it again.
+                    let _ = self.engine.pause(&info_hash).await;
+                }
                 restored += 1;
             }
         }

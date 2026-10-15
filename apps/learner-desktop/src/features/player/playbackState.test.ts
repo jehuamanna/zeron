@@ -28,6 +28,8 @@ describe("playback state", () => {
     const stalled = run([{ type: "tick", at: 6000 + STALL_AFTER_MS }], progressing);
     expect(stalled.state).toBe("stalled");
     expect(describePlayback(stalled, true)).toContain("waiting for verified data from peers");
+    expect(describePlayback(stalled, true, true)).toContain("Downloads are paused");
+    expect(describePlayback(stalled, false, true)).toContain("Stalled: the lesson file is not being read.");
     const resumed = run([{ type: "progress", at: 20_000 }], stalled);
     expect(resumed.state).toBe("buffering");
     expect(run([{ type: "timeupdate", position: 2.5, paused: false, at: 20_100 }], resumed).state).toBe("playing");

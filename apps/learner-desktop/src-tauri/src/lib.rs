@@ -98,6 +98,7 @@ pub fn run() {
             commands::save_playback_position,
             commands::get_course_downloads,
             commands::set_course_download,
+            commands::set_course_paused,
             commands::get_playback_position,
             commands::set_network_profile,
             commands::set_peer_reachability,

@@ -224,6 +224,9 @@ pub enum TransferState {
     Seeding,
     /// Checking or serving failed; nothing is served.
     Failed,
+    /// Paused by the user: nothing is downloaded or served, and verified
+    /// bytes can still be read.
+    Paused,
 }
 
 /// Engine-local transfer metrics with their source being this process.
@@ -308,6 +311,19 @@ pub trait TorrentEngine: Send + Sync {
     ) -> impl Future<Output = Result<(), EngineError>> + Send {
         let _ = (info_hash, files);
         async { Err(EngineError::UnsupportedCapability("file selection")) }
+    }
+
+    /// Stop downloading and serving a torrent without removing it. Verified
+    /// bytes stay readable. Pausing a paused torrent succeeds.
+    fn pause(&self, info_hash: &InfoHash) -> impl Future<Output = Result<(), EngineError>> + Send {
+        let _ = info_hash;
+        async { Err(EngineError::UnsupportedCapability("pause")) }
+    }
+
+    /// Resume a paused torrent. Resuming a running torrent succeeds.
+    fn resume(&self, info_hash: &InfoHash) -> impl Future<Output = Result<(), EngineError>> + Send {
+        let _ = info_hash;
+        async { Err(EngineError::UnsupportedCapability("resume")) }
     }
 
     /// Stop serving a torrent. Content files are never deleted.

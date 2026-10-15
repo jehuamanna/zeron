@@ -13,7 +13,7 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 6;
+const CURRENT_SCHEMA_VERSION: i64 = 7;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
 
 /// Where a learner stopped in one lesson resource.
@@ -62,6 +62,8 @@ pub struct TorrentCourseSource {
     pub content_root: PathBuf,
     /// Whether the learner chose to share this course with peers.
     pub sharing: bool,
+    /// Whether the learner paused this course's transfer.
+    pub paused: bool,
 }
 
 /// Storage startup and operation failures.
@@ -221,7 +223,7 @@ impl Storage {
     /// Returns [`StorageError`] for query or path-decoding failures.
     pub fn torrent_course_sources(&self) -> Result<Vec<TorrentCourseSource>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT t.course_id, t.info_hash, t.metainfo, l.path_encoding, l.path_bytes, t.sharing
+            "SELECT t.course_id, t.info_hash, t.metainfo, l.path_encoding, l.path_bytes, t.sharing, t.paused
              FROM course_torrent_sources AS t JOIN course_locations AS l ON l.course_id = t.course_id
              ORDER BY t.course_id",
         )?;
@@ -233,16 +235,18 @@ impl Storage {
                 row.get::<_, String>(3)?,
                 row.get::<_, Vec<u8>>(4)?,
                 row.get::<_, bool>(5)?,
+                row.get::<_, bool>(6)?,
             ))
         })?;
         rows.map(|row| {
-            let (course_id, info_hash, metainfo, encoding, bytes, sharing) = row?;
+            let (course_id, info_hash, metainfo, encoding, bytes, sharing, paused) = row?;
             Ok(TorrentCourseSource {
                 course_id,
                 info_hash,
                 metainfo,
                 content_root: decode_path(&encoding, &bytes)?,
                 sharing,
+                paused,
             })
         })
         .collect()
@@ -382,6 +386,24 @@ impl Storage {
         let rows = statement.query_map([course_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StorageError::from)
+    }
+
+    /// Record whether the learner paused a torrent-sourced course. Returns
+    /// `false` when the course is not torrent-sourced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for write failures.
+    pub fn set_course_paused(
+        &mut self,
+        course_id: &str,
+        paused: bool,
+    ) -> Result<bool, StorageError> {
+        let changed = self.connection.execute(
+            "UPDATE course_torrent_sources SET paused = ?2 WHERE course_id = ?1",
+            rusqlite::params![course_id, paused],
+        )?;
+        Ok(changed == 1)
     }
 
     /// Read a learner setting.
@@ -697,6 +719,10 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     }
     if found == 5 {
         add_download_commitments(connection)?;
+        found = 6;
+    }
+    if found == 6 {
+        add_pause_flag(connection)?;
     }
     Ok(())
 }
@@ -733,6 +759,18 @@ fn add_download_commitments(connection: &mut Connection) -> Result<(), StorageEr
            PRIMARY KEY(course_id, scope, scope_id)
          ) STRICT;
          PRAGMA user_version = 6;",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Schema 7. Whether the learner paused a torrent course's transfer.
+fn add_pause_flag(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "ALTER TABLE course_torrent_sources
+           ADD COLUMN paused INTEGER NOT NULL DEFAULT 0 CHECK(paused IN (0, 1));
+         PRAGMA user_version = 7;",
     )?;
     tx.commit()?;
     Ok(())
@@ -949,6 +987,10 @@ mod tests {
         assert!(storage.torrent_course_sources().unwrap()[0].sharing);
         assert!(storage.list_courses().unwrap()[0].sharing);
         assert!(!storage.set_course_sharing("unknown", true).unwrap());
+        assert!(!storage.torrent_course_sources().unwrap()[0].paused);
+        assert!(storage.set_course_paused(&course.course_id, true).unwrap());
+        assert!(storage.torrent_course_sources().unwrap()[0].paused);
+        assert!(!storage.set_course_paused("unknown", true).unwrap());
 
         storage
             .save_imported_course(&course, 64, Path::new("/local/course"))
@@ -1035,7 +1077,9 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE download_commitments; DROP TABLE playback_positions; PRAGMA user_version = 4;",
+                    "ALTER TABLE course_torrent_sources DROP COLUMN paused;
+                     DROP TABLE download_commitments; DROP TABLE playback_positions;
+                     PRAGMA user_version = 4;",
                 )
                 .unwrap();
         }

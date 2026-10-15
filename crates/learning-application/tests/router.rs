@@ -19,6 +19,7 @@ use torrent_port::{
 struct RecordingEngine {
     active: Mutex<Vec<FetchRequest>>,
     selections: Mutex<Vec<Vec<usize>>>,
+    paused: Mutex<bool>,
 }
 
 #[allow(
@@ -49,8 +50,22 @@ impl TorrentEngine for RecordingEngine {
         Ok(())
     }
 
+    async fn pause(&self, _: &InfoHash) -> Result<(), EngineError> {
+        if self.active.lock().unwrap().is_empty() {
+            return Err(EngineError::NotActive);
+        }
+        *self.paused.lock().unwrap() = true;
+        Ok(())
+    }
+
+    async fn resume(&self, _: &InfoHash) -> Result<(), EngineError> {
+        *self.paused.lock().unwrap() = false;
+        Ok(())
+    }
+
     async fn stop(&self, _: &InfoHash) -> Result<(), EngineError> {
         self.active.lock().unwrap().clear();
+        *self.paused.lock().unwrap() = false;
         Ok(())
     }
 
@@ -126,4 +141,34 @@ async fn a_selection_follows_the_torrent_when_sharing_changes() {
         router.select_files(&unknown, &[0]).await,
         Err(EngineError::NotActive)
     ));
+}
+
+#[tokio::test]
+async fn a_pause_follows_the_torrent_when_sharing_changes() {
+    let private = Arc::new(RecordingEngine::default());
+    let sharing = Arc::new(RecordingEngine::default());
+    let router = TransferRouter::new(Arc::clone(&private), Some(Arc::clone(&sharing)));
+    let hash = router
+        .fetch(FetchRequest {
+            metainfo: metainfo(),
+            content_root: PathBuf::from("/content"),
+            files: vec![0],
+            initial_peers: vec![],
+        })
+        .await
+        .unwrap();
+    router.pause(&hash).await.unwrap();
+    assert!(*private.paused.lock().unwrap());
+    router.set_shared(&hash, true).await.unwrap();
+    assert!(
+        *sharing.paused.lock().unwrap(),
+        "paused again on the new engine"
+    );
+    router.resume(&hash).await.unwrap();
+    assert!(!*sharing.paused.lock().unwrap());
+    router.set_shared(&hash, false).await.unwrap();
+    assert!(
+        !*private.paused.lock().unwrap(),
+        "a resumed torrent stays running"
+    );
 }

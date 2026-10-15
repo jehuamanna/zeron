@@ -11,6 +11,8 @@ interface LessonPlayerProps {
   /** Share of the lesson verified on this computer, for torrent lessons. */
   verifiedPercent: number | null;
   onRetry: () => void;
+  /** The course's downloads are paused, so missing data will not arrive. */
+  transfersPaused?: boolean;
   /** Saved position to resume from, in seconds. */
   startAt?: number | null;
   /** Called while playing (at most every few seconds), on pause, at the end, and when closed. */
@@ -39,7 +41,7 @@ function bufferedAhead(video: HTMLVideoElement): number {
   return 0;
 }
 
-export function LessonPlayer({ url, torrent, verifiedPercent, onRetry, startAt = null, onPosition }: LessonPlayerProps) {
+export function LessonPlayer({ url, torrent, verifiedPercent, onRetry, startAt = null, onPosition, transfersPaused = false }: LessonPlayerProps) {
   const [playback, dispatch] = useReducer(playbackReducer, initialPlayback);
   const [ahead, setAhead] = useState(0);
   const [resumedAt, setResumedAt] = useState<number | null>(null);
@@ -143,7 +145,7 @@ export function LessonPlayer({ url, torrent, verifiedPercent, onRetry, startAt =
         >
           {busy ? <Loader2 size={15} className="animate-spin" /> : null}
           {failed || stalled ? <AlertTriangle size={15} /> : null}
-          {describePlayback(playback, torrent)}
+          {describePlayback(playback, torrent, transfersPaused)}
         </p>
         <p className="text-xs text-slate-400">
           <span title="Data the player has loaded ahead of the current position">Buffered: {formatClock(ahead)} ahead</span>

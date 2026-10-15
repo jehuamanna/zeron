@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CloudDownload, HardDriveDownload } from "lucide-react";
+import { CheckCircle2, CloudDownload, HardDriveDownload, Pause, Play } from "lucide-react";
 
 import { asCommandError, libraryApi, type AvailabilityState, type CourseDownloads, type DownloadScope, type ResourceAvailability } from "../../services/library";
 
@@ -36,8 +36,16 @@ export function useCourseDownloads(courseId: string, enabled: boolean) {
       void queryClient.invalidateQueries({ queryKey: ["availability", courseId] });
     },
   });
-  const error = change.isError ? (asCommandError(change.error)?.message ?? "The download choice could not be saved.") : null;
-  return { downloads: downloads.data, change, error };
+  const pause = useMutation({
+    mutationFn: (paused: boolean) => libraryApi.setPaused(courseId, paused),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<CourseDownloads>(["downloads", courseId], updated);
+      void queryClient.invalidateQueries({ queryKey: ["availability", courseId] });
+    },
+  });
+  const failed = change.isError ? change.error : pause.isError ? pause.error : null;
+  const error = failed ? (asCommandError(failed)?.message ?? "The download choice could not be saved.") : null;
+  return { downloads: downloads.data, change, pause, error };
 }
 
 /** A pressed-state toggle for keeping a course, module, or lesson offline. */
@@ -61,6 +69,22 @@ export function KeepOfflineToggle({ label, kept, inherited = false, disabled, on
     >
       {kept || inherited ? <HardDriveDownload size={12} /> : <CloudDownload size={12} />}
       {kept || inherited ? "Kept offline" : "Keep offline"}
+    </button>
+  );
+}
+
+/** Pause or resume all downloading and sharing for one course. */
+export function PauseTransfersButton({ paused, disabled, onToggle }: { paused: boolean; disabled: boolean; onToggle: (paused: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={paused}
+      disabled={disabled}
+      onClick={() => onToggle(!paused)}
+      className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-300 hover:bg-white/10 disabled:opacity-60"
+    >
+      {paused ? <Play size={12} /> : <Pause size={12} />}
+      {paused ? "Resume downloads" : "Pause downloads"}
     </button>
   );
 }

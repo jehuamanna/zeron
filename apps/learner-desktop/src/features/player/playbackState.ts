@@ -70,7 +70,10 @@ export function playbackReducer(current: Playback, event: PlaybackEvent): Playba
   }
 }
 
-export function describePlayback(playback: Playback, torrent: boolean): string {
+export function describePlayback(playback: Playback, torrent: boolean, transfersPaused = false): string {
+  if (torrent && transfersPaused && (playback.state === "buffering" || playback.state === "stalled")) {
+    return "Downloads are paused: only the parts of this lesson already on this computer play. Resume downloads to load the rest.";
+  }
   switch (playback.state) {
     case "loading":
       return "Loading…";

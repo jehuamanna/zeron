@@ -25,8 +25,9 @@ vi.mock("../services/library", async (importOriginal) => ({
     setNetworkProfile: vi.fn(),
     setCourseSharing: vi.fn(),
     playbackPosition: vi.fn(() => Promise.resolve(null)),
-    downloads: vi.fn(() => Promise.resolve({ course: false, modules: [], lessons: [] })),
+    downloads: vi.fn(() => Promise.resolve({ paused: false, course: false, modules: [], lessons: [] })),
     setDownload: vi.fn(),
+    setPaused: vi.fn(),
     savePlaybackPosition: vi.fn(() => Promise.resolve(true)),
   },
 }));
@@ -206,7 +207,7 @@ describe("learner library", () => {
         { id: "lesson_b", title: "Second", resources: [{ id: "video_b", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }] },
       ] }],
     });
-    let kept = { course: false, modules: [] as string[], lessons: [] as string[] };
+    let kept = { paused: false, course: false, modules: [] as string[], lessons: [] as string[] };
     vi.mocked(libraryApi.downloads).mockImplementation(async () => kept);
     vi.mocked(libraryApi.availability).mockImplementation(async () => [
       { resourceId: "video_a", verifiedBytes: kept.lessons.includes("lesson_a") || kept.course ? 200 : 0, byteLength: 200, kept: kept.lessons.includes("lesson_a") || kept.course, state: kept.lessons.includes("lesson_a") || kept.course ? "available_offline" : "online_only" },
@@ -234,6 +235,19 @@ describe("learner library", () => {
     await waitFor(() => expect(view.getByRole("button", { name: "Keep module Module offline" }).hasAttribute("disabled")).toBe(true));
     expect(view.getByRole("button", { name: "Keep lesson Second offline" }).getAttribute("aria-pressed")).toBe("true");
     await waitFor(() => expect(labels()).toEqual(["Available offline", "Downloading for offline"]));
+
+    vi.mocked(libraryApi.setPaused).mockImplementation(async (_course, paused) => {
+      kept = { ...kept, paused };
+      return kept;
+    });
+    fireEvent.click(view.getByRole("button", { name: "Pause downloads" }));
+    await waitFor(() => expect(libraryApi.setPaused).toHaveBeenCalledWith("course_torrent", true));
+    await waitFor(() => expect(view.container.textContent).toContain("Downloads and sharing are paused"));
+    const resume = view.getByRole("button", { name: "Resume downloads" });
+    expect(resume.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(resume);
+    await waitFor(() => expect(libraryApi.setPaused).toHaveBeenLastCalledWith("course_torrent", false));
+    await waitFor(() => expect(view.container.textContent).not.toContain("Downloads and sharing are paused"));
   });
 
   it("shows the source of each course in the library", async () => {

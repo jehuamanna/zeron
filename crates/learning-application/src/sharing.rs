@@ -17,6 +17,8 @@ struct Routes {
     shared: HashSet<InfoHash>,
     /// The latest fetch per torrent, replayed when a transfer changes engine.
     requests: HashMap<InfoHash, FetchRequest>,
+    /// Torrents the learner paused, paused again after a change of engine.
+    paused: HashSet<InfoHash>,
 }
 
 /// Routes each torrent to a private engine that never uploads or, for courses
@@ -94,6 +96,9 @@ impl<E: TorrentEngine> TransferRouter<E> {
             from.fetch(request).await?;
             return Err(error);
         }
+        if self.routes().paused.contains(info_hash) {
+            to.pause(info_hash).await?;
+        }
         Ok(())
     }
 
@@ -157,9 +162,26 @@ impl<E: TorrentEngine> TorrentEngine for TransferRouter<E> {
         Ok(())
     }
 
+    async fn pause(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
+        let _changes = self.changes.lock().await;
+        let engine = Arc::clone(self.engine_for(info_hash));
+        engine.pause(info_hash).await?;
+        self.routes().paused.insert(info_hash.clone());
+        Ok(())
+    }
+
+    async fn resume(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
+        let _changes = self.changes.lock().await;
+        let engine = Arc::clone(self.engine_for(info_hash));
+        engine.resume(info_hash).await?;
+        self.routes().paused.remove(info_hash);
+        Ok(())
+    }
+
     async fn stop(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
         let _changes = self.changes.lock().await;
         self.routes().requests.remove(info_hash);
+        self.routes().paused.remove(info_hash);
         self.engine_for(info_hash).stop(info_hash).await
     }
 

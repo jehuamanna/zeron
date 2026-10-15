@@ -199,6 +199,33 @@ impl CourseLibrary {
         Ok(self.storage.set_course_sharing(course_id, sharing)?)
     }
 
+    /// Record whether the learner paused a torrent course. Returns `false` for
+    /// courses that are not torrent-sourced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on write failure.
+    pub fn set_course_paused(
+        &mut self,
+        course_id: &str,
+        paused: bool,
+    ) -> Result<bool, LibraryError> {
+        Ok(self.storage.set_course_paused(course_id, paused)?)
+    }
+
+    /// Whether the learner paused a torrent course.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on query failure.
+    pub fn course_paused(&self, course_id: &str) -> Result<bool, LibraryError> {
+        Ok(self
+            .storage
+            .torrent_course_sources()?
+            .iter()
+            .any(|source| source.course_id == course_id && source.paused))
+    }
+
     /// Configured network profile; local network unless the learner chose otherwise.
     ///
     /// # Errors

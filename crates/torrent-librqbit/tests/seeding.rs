@@ -274,6 +274,14 @@ async fn changed_content_fails_closed_and_missing_content_is_rejected() {
     assert!(failed.verified_bytes < failed.total_bytes);
     assert!(failed.failure.unwrap().contains("no longer matches"));
     assert_eq!(std::fs::read(&victim).unwrap(), bytes);
+    assert!(matches!(
+        engine.resume(&info_hash).await,
+        Err(EngineError::Engine(_))
+    ));
+    assert_eq!(
+        engine.transfer(&info_hash).unwrap().state,
+        TransferState::Failed
+    );
     engine.stop(&info_hash).await.unwrap();
 
     std::fs::remove_file(&victim).unwrap();
@@ -1196,6 +1204,78 @@ async fn selected_files_download_in_full_and_stay_after_deselection() {
     assert_eq!(
         learner.transfer(&info_hash).unwrap().file_verified_bytes[chosen],
         LESSON as u64
+    );
+    learner.shutdown().await;
+    seeder.shutdown().await;
+}
+
+/// A paused transfer downloads nothing until resumed, keeps serving what it
+/// already verified to a local reader, and finishes after resuming.
+#[tokio::test(flavor = "multi_thread")]
+async fn paused_transfers_download_nothing_until_resumed() {
+    use tokio::io::AsyncReadExt;
+
+    const LESSON: usize = 8_000_000;
+    let scratch = Scratch::new("pause");
+    let release = publish_lessons(&scratch.0, &[LESSON]);
+    let seeder = engine(&scratch.0).await;
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    wait_for_state(&seeder, &info_hash, TransferState::Seeding).await;
+    let learner = loopback(&scratch.0, "learner", false).await;
+    assert!(matches!(
+        learner.pause(&info_hash).await,
+        Err(EngineError::NotActive)
+    ));
+    fetch_manifest(
+        &learner,
+        &release,
+        scratch.0.join("learner-content"),
+        seeder.listen_address().unwrap(),
+    )
+    .await;
+    let manifest_length = std::fs::metadata(release.package.join("course.json"))
+        .unwrap()
+        .len();
+    wait_for_file(&learner, &info_hash, 0, manifest_length).await;
+
+    learner.pause(&info_hash).await.unwrap();
+    learner.pause(&info_hash).await.unwrap();
+    assert_eq!(
+        learner.transfer(&info_hash).unwrap().state,
+        TransferState::Paused
+    );
+    learner.select_files(&info_hash, &[0, 1]).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let paused = learner.transfer(&info_hash).unwrap();
+    assert_eq!(paused.state, TransferState::Paused);
+    assert!(
+        paused.file_verified_bytes[1] < LESSON as u64 / 2,
+        "nothing downloads while paused: {paused:?}"
+    );
+    let mut manifest = learner.open_file(&info_hash, 0).await.unwrap();
+    let mut bytes = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), manifest.read_to_end(&mut bytes))
+        .await
+        .expect("verified bytes stay readable while paused")
+        .unwrap();
+    assert_eq!(
+        bytes,
+        std::fs::read(release.package.join("course.json")).unwrap()
+    );
+    drop(manifest);
+
+    learner.resume(&info_hash).await.unwrap();
+    learner.resume(&info_hash).await.unwrap();
+    wait_for_file(&learner, &info_hash, 1, LESSON as u64).await;
+    assert_ne!(
+        learner.transfer(&info_hash).unwrap().state,
+        TransferState::Paused
     );
     learner.shutdown().await;
     seeder.shutdown().await;

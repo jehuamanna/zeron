@@ -476,6 +476,44 @@ impl TorrentEngine for LibrqbitEngine {
             .map_err(|error| engine_error(&error))
     }
 
+    /// `Session::pause` (librqbit 9.0.1 src/session.rs) after the initial
+    /// check, since a torrent can only be paused once it is live.
+    async fn pause(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
+        let handle = self.initialized(info_hash).await?;
+        if handle.is_paused() {
+            return Ok(());
+        }
+        self.session
+            .pause(&handle)
+            .await
+            .map_err(|error| engine_error(&error))
+    }
+
+    /// `Session::unpause` (librqbit 9.0.1 src/session.rs). A transfer paused
+    /// because its content failed verification stays paused.
+    async fn resume(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
+        let failed = self.lock().get(info_hash).is_some_and(|active| {
+            active
+                .failure
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_some()
+        });
+        if failed {
+            return Err(EngineError::Engine(
+                "a transfer that failed verification cannot be resumed".to_owned(),
+            ));
+        }
+        let handle = self.initialized(info_hash).await?;
+        if !handle.is_paused() {
+            return Ok(());
+        }
+        self.session
+            .unpause(&handle)
+            .await
+            .map_err(|error| engine_error(&error))
+    }
+
     async fn stop(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
         let active = self
             .lock()
@@ -557,6 +595,24 @@ impl TorrentEngine for LibrqbitEngine {
     }
 }
 
+impl LibrqbitEngine {
+    /// The torrent's handle once its initial check has finished (bounded).
+    async fn initialized(&self, info_hash: &InfoHash) -> Result<Arc<ManagedTorrent>, EngineError> {
+        let handle = self
+            .lock()
+            .get(info_hash)
+            .map(|active| Arc::clone(&active.handle))
+            .ok_or(EngineError::NotActive)?;
+        tokio::time::timeout(INITIALIZE_WAIT, handle.wait_until_initialized())
+            .await
+            .map_err(|_| {
+                EngineError::Engine("the torrent is still checking its local files".to_owned())
+            })?
+            .map_err(|error| engine_error(&error))?;
+        Ok(handle)
+    }
+}
+
 /// Wait for librqbit's initial piece check. Content that does not verify
 /// completely is paused so that nothing is served and no write is attempted.
 async fn confirm_complete(
@@ -600,6 +656,7 @@ fn transfer_stats(info_hash: &InfoHash, active: &Active) -> TransferStats {
     let state = match (&failure, &engine_stats.state) {
         (Some(_), _) | (None, TorrentStatsState::Error) => TransferState::Failed,
         (None, TorrentStatsState::Initializing { .. }) => TransferState::Checking,
+        (None, TorrentStatsState::Paused) => TransferState::Paused,
         (None, TorrentStatsState::Live) if engine_stats.finished => TransferState::Seeding,
         (None, _) => TransferState::Downloading,
     };

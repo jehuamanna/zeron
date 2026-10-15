@@ -1111,7 +1111,8 @@ impl From<ReleaseSeedingStatus> for SeedingStatusDto {
             state: transfer.as_ref().map(|transfer| match transfer.state {
                 TransferState::Checking | TransferState::Downloading => "checking",
                 TransferState::Seeding => "seeding",
-                TransferState::Failed => "failed",
+                // Releases are only paused when their content failed verification.
+                TransferState::Failed | TransferState::Paused => "failed",
             }),
             verified_bytes: transfer
                 .as_ref()
