@@ -9,8 +9,9 @@ use std::{
 };
 
 use publisher_application::{
-    DistributionOptions, DraftServiceError, EngineError, MetadataEdit, NetworkProfile, PublishJobs,
-    PublisherDrafts, SeedingService, StructureEdit, TransferState, TransferStats,
+    DistributionOptions, DraftServiceError, EngineError, MetadataEdit, NetworkProfile,
+    PeerReachability, PublishJobs, PublisherDrafts, SeedingService, StructureEdit, TransferState,
+    TransferStats,
 };
 use torrent_port::{
     FetchRequest, InfoHash, ResolveRequest, ResolvedTorrent, SeedRequest, TorrentEngine,
@@ -307,6 +308,21 @@ fn the_network_profile_defaults_to_the_local_network() {
         .set_network_profile(NetworkProfile::Internet)
         .unwrap();
     assert_eq!(drafts.network_profile().unwrap(), NetworkProfile::Internet);
+
+    assert_eq!(
+        drafts.peer_reachability().unwrap(),
+        PeerReachability::default()
+    );
+    let chosen = PeerReachability::new(Some(51413), true).unwrap();
+    drafts.set_peer_reachability(chosen).unwrap();
+    assert_eq!(drafts.peer_reachability().unwrap(), chosen);
+    drafts
+        .set_peer_reachability(PeerReachability::default())
+        .unwrap();
+    assert_eq!(
+        drafts.peer_reachability().unwrap(),
+        PeerReachability::default()
+    );
 }
 
 fn make_writable(path: &std::path::Path) {

@@ -18,6 +18,6 @@ pub use torrent_import::{
     TorrentImportTimeouts, TorrentImports,
 };
 pub use torrent_port::{
-    EngineError, InfoHash, NetworkProfile, TorrentEngine, TorrentSource, TransferState,
-    TransferStats,
+    EngineError, InfoHash, NetworkProfile, PeerReachability, TorrentEngine, TorrentSource,
+    TransferState, TransferStats,
 };

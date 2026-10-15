@@ -6,8 +6,9 @@ use std::{
 use course_format::ResourceKind;
 use learning_application::{
     CancellationFlag, CourseImportReceipt, CourseLibrary, CourseSharingStatus, ImportError,
-    InfoHash, LibraryError, LocalResource, NetworkProfile, SharingError, TorrentEngine as _,
-    TorrentImportSnapshot, TorrentImportStage, TorrentResource, TorrentSource, TransferState,
+    InfoHash, LibraryError, LocalResource, NetworkProfile, PeerReachability, SharingError,
+    TorrentEngine as _, TorrentImportSnapshot, TorrentImportStage, TorrentResource, TorrentSource,
+    TransferState,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::Serialize;
@@ -131,6 +132,14 @@ pub(crate) struct NetworkSettingsDto {
     torrent_engine: &'static str,
     download_port: Option<u16>,
     sharing_port: Option<u16>,
+    /// Stored fixed port for shared courses; `None` means a new port on each start.
+    peer_port: Option<u16>,
+    /// Stored `UPnP` choice, honored under the Internet profile only.
+    port_forwarding: bool,
+    /// Whether this session asks the router to forward the sharing port.
+    active_port_forwarding: bool,
+    /// The stored network choice differs from the running engines'.
+    restart_required: bool,
 }
 
 /// Verified bytes of one torrent lesson on this computer.
@@ -462,23 +471,32 @@ pub(crate) async fn get_network_settings(
     let library = Arc::clone(&state.library);
     let torrents = &state.torrents;
     let (active, available, download_port, sharing_port) = (
-        torrents.profile,
+        (torrents.profile, torrents.reachability),
         torrents.imports.is_some(),
         torrents.download_port,
         torrents.sharing_port,
     );
-    let configured = run_blocking(move || {
-        lock_library(&library)?
+    let (configured, reachability) = run_blocking(move || {
+        let library = lock_library(&library)?;
+        let configured = library
             .network_profile()
-            .map_err(|error| command_error("settings_failed", error))
+            .map_err(|error| command_error("settings_failed", error))?;
+        let reachability = library
+            .peer_reachability()
+            .map_err(|error| command_error("settings_failed", error))?;
+        Ok((configured, reachability))
     })
     .await?;
     Ok(NetworkSettingsDto {
         configured_profile: configured.name(),
-        active_profile: active.name(),
+        active_profile: active.0.name(),
         torrent_engine: if available { "ready" } else { "unavailable" },
         download_port,
         sharing_port,
+        peer_port: reachability.port,
+        port_forwarding: reachability.port_forwarding,
+        active_port_forwarding: active.1.port_forwarding,
+        restart_required: (configured, reachability.for_profile(configured)) != active,
     })
 }
 
@@ -499,6 +517,36 @@ pub(crate) async fn set_network_profile(
             .map_err(|error| command_error("settings_failed", error))
     })
     .await
+}
+
+/// Store the shared-course port and `UPnP` choice used the next time the engines start.
+#[tauri::command]
+pub(crate) async fn set_peer_reachability(
+    peer_port: Option<u16>,
+    port_forwarding: bool,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    let reachability = parse_reachability(peer_port, port_forwarding)?;
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .set_peer_reachability(reachability)
+            .map_err(|error| command_error("settings_failed", error))
+    })
+    .await
+}
+
+fn parse_reachability(
+    peer_port: Option<u16>,
+    port_forwarding: bool,
+) -> Result<PeerReachability, CommandError> {
+    PeerReachability::new(peer_port, port_forwarding).ok_or_else(|| CommandError {
+        code: "invalid_input",
+        message: format!(
+            "choose a port from {} to 65535",
+            PeerReachability::MIN_FIXED_PORT
+        ),
+    })
 }
 
 enum Media {
@@ -802,6 +850,18 @@ mod tests {
     use learning_application::TorrentImportFailure;
 
     use super::*;
+
+    #[test]
+    fn reachability_input_is_validated() {
+        assert_eq!(
+            parse_reachability(None, true).unwrap(),
+            PeerReachability::new(None, true).unwrap()
+        );
+        assert_eq!(
+            parse_reachability(Some(1023), false).unwrap_err().code,
+            "invalid_input"
+        );
+    }
 
     #[test]
     fn torrent_import_snapshots_map_to_path_free_dtos() {

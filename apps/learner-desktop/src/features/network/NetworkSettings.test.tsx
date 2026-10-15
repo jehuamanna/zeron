@@ -10,6 +10,7 @@ vi.mock("../../services/library", async (importOriginal) => ({
   libraryApi: {
     getNetworkSettings: vi.fn(),
     setNetworkProfile: vi.fn(),
+    setPeerReachability: vi.fn(),
   },
 }));
 
@@ -19,6 +20,10 @@ const settings = (overrides: Partial<Settings>): Settings => ({
   torrentEngine: "ready",
   downloadPort: 41213,
   sharingPort: 41099,
+  peerPort: null,
+  portForwarding: false,
+  activePortForwarding: false,
+  restartRequired: false,
   ...overrides,
 });
 
@@ -48,13 +53,13 @@ describe("network settings", () => {
     expect(radio(view.container, "internet")?.checked).toBe(false);
     expect(view.container.textContent).toContain("downloads use port 41213");
     expect(view.container.textContent).toContain("shared courses are served on port 41099");
-    expect(view.container.textContent).toContain("UPnP port mapping is never used.");
+    expect(view.container.textContent).toContain("UPnP is off.");
     expect(view.container.textContent).not.toContain("Restart Zeron");
   });
 
   it("saves the internet profile and asks for a restart", async () => {
     vi.mocked(libraryApi.getNetworkSettings).mockResolvedValueOnce(settings({}));
-    vi.mocked(libraryApi.getNetworkSettings).mockResolvedValue(settings({ configuredProfile: "internet" }));
+    vi.mocked(libraryApi.getNetworkSettings).mockResolvedValue(settings({ configuredProfile: "internet", restartRequired: true }));
     vi.mocked(libraryApi.setNetworkProfile).mockResolvedValue();
     const { view } = renderSettings();
 
@@ -76,6 +81,58 @@ describe("network settings", () => {
     await waitFor(() => expect(view.container.textContent).toContain("The torrent engine did not start"));
     fireEvent.click(radio(view.container, "loopback")!);
     await waitFor(() => expect(view.container.textContent).toContain("the setting could not be stored"));
+  });
+
+  it("offers UPnP only with the internet profile", async () => {
+    vi.mocked(libraryApi.getNetworkSettings).mockResolvedValue(settings({}));
+    const { view } = renderSettings();
+
+    await waitFor(() => expect(view.container.querySelector("#peer-port")).not.toBeNull());
+    const upnp = view.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(upnp.disabled).toBe(true);
+    expect(view.container.textContent).toContain("Available with the Internet profile.");
+  });
+
+  it("saves a fixed port with UPnP and asks for a restart", async () => {
+    vi.mocked(libraryApi.getNetworkSettings).mockResolvedValueOnce(
+      settings({ configuredProfile: "internet", activeProfile: "internet" }),
+    );
+    vi.mocked(libraryApi.getNetworkSettings).mockResolvedValue(
+      settings({ configuredProfile: "internet", activeProfile: "internet", peerPort: 51413, portForwarding: true, restartRequired: true }),
+    );
+    vi.mocked(libraryApi.setPeerReachability).mockResolvedValue();
+    const { view } = renderSettings();
+
+    await waitFor(() => expect(view.container.querySelector("#peer-port")).not.toBeNull());
+    fireEvent.change(view.container.querySelector("#peer-port")!, { target: { value: "51413" } });
+    fireEvent.click(view.container.querySelector('input[type="checkbox"]')!);
+    fireEvent.click(Array.from(view.container.querySelectorAll("button")).find((button) => button.textContent === "Save")!);
+    await waitFor(() => expect(view.container.textContent).toContain("Restart Zeron to apply the new network setting."));
+    expect(libraryApi.setPeerReachability).toHaveBeenCalledWith(51413, true);
+    expect(view.container.querySelector<HTMLInputElement>("#peer-port")?.value).toBe("51413");
+  });
+
+  it("rejects a privileged or malformed port without saving", async () => {
+    vi.mocked(libraryApi.getNetworkSettings).mockResolvedValue(settings({}));
+    const { view } = renderSettings();
+
+    await waitFor(() => expect(view.container.querySelector("#peer-port")).not.toBeNull());
+    for (const value of ["80", "70000", "12ab"]) {
+      fireEvent.change(view.container.querySelector("#peer-port")!, { target: { value } });
+      fireEvent.click(Array.from(view.container.querySelectorAll("button")).find((button) => button.textContent === "Save")!);
+      await waitFor(() => expect(view.container.textContent).toContain("Choose a port from 1024 to 65535"));
+    }
+    expect(libraryApi.setPeerReachability).not.toHaveBeenCalled();
+  });
+
+  it("reports active UPnP and a sharing engine that could not take its port", async () => {
+    vi.mocked(libraryApi.getNetworkSettings).mockResolvedValue(
+      settings({ configuredProfile: "internet", activeProfile: "internet", peerPort: 51413, portForwarding: true, activePortForwarding: true, sharingPort: null }),
+    );
+    const { view } = renderSettings();
+
+    await waitFor(() => expect(view.container.textContent).toContain("Your router is asked to forward the sharing port with UPnP."));
+    expect(view.container.textContent).toContain("Sharing could not start, possibly because port 51413 is in use");
   });
 
   it("returns to the previous view", async () => {

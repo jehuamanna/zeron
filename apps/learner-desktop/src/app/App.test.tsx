@@ -215,6 +215,10 @@ describe("learner library", () => {
       torrentEngine: "ready",
       downloadPort: 1,
       sharingPort: 2,
+      peerPort: null,
+      portForwarding: false,
+      activePortForwarding: false,
+      restartRequired: false,
     });
 
     const view = renderApp();

@@ -73,6 +73,73 @@ impl NetworkProfile {
     }
 }
 
+/// How peers outside this computer reach an engine. A fixed port applies to
+/// [`NetworkProfile::LocalNetwork`] and [`NetworkProfile::Internet`]; router
+/// port forwarding applies to [`NetworkProfile::Internet`] only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PeerReachability {
+    /// Fixed peer port, or `None` for a new ephemeral port on each start.
+    pub port: Option<u16>,
+    /// Ask the router to forward the peer port with `UPnP`.
+    pub port_forwarding: bool,
+}
+
+impl PeerReachability {
+    /// Lowest fixed port accepted; lower ports need elevated privileges.
+    pub const MIN_FIXED_PORT: u16 = 1024;
+
+    /// Validate a choice: a fixed port must be at least [`Self::MIN_FIXED_PORT`].
+    #[must_use]
+    pub fn new(port: Option<u16>, port_forwarding: bool) -> Option<Self> {
+        port.is_none_or(|port| port >= Self::MIN_FIXED_PORT)
+            .then_some(Self {
+                port,
+                port_forwarding,
+            })
+    }
+
+    /// The part of this choice a profile honors.
+    #[must_use]
+    pub const fn for_profile(self, profile: NetworkProfile) -> Self {
+        match profile {
+            NetworkProfile::Loopback => Self {
+                port: None,
+                port_forwarding: false,
+            },
+            NetworkProfile::LocalNetwork => Self {
+                port: self.port,
+                port_forwarding: false,
+            },
+            NetworkProfile::Internet => self,
+        }
+    }
+
+    /// Stable storage form of the port; `"0"` means ephemeral.
+    #[must_use]
+    pub fn port_setting(self) -> String {
+        self.port.unwrap_or(0).to_string()
+    }
+
+    /// Stable storage form of the forwarding choice.
+    #[must_use]
+    pub const fn port_forwarding_setting(self) -> &'static str {
+        if self.port_forwarding { "on" } else { "off" }
+    }
+
+    /// Read stored settings. Missing or invalid values fall back to an
+    /// ephemeral port without forwarding.
+    #[must_use]
+    pub fn from_settings(port: Option<&str>, port_forwarding: Option<&str>) -> Self {
+        let port = port
+            .and_then(|value| value.parse::<u16>().ok())
+            .filter(|port| *port >= Self::MIN_FIXED_PORT);
+        Self {
+            port,
+            port_forwarding: port_forwarding == Some("on"),
+        }
+    }
+}
+
 /// Seed an immutable, already complete content directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeedRequest {
@@ -276,5 +343,43 @@ mod tests {
             assert_eq!(NetworkProfile::from_name(profile.name()), Some(profile));
         }
         assert_eq!(NetworkProfile::from_name("LocalNetwork"), None);
+    }
+
+    #[test]
+    fn peer_reachability_validates_stores_and_follows_the_profile() {
+        assert_eq!(PeerReachability::new(Some(1023), false), None);
+        let chosen = PeerReachability::new(Some(51413), true).unwrap();
+        assert_eq!(
+            PeerReachability::from_settings(
+                Some(&chosen.port_setting()),
+                Some(chosen.port_forwarding_setting())
+            ),
+            chosen
+        );
+        let ephemeral = PeerReachability::new(None, false).unwrap();
+        assert_eq!(ephemeral.port_setting(), "0");
+        assert_eq!(
+            PeerReachability::from_settings(Some("0"), Some("off")),
+            ephemeral
+        );
+        for stored in [None, Some("80"), Some("70000"), Some("port")] {
+            assert_eq!(
+                PeerReachability::from_settings(stored, None),
+                PeerReachability::default()
+            );
+        }
+
+        assert_eq!(chosen.for_profile(NetworkProfile::Internet), chosen);
+        assert_eq!(
+            chosen.for_profile(NetworkProfile::LocalNetwork),
+            PeerReachability {
+                port: Some(51413),
+                port_forwarding: false
+            }
+        );
+        assert_eq!(
+            chosen.for_profile(NetworkProfile::Loopback),
+            PeerReachability::default()
+        );
     }
 }

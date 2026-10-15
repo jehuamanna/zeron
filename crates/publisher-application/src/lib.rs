@@ -32,7 +32,8 @@ pub use staging::{StagingReceipt, discard_abandoned_staging, discard_all_attempt
 use thiserror::Error;
 pub use torrent_metainfo::{HashProgress, TorrentError};
 pub use torrent_port::{
-    EngineError, InfoHash, NetworkProfile, TorrentEngine, TransferState, TransferStats,
+    EngineError, InfoHash, NetworkProfile, PeerReachability, TorrentEngine, TransferState,
+    TransferStats,
 };
 pub use torrents::{
     DistributionOptions, TorrentPhase, TorrentReceipt, discard_attempt, generate_torrent,

@@ -10,7 +10,7 @@ use publisher_application::{
     DistributionOptions, MetadataEdit, PublishJobs, PublisherDrafts, SeedingService, StructureEdit,
     TransferState,
 };
-use torrent_librqbit::{EngineConfig, LibrqbitEngine};
+use torrent_librqbit::{EngineConfig, LibrqbitEngine, PeerReachability};
 use torrent_port::NetworkProfile;
 
 async fn engine(root: &Path, name: &str) -> Arc<LibrqbitEngine> {
@@ -18,7 +18,7 @@ async fn engine(root: &Path, name: &str) -> Arc<LibrqbitEngine> {
         LibrqbitEngine::start(EngineConfig {
             profile: NetworkProfile::Loopback,
             state_directory: root.join(name),
-            listen_port: None,
+            reachability: PeerReachability::default(),
             allow_uploads: true,
         })
         .await

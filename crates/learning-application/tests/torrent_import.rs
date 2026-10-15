@@ -15,7 +15,7 @@ use learning_application::{
 use publisher_application::{
     DistributionOptions, MetadataEdit, PublishJobs, PublisherDrafts, StructureEdit,
 };
-use torrent_librqbit::{EngineConfig, LibrqbitEngine};
+use torrent_librqbit::{EngineConfig, LibrqbitEngine, PeerReachability};
 use torrent_port::{
     EngineError, FetchRequest, InfoHash, NetworkProfile, ResolveRequest, ResolvedTorrent,
     SeedRequest, TorrentEngine, TorrentFile, TransferState, TransferStats,
@@ -124,7 +124,7 @@ async fn loopback_engine(root: &Path, name: &str, allow_uploads: bool) -> Arc<Li
         LibrqbitEngine::start(EngineConfig {
             profile: NetworkProfile::Loopback,
             state_directory: root.join(name),
-            listen_port: None,
+            reachability: PeerReachability::default(),
             allow_uploads,
         })
         .await
@@ -339,7 +339,7 @@ async fn a_magnet_imports_through_local_service_discovery_alone() {
     let local = |name: &str, allow_uploads: bool| EngineConfig {
         profile: NetworkProfile::LocalNetwork,
         state_directory: scratch.0.join(name),
-        listen_port: None,
+        reachability: PeerReachability::default(),
         allow_uploads,
     };
     let seeder = Arc::new(LibrqbitEngine::start(local("seeder", true)).await.unwrap());

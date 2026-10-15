@@ -141,6 +141,12 @@ export interface Distribution {
   configuredProfile: NetworkProfile;
   activeProfile: NetworkProfile;
   listenPort: number | null;
+  /** Stored fixed peer port; null means a new port on each start. */
+  peerPort: number | null;
+  /** Stored UPnP choice, honored under the Internet profile only. */
+  portForwarding: boolean;
+  activePortForwarding: boolean;
+  restartRequired: boolean;
   engineError: string | null;
   releases: SeedingStatus[];
 }
@@ -181,5 +187,7 @@ export const publisherApi = {
   startSeeding: (releaseId: string) => invoke<void>("start_seeding", { releaseId }),
   stopSeeding: (releaseId: string) => invoke<void>("stop_seeding", { releaseId }),
   setNetworkProfile: (profile: NetworkProfile) => invoke<void>("set_network_profile", { profile }),
+  setPeerReachability: (peerPort: number | null, portForwarding: boolean) =>
+    invoke<void>("set_peer_reachability", { peerPort, portForwarding }),
   validateDraft: (draftId: string) => invoke<ValidationIssue[]>("validate_draft", { draftId }),
 };

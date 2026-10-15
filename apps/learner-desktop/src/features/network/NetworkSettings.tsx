@@ -3,6 +3,7 @@ import { ChevronLeft } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
 import { asCommandError, libraryApi, type NetworkProfile } from "../../services/library";
+import { PeerReachabilityForm } from "./PeerReachabilityForm";
 
 const profiles: Array<{ value: NetworkProfile; label: string; description: string }> = [
   {
@@ -26,14 +27,20 @@ const profiles: Array<{ value: NetworkProfile; label: string; description: strin
 export function NetworkSettings({ onBack }: { onBack: () => void }) {
   const queryClient = useQueryClient();
   const settings = useQuery({ queryKey: ["network-settings"], queryFn: libraryApi.getNetworkSettings });
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["network-settings"] });
   const save = useMutation({
     mutationFn: (profile: NetworkProfile) => libraryApi.setNetworkProfile(profile),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["network-settings"] }),
+    onSuccess: refresh,
+  });
+  const saveReachability = useMutation({
+    mutationFn: ({ peerPort, portForwarding }: { peerPort: number | null; portForwarding: boolean }) =>
+      libraryApi.setPeerReachability(peerPort, portForwarding),
+    onSuccess: refresh,
   });
 
   const data = settings.data;
-  const restartRequired = data !== undefined && data.configuredProfile !== data.activeProfile;
-  const error = save.isError ? (asCommandError(save.error)?.message ?? "The network setting could not be saved.") : null;
+  const failed = save.isError ? save.error : saveReachability.isError ? saveReachability.error : null;
+  const error = failed ? (asCommandError(failed)?.message ?? "The network setting could not be saved.") : null;
 
   return (
     <div className="max-w-2xl">
@@ -69,7 +76,15 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
                 </label>
               ))}
             </fieldset>
-            {restartRequired ? (
+            <PeerReachabilityForm
+              key={`${data.peerPort}-${data.portForwarding}`}
+              peerPort={data.peerPort}
+              portForwarding={data.portForwarding}
+              internet={data.configuredProfile === "internet"}
+              saving={saveReachability.isPending}
+              onSave={(peerPort, portForwarding) => saveReachability.mutate({ peerPort, portForwarding })}
+            />
+            {data.restartRequired ? (
               <p role="status" className="mt-4 text-xs text-amber-200">Restart Zeron to apply the new network setting.</p>
             ) : data.torrentEngine === "unavailable" ? (
               <p className="mt-4 text-xs text-amber-200">The torrent engine did not start, so torrent courses are unavailable until Zeron restarts.</p>
@@ -77,9 +92,15 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
               <p className="mt-4 text-xs text-slate-500">
                 Active now
                 {data.downloadPort ? ` · downloads use port ${data.downloadPort}` : ""}
-                {data.sharingPort ? ` · shared courses are served on port ${data.sharingPort}` : ""}. UPnP port mapping is never used.
+                {data.sharingPort ? ` · shared courses are served on port ${data.sharingPort}` : ""}.{" "}
+                {data.activePortForwarding ? "Your router is asked to forward the sharing port with UPnP." : "UPnP is off."}
               </p>
             )}
+            {!data.restartRequired && data.torrentEngine === "ready" && data.sharingPort === null ? (
+              <p role="alert" className="mt-2 text-xs text-amber-200">
+                Sharing could not start{data.peerPort ? `, possibly because port ${data.peerPort} is in use` : ""}. Downloads still work.
+              </p>
+            ) : null}
             {error ? <p role="alert" className="mt-3 text-sm text-red-300">{error}</p> : null}
           </>
         )}

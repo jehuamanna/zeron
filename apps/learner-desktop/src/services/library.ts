@@ -11,6 +11,12 @@ export interface NetworkSettings {
   torrentEngine: "ready" | "unavailable";
   downloadPort: number | null;
   sharingPort: number | null;
+  /** Stored fixed port for shared courses; null means a new port on each start. */
+  peerPort: number | null;
+  /** Stored UPnP choice, honored under the Internet profile only. */
+  portForwarding: boolean;
+  activePortForwarding: boolean;
+  restartRequired: boolean;
 }
 
 export interface CourseSummary {
@@ -137,6 +143,8 @@ export const libraryApi = {
   cancelTorrentImport: (jobId: string) => invoke<boolean>("cancel_torrent_import", { jobId }),
   getNetworkSettings: () => invoke<NetworkSettings>("get_network_settings"),
   setNetworkProfile: (profile: NetworkProfile) => invoke<void>("set_network_profile", { profile }),
+  setPeerReachability: (peerPort: number | null, portForwarding: boolean) =>
+    invoke<void>("set_peer_reachability", { peerPort, portForwarding }),
   availability: (courseId: string) => invoke<ResourceAvailability[]>("get_course_availability", { courseId }),
   getCourseSharing: (courseId: string) => invoke<CourseSharing | null>("get_course_sharing", { courseId }),
   setCourseSharing: (courseId: string, sharing: boolean) =>

@@ -3,11 +3,13 @@ use std::path::{Path, PathBuf};
 use course_format::CourseManifest;
 use learning_storage::{Storage, StorageError, StoredCourseSummary, TorrentCourseSource};
 use thiserror::Error;
-use torrent_port::NetworkProfile;
+use torrent_port::{NetworkProfile, PeerReachability};
 
 use crate::{CancellationFlag, ImportError, ImportLimits, import_local_course};
 
 const NETWORK_PROFILE_KEY: &str = "network_profile";
+const PEER_PORT_KEY: &str = "peer_port";
+const PORT_FORWARDING_KEY: &str = "port_forwarding";
 
 /// Result of a verified and durably persisted local course import.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,6 +209,35 @@ impl CourseLibrary {
         Ok(self
             .storage
             .set_setting(NETWORK_PROFILE_KEY, profile.name())?)
+    }
+
+    /// Configured peer port and router forwarding for shared courses; an
+    /// ephemeral port without forwarding unless the learner chose otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on query failure.
+    pub fn peer_reachability(&self) -> Result<PeerReachability, LibraryError> {
+        Ok(PeerReachability::from_settings(
+            self.storage.setting(PEER_PORT_KEY)?.as_deref(),
+            self.storage.setting(PORT_FORWARDING_KEY)?.as_deref(),
+        ))
+    }
+
+    /// Persist the peer port and forwarding used the next time the engines start.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on write failure.
+    pub fn set_peer_reachability(
+        &mut self,
+        reachability: PeerReachability,
+    ) -> Result<(), LibraryError> {
+        self.storage
+            .set_setting(PEER_PORT_KEY, &reachability.port_setting())?;
+        Ok(self
+            .storage
+            .set_setting(PORT_FORWARDING_KEY, reachability.port_forwarding_setting())?)
     }
 
     /// List durably imported courses.

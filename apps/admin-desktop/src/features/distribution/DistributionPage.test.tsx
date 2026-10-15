@@ -7,7 +7,7 @@ import { DistributionPage } from "./DistributionPage";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { getDistribution: vi.fn(), startSeeding: vi.fn(), stopSeeding: vi.fn(), setNetworkProfile: vi.fn() },
+  publisherApi: { getDistribution: vi.fn(), startSeeding: vi.fn(), stopSeeding: vi.fn(), setNetworkProfile: vi.fn(), setPeerReachability: vi.fn() },
 }));
 
 function status(overrides: Partial<SeedingStatus>): SeedingStatus {
@@ -31,7 +31,17 @@ function status(overrides: Partial<SeedingStatus>): SeedingStatus {
 let server: Distribution;
 
 beforeEach(() => {
-  server = { configuredProfile: "local_network", activeProfile: "local_network", listenPort: 42_001, engineError: null, releases: [status({})] };
+  server = {
+    configuredProfile: "local_network",
+    activeProfile: "local_network",
+    listenPort: 42_001,
+    peerPort: null,
+    portForwarding: false,
+    activePortForwarding: false,
+    restartRequired: false,
+    engineError: null,
+    releases: [status({})],
+  };
   vi.mocked(publisherApi.getDistribution).mockImplementation(async () => server);
   vi.mocked(publisherApi.startSeeding).mockImplementation(async () => {
     server = { ...server, releases: [status({ enabled: true, state: "seeding", verifiedBytes: 2_097_152, uploadedBytes: 3_145_728, uploadBytesPerSecond: 1024, connectedPeers: 2 })] };
@@ -40,7 +50,10 @@ beforeEach(() => {
     server = { ...server, releases: [status({})] };
   });
   vi.mocked(publisherApi.setNetworkProfile).mockImplementation(async (profile) => {
-    server = { ...server, configuredProfile: profile };
+    server = { ...server, configuredProfile: profile, restartRequired: true };
+  });
+  vi.mocked(publisherApi.setPeerReachability).mockImplementation(async (peerPort, portForwarding) => {
+    server = { ...server, peerPort, portForwarding, restartRequired: true };
   });
 });
 afterEach(cleanup);
@@ -88,6 +101,36 @@ describe("distribution workspace", () => {
     await waitFor(() => expect(view.getByRole("status").textContent).toContain("Restart Zeron Publisher"));
     expect(publisherApi.setNetworkProfile).toHaveBeenCalledWith("internet");
     expect(view.container.textContent).toContain("Your IP address becomes visible");
+  });
+
+  it("saves a fixed port with UPnP under the internet profile", async () => {
+    server = { ...server, configuredProfile: "internet", activeProfile: "internet" };
+    const view = renderPage();
+    const port = await waitFor(() => view.getByLabelText("Peer port"));
+    expect(view.container.textContent).toContain("UPnP is off.");
+    fireEvent.change(port, { target: { value: "51413" } });
+    fireEvent.click(view.getByRole("checkbox", { name: /forward the port/ }));
+    fireEvent.click(view.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(view.getByRole("status").textContent).toContain("Restart Zeron Publisher"));
+    expect(publisherApi.setPeerReachability).toHaveBeenCalledWith(51413, true);
+    expect((view.getByLabelText("Peer port") as HTMLInputElement).value).toBe("51413");
+  });
+
+  it("keeps UPnP off outside the internet profile and rejects bad ports", async () => {
+    const view = renderPage();
+    const port = await waitFor(() => view.getByLabelText("Peer port"));
+    expect((view.getByRole("checkbox", { name: /forward the port/ }) as HTMLInputElement).disabled).toBe(true);
+    fireEvent.change(port, { target: { value: "443" } });
+    fireEvent.click(view.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(view.getByRole("alert").textContent).toContain("Choose a port from 1024 to 65535"));
+    expect(publisherApi.setPeerReachability).not.toHaveBeenCalled();
+  });
+
+  it("reports active UPnP forwarding", async () => {
+    server = { ...server, configuredProfile: "internet", activeProfile: "internet", peerPort: 51413, portForwarding: true, activePortForwarding: true, listenPort: 51413 };
+    const view = renderPage();
+    await waitFor(() => expect(view.container.textContent).toContain("Your router is asked to forward this port with UPnP."));
+    expect(view.container.textContent).toContain("peers connect on port 51413");
   });
 
   it("explains when the engine is unavailable", async () => {

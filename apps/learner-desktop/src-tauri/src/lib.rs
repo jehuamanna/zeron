@@ -10,8 +10,8 @@ use std::{
 
 use learning_application::TorrentEngine as _;
 use learning_application::{
-    CourseLibrary, CourseSharing, ImportLimits, NetworkProfile, TorrentImportTimeouts,
-    TorrentImports, TransferRouter,
+    CourseLibrary, CourseSharing, ImportLimits, NetworkProfile, PeerReachability,
+    TorrentImportTimeouts, TorrentImports, TransferRouter,
 };
 use media_gateway::{GatewayLimits, MediaGateway};
 use tauri::{Manager, RunEvent};
@@ -32,6 +32,8 @@ pub(crate) type Router = TransferRouter<LibrqbitEngine>;
 /// unless the learner shares them; shared courses move to a second engine.
 pub(crate) struct Torrents {
     pub(crate) profile: NetworkProfile,
+    /// The part of the stored reachability the sharing engine honors.
+    pub(crate) reachability: PeerReachability,
     pub(crate) engines: Vec<Arc<LibrqbitEngine>>,
     /// Peer port of the private engine, which downloads and never uploads.
     pub(crate) download_port: Option<u16>,
@@ -58,10 +60,11 @@ pub fn run() {
             let library =
                 CourseLibrary::open(&app_data.join("library.sqlite3"), ImportLimits::default())?;
             let profile = library.network_profile()?;
+            let reachability = library.peer_reachability()?;
             let library = Arc::new(Mutex::new(library));
             let media_gateway = tauri::async_runtime::block_on(start_media_gateway())?;
             trust_media_gateway(app, &media_gateway);
-            let torrents = start_torrents(profile, &app_data, &library);
+            let torrents = start_torrents(profile, reachability, &app_data, &library);
             if let Some(sharing) = &torrents.sharing {
                 sharing.load()?;
             }
@@ -93,6 +96,7 @@ pub fn run() {
             commands::get_network_settings,
             commands::get_course_availability,
             commands::set_network_profile,
+            commands::set_peer_reachability,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Zeron Learner Desktop");
@@ -142,16 +146,24 @@ fn trust_media_gateway(app: &tauri::App, gateway: &MediaGateway) {
 #[cfg(not(target_os = "linux"))]
 fn trust_media_gateway(_: &tauri::App, _: &MediaGateway) {}
 
+/// Only the sharing engine serves peers, so only it takes the learner's fixed
+/// port and router forwarding; the private engine always uses a new port.
 fn start_torrents(
     profile: NetworkProfile,
+    reachability: PeerReachability,
     app_data: &std::path::Path,
     library: &Arc<Mutex<CourseLibrary>>,
 ) -> Torrents {
+    let reachability = reachability.for_profile(profile);
     let start = |directory: &str, allow_uploads: bool| {
         tauri::async_runtime::block_on(LibrqbitEngine::start(EngineConfig {
             profile,
             state_directory: app_data.join(directory),
-            listen_port: None,
+            reachability: if allow_uploads {
+                reachability
+            } else {
+                PeerReachability::default()
+            },
             allow_uploads,
         }))
         .map(Arc::new)
@@ -162,6 +174,7 @@ fn start_torrents(
     let Some(private) = start("engine", false) else {
         return Torrents {
             profile,
+            reachability,
             engines: Vec::new(),
             download_port: None,
             sharing_port: None,
@@ -176,6 +189,7 @@ fn start_torrents(
     let port = |engine: &Arc<LibrqbitEngine>| engine.listen_address().map(|address| address.port());
     Torrents {
         profile,
+        reachability,
         download_port: port(&private),
         sharing_port: shared.as_ref().and_then(port),
         engines: std::iter::once(private).chain(shared).collect(),

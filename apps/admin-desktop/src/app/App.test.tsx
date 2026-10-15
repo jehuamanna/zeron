@@ -41,7 +41,7 @@ afterEach(cleanup);
 describe("publisher courses", () => {
   it("switches between the courses and distribution workspaces", async () => {
     vi.mocked(publisherApi.listDrafts).mockResolvedValue([]);
-    vi.mocked(publisherApi.getDistribution).mockResolvedValue({ configuredProfile: "local_network", activeProfile: "local_network", listenPort: null, engineError: null, releases: [] });
+    vi.mocked(publisherApi.getDistribution).mockResolvedValue({ configuredProfile: "local_network", activeProfile: "local_network", listenPort: null, peerPort: null, portForwarding: false, activePortForwarding: false, restartRequired: false, engineError: null, releases: [] });
     const view = renderApp();
     fireEvent.click(view.getByRole("button", { name: "Distribution" }));
     await waitFor(() => expect(view.container.textContent).toContain("Publish a release to seed it."));

@@ -13,7 +13,7 @@ use librqbit::{
 use publisher_application::{
     DistributionOptions, MetadataEdit, PublishJobs, PublisherDrafts, StructureEdit,
 };
-use torrent_librqbit::{EngineConfig, LibrqbitEngine};
+use torrent_librqbit::{EngineConfig, LibrqbitEngine, PeerReachability};
 use torrent_port::{
     EngineError, InfoHash, NetworkProfile, SeedRequest, TorrentEngine, TransferState,
 };
@@ -128,7 +128,7 @@ async fn engine(root: &Path) -> LibrqbitEngine {
     LibrqbitEngine::start(EngineConfig {
         profile: NetworkProfile::Loopback,
         state_directory: root.join("engine"),
-        listen_port: None,
+        reachability: PeerReachability::default(),
         allow_uploads: true,
     })
     .await
@@ -368,7 +368,7 @@ async fn learners_resolve_metadata_and_fetch_only_selected_files() {
     let learner = LibrqbitEngine::start(EngineConfig {
         profile: NetworkProfile::Loopback,
         state_directory: scratch.0.join("learner-engine"),
-        listen_port: None,
+        reachability: PeerReachability::default(),
         allow_uploads: false,
     })
     .await
@@ -482,7 +482,7 @@ async fn magnet_resolution_leaves_no_transfer_or_content_behind() {
     let learner = LibrqbitEngine::start(EngineConfig {
         profile: NetworkProfile::Loopback,
         state_directory: scratch.0.join("learner-engine"),
-        listen_port: None,
+        reachability: PeerReachability::default(),
         allow_uploads: false,
     })
     .await
@@ -557,7 +557,7 @@ async fn magnets_resolve_through_local_service_discovery_alone() {
     let local = |name: &str, allow_uploads: bool| EngineConfig {
         profile: NetworkProfile::LocalNetwork,
         state_directory: scratch.0.join(name),
-        listen_port: None,
+        reachability: PeerReachability::default(),
         allow_uploads,
     };
     let seeder = LibrqbitEngine::start(local("seeder-engine", true))
@@ -598,11 +598,38 @@ async fn magnets_resolve_through_local_service_discovery_alone() {
     seeder.shutdown().await;
 }
 
+/// Binds a fixed port on every interface under the Local-network profile.
+/// Opt in with `cargo test -- --ignored`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "listens on the local network; run manually with --ignored"]
+async fn a_fixed_peer_port_is_bound_under_the_local_network_profile() {
+    let scratch = Scratch::new("fixed-port");
+    let port = std::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let engine = LibrqbitEngine::start(EngineConfig {
+        profile: NetworkProfile::LocalNetwork,
+        state_directory: scratch.0.join("engine"),
+        reachability: PeerReachability::new(Some(port), false).unwrap(),
+        allow_uploads: true,
+    })
+    .await
+    .unwrap();
+    assert_eq!(engine.listen_address().unwrap().port(), port);
+    assert!(
+        std::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).is_err(),
+        "the engine does not hold port {port}"
+    );
+    engine.shutdown().await;
+}
+
 async fn loopback(root: &Path, name: &str, allow_uploads: bool) -> LibrqbitEngine {
     LibrqbitEngine::start(EngineConfig {
         profile: NetworkProfile::Loopback,
         state_directory: root.join(name),
-        listen_port: None,
+        reachability: PeerReachability::default(),
         allow_uploads,
     })
     .await

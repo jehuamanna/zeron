@@ -7,7 +7,8 @@ use std::{
 use publisher_storage::ReleaseRecord;
 use torrent_metainfo::inspect_torrent;
 use torrent_port::{
-    EngineError, InfoHash, NetworkProfile, SeedRequest, TorrentEngine, TransferStats,
+    EngineError, InfoHash, NetworkProfile, PeerReachability, SeedRequest, TorrentEngine,
+    TransferStats,
 };
 
 use crate::{
@@ -17,6 +18,8 @@ use crate::{
 };
 
 const NETWORK_PROFILE_KEY: &str = "network_profile";
+const PEER_PORT_KEY: &str = "peer_port";
+const PORT_FORWARDING_KEY: &str = "port_forwarding";
 
 /// Stable storage and IPC name of a network profile.
 #[must_use]
@@ -55,6 +58,33 @@ impl PublisherDrafts {
         Ok(self
             .storage
             .set_setting(NETWORK_PROFILE_KEY, network_profile_name(profile))?)
+    }
+
+    /// Configured peer port and router forwarding; an ephemeral port without
+    /// forwarding unless the publisher chose otherwise.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn peer_reachability(&self) -> Result<PeerReachability, DraftServiceError> {
+        Ok(PeerReachability::from_settings(
+            self.storage.setting(PEER_PORT_KEY)?.as_deref(),
+            self.storage.setting(PORT_FORWARDING_KEY)?.as_deref(),
+        ))
+    }
+
+    /// Persist the peer port and forwarding used the next time the engine starts.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn set_peer_reachability(
+        &mut self,
+        reachability: PeerReachability,
+    ) -> Result<(), DraftServiceError> {
+        self.storage
+            .set_setting(PEER_PORT_KEY, &reachability.port_setting())?;
+        Ok(self
+            .storage
+            .set_setting(PORT_FORWARDING_KEY, reachability.port_forwarding_setting())?)
     }
 
     /// One release record.

@@ -7,7 +7,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use publisher_application::{NetworkProfile, PublishJobs, PublisherDrafts, SeedingService};
+use publisher_application::{
+    NetworkProfile, PeerReachability, PublishJobs, PublisherDrafts, SeedingService,
+};
 use tauri::{Manager, RunEvent};
 use torrent_librqbit::{EngineConfig, LibrqbitEngine};
 
@@ -21,6 +23,8 @@ pub(crate) struct AppState {
 /// Seeding is optional at runtime: authoring keeps working if the engine cannot start.
 pub(crate) struct Distribution {
     pub(crate) active_profile: NetworkProfile,
+    /// The part of the stored reachability the active profile honors.
+    pub(crate) active_reachability: PeerReachability,
     pub(crate) engine: Option<Arc<LibrqbitEngine>>,
     pub(crate) seeding: Option<Arc<SeedingService<LibrqbitEngine>>>,
     pub(crate) engine_error: Option<String>,
@@ -45,9 +49,11 @@ pub fn run() {
             let publish_jobs = PublishJobs::new(&app_data.join("staging"));
             publish_jobs.recover()?;
             let active_profile = drafts.network_profile()?;
+            let reachability = drafts.peer_reachability()?;
             let drafts = Arc::new(Mutex::new(drafts));
             let distribution = start_distribution(
                 active_profile,
+                reachability,
                 app_data.join("engine"),
                 &drafts,
                 &releases_root,
@@ -83,6 +89,7 @@ pub fn run() {
             commands::start_seeding,
             commands::stop_seeding,
             commands::set_network_profile,
+            commands::set_peer_reachability,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Zeron Publisher");
@@ -97,6 +104,7 @@ pub fn run() {
 
 fn start_distribution(
     active_profile: NetworkProfile,
+    reachability: PeerReachability,
     state_directory: PathBuf,
     drafts: &Arc<Mutex<PublisherDrafts>>,
     releases_root: &std::path::Path,
@@ -104,14 +112,16 @@ fn start_distribution(
     let started = tauri::async_runtime::block_on(LibrqbitEngine::start(EngineConfig {
         profile: active_profile,
         state_directory,
-        listen_port: None,
+        reachability,
         allow_uploads: true,
     }));
+    let active_reachability = reachability.for_profile(active_profile);
     match started {
         Ok(engine) => {
             let engine = Arc::new(engine);
             Distribution {
                 active_profile,
+                active_reachability,
                 seeding: Some(Arc::new(SeedingService::new(
                     Arc::clone(drafts),
                     Arc::clone(&engine),
@@ -123,6 +133,7 @@ fn start_distribution(
         }
         Err(error) => Distribution {
             active_profile,
+            active_reachability,
             engine: None,
             seeding: None,
             engine_error: Some(error.to_string()),

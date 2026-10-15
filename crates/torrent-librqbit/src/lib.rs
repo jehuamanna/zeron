@@ -20,6 +20,7 @@ use librqbit::{
     ListenerOptions, ManagedTorrent, Session, SessionOptions, TorrentStatsState,
     api::TorrentIdOrHash, storage::StorageFactoryExt,
 };
+pub use torrent_port::PeerReachability;
 use torrent_port::{
     EngineError, FetchRequest, InfoHash, NetworkProfile, ResolveRequest, ResolvedTorrent,
     SeedRequest, TorrentEngine, TorrentFile, TorrentSource, TransferState, TransferStats,
@@ -42,8 +43,9 @@ pub struct EngineConfig {
     pub profile: NetworkProfile,
     /// Private directory for engine state. Seeding never writes content here.
     pub state_directory: PathBuf,
-    /// Fixed peer port, or `None` for an ephemeral port.
-    pub listen_port: Option<u16>,
+    /// Peer port and router forwarding; the profile decides which parts apply
+    /// (see [`PeerReachability::for_profile`]).
+    pub reachability: PeerReachability,
     /// Whether peers may download from this engine. When off, the engine
     /// advertises no pieces, rejects every piece request, and cannot seed.
     pub allow_uploads: bool,
@@ -569,7 +571,8 @@ fn transfer_stats(info_hash: &InfoHash, active: &Active) -> TransferStats {
 }
 
 fn session_options(config: &EngineConfig) -> SessionOptions {
-    let port = config.listen_port.unwrap_or(0);
+    let reachability = config.reachability.for_profile(config.profile);
+    let port = reachability.port.unwrap_or(0);
     let loopback = config.profile == NetworkProfile::Loopback;
     let listen_addr = if loopback {
         SocketAddr::from((Ipv4Addr::LOCALHOST, port))
@@ -591,7 +594,7 @@ fn session_options(config: &EngineConfig) -> SessionOptions {
         listen: Some(ListenerOptions {
             mode: ListenerMode::TcpOnly,
             listen_addr,
-            enable_upnp_port_forwarding: false,
+            enable_upnp_port_forwarding: reachability.port_forwarding,
             ipv4_only: loopback,
             ..ListenerOptions::default()
         }),
@@ -612,4 +615,43 @@ fn peers(initial_peers: Vec<SocketAddr>) -> Option<Vec<SocketAddr>> {
 
 fn engine_error(error: &anyhow::Error) -> EngineError {
     EngineError::Engine(format!("{error:#}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn listener(profile: NetworkProfile, reachability: PeerReachability) -> ListenerOptions {
+        session_options(&EngineConfig {
+            profile,
+            state_directory: PathBuf::new(),
+            reachability,
+            allow_uploads: true,
+        })
+        .listen
+        .unwrap()
+    }
+
+    #[test]
+    fn port_forwarding_and_fixed_ports_follow_the_profile() {
+        let chosen = PeerReachability::new(Some(51413), true).unwrap();
+        let internet = listener(NetworkProfile::Internet, chosen);
+        assert_eq!(internet.listen_addr.port(), 51413);
+        assert!(internet.enable_upnp_port_forwarding);
+
+        let local = listener(NetworkProfile::LocalNetwork, chosen);
+        assert_eq!(local.listen_addr.port(), 51413);
+        assert!(!local.enable_upnp_port_forwarding);
+
+        let loopback = listener(NetworkProfile::Loopback, chosen);
+        assert_eq!(
+            loopback.listen_addr,
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 0))
+        );
+        assert!(!loopback.enable_upnp_port_forwarding);
+
+        let ephemeral = listener(NetworkProfile::Internet, PeerReachability::default());
+        assert_eq!(ephemeral.listen_addr.port(), 0);
+        assert!(!ephemeral.enable_upnp_port_forwarding);
+    }
 }

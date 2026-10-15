@@ -8,7 +8,7 @@ use std::{
 };
 
 use learning_application::{
-    CancellationFlag, CourseLibrary, ImportLimits, LibraryError, NetworkProfile,
+    CancellationFlag, CourseLibrary, ImportLimits, LibraryError, NetworkProfile, PeerReachability,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -137,9 +137,27 @@ fn network_profile_defaults_to_local_network_and_persists() {
         library
             .set_network_profile(NetworkProfile::Internet)
             .unwrap();
+        assert_eq!(
+            library.peer_reachability().unwrap(),
+            PeerReachability::default()
+        );
+        library
+            .set_peer_reachability(PeerReachability::new(Some(51413), true).unwrap())
+            .unwrap();
     }
-    let library = CourseLibrary::open(&database, ImportLimits::default()).unwrap();
+    let mut library = CourseLibrary::open(&database, ImportLimits::default()).unwrap();
     assert_eq!(library.network_profile().unwrap(), NetworkProfile::Internet);
+    assert_eq!(
+        library.peer_reachability().unwrap(),
+        PeerReachability::new(Some(51413), true).unwrap()
+    );
+    library
+        .set_peer_reachability(PeerReachability::default())
+        .unwrap();
+    assert_eq!(
+        library.peer_reachability().unwrap(),
+        PeerReachability::default()
+    );
 }
 
 #[test]

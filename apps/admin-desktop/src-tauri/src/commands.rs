@@ -4,9 +4,9 @@ use course_format::ResourceKind;
 use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
     DistributionOptions, DraftServiceError, DraftSummary, FindingSeverity, MetadataEdit,
-    PublishJobSnapshot, PublishStage, PublisherDrafts, ReleaseRecord, ReleaseSeedingStatus,
-    StoredDraft, StructureEdit, TransferState, inspect_draft_media, network_profile_name,
-    parse_network_profile, source_info,
+    PeerReachability, PublishJobSnapshot, PublishStage, PublisherDrafts, ReleaseRecord,
+    ReleaseSeedingStatus, StoredDraft, StructureEdit, TransferState, inspect_draft_media,
+    network_profile_name, parse_network_profile, source_info,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -220,6 +220,14 @@ pub(crate) struct DistributionDto {
     configured_profile: &'static str,
     active_profile: &'static str,
     listen_port: Option<u16>,
+    /// Stored fixed peer port; `None` means a new port on each start.
+    peer_port: Option<u16>,
+    /// Stored `UPnP` choice, honored under the Internet profile only.
+    port_forwarding: bool,
+    /// Whether this session asks the router to forward its peer port.
+    active_port_forwarding: bool,
+    /// The stored network choice differs from the running engine's.
+    restart_required: bool,
     engine_error: Option<String>,
     releases: Vec<SeedingStatusDto>,
 }
@@ -455,7 +463,11 @@ pub(crate) async fn get_distribution(
 ) -> Result<DistributionDto, CommandError> {
     let drafts = Arc::clone(&state.drafts);
     let seeding = state.distribution.seeding.clone();
-    let active_profile = network_profile_name(state.distribution.active_profile);
+    let active = (
+        state.distribution.active_profile,
+        state.distribution.active_reachability,
+    );
+    let active_profile = network_profile_name(active.0);
     let listen_port = state
         .distribution
         .engine
@@ -463,9 +475,16 @@ pub(crate) async fn get_distribution(
         .and_then(|engine| torrent_engine_port(engine));
     let engine_error = state.distribution.engine_error.clone();
     run_blocking(move || {
-        let configured = lock_drafts(&drafts)?
-            .network_profile()
-            .map_err(|error| service_error("distribution_failed", error))?;
+        let (configured, reachability) = {
+            let drafts = lock_drafts(&drafts)?;
+            let configured = drafts
+                .network_profile()
+                .map_err(|error| service_error("distribution_failed", error))?;
+            let reachability = drafts
+                .peer_reachability()
+                .map_err(|error| service_error("distribution_failed", error))?;
+            (configured, reachability)
+        };
         let releases = match seeding {
             Some(seeding) => seeding
                 .statuses()
@@ -491,6 +510,10 @@ pub(crate) async fn get_distribution(
             configured_profile: network_profile_name(configured),
             active_profile,
             listen_port,
+            peer_port: reachability.port,
+            port_forwarding: reachability.port_forwarding,
+            active_port_forwarding: active.1.port_forwarding,
+            restart_required: (configured, reachability.for_profile(configured)) != active,
             engine_error,
             releases,
         })
@@ -534,6 +557,39 @@ pub(crate) async fn set_network_profile(
             .map_err(|error| service_error("settings_failed", error))
     })
     .await
+}
+
+/// Store the peer port and `UPnP` choice used the next time the engine starts.
+#[tauri::command]
+pub(crate) async fn set_peer_reachability(
+    peer_port: Option<u16>,
+    port_forwarding: bool,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    let reachability = parse_reachability(peer_port, port_forwarding)?;
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || {
+        lock_drafts(&drafts)?
+            .set_peer_reachability(reachability)
+            .map_err(|error| service_error("settings_failed", error))
+    })
+    .await
+}
+
+fn parse_reachability(
+    peer_port: Option<u16>,
+    port_forwarding: bool,
+) -> Result<PeerReachability, CommandError> {
+    PeerReachability::new(peer_port, port_forwarding).ok_or_else(|| CommandError {
+        field: Some("peerPort".to_owned()),
+        ..CommandError::new(
+            "invalid_input",
+            format_args!(
+                "choose a port from {} to 65535",
+                PeerReachability::MIN_FIXED_PORT
+            ),
+        )
+    })
 }
 
 fn seeding_service(
@@ -1310,6 +1366,13 @@ mod tests {
         assert!(seeding["failure"].is_null());
         assert!(parse_network_profile("internet").is_some());
         assert!(parse_network_profile("everything").is_none());
+        assert_eq!(
+            parse_reachability(Some(51413), true).unwrap(),
+            PeerReachability::new(Some(51413), true).unwrap()
+        );
+        let error = parse_reachability(Some(80), false).unwrap_err();
+        assert_eq!(error.code, "invalid_input");
+        assert_eq!(error.field.as_deref(), Some("peerPort"));
     }
 
     fn torrent_port_hash() -> publisher_application::InfoHash {
