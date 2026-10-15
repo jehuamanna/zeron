@@ -3,6 +3,7 @@
 mod library;
 mod local_import;
 mod sharing;
+mod streaming;
 mod torrent_import;
 
 pub use library::{
@@ -13,6 +14,7 @@ pub use local_import::{
     import_local_course,
 };
 pub use sharing::{CourseSharing, CourseSharingStatus, SharingError, TransferRouter};
+pub use streaming::{StreamWait, open_lesson_stream};
 pub use torrent_import::{
     TorrentImportBusy, TorrentImportFailure, TorrentImportSnapshot, TorrentImportStage,
     TorrentImportTimeouts, TorrentImports,

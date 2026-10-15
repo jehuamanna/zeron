@@ -133,6 +133,8 @@ Schemas, trust boundaries, crate graph, a local-only librqbit 9.0.1 spike, and a
 | `2c30cea`, `5655af6` | UI test stability under load |
 | `6c9ad4b` | AppImage packaging scripts |
 
+`phase-4-streaming-at-startup.md` fixed lessons failing when opened right after startup, and recorded real-window evidence with the user's courses: lesson 4 plays before completion, a seek into absent data resumes, and a restart reuses verified bytes.
+
 Still open in Phase 4. These also finish the "first milestone" in the roadmap:
 
 1. Playback state machine: loading, buffering, playing, stalled, error.

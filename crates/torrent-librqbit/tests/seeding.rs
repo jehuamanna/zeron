@@ -798,6 +798,44 @@ async fn streams_verified_bytes_from_any_offset_without_downloading_the_rest() {
     seeder.shutdown().await;
 }
 
+/// A torrent is added in an initializing state while librqbit checks the
+/// bytes already on disk. A stream opened in that window must wait for the
+/// check instead of failing, as happens when a learner reopens a lesson right
+/// after the app restores its courses at startup.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_opened_while_the_torrent_is_still_checking_waits_for_it() {
+    use tokio::io::AsyncReadExt;
+
+    const LESSON: usize = 100_000_000;
+    let scratch = Scratch::new("stream-checking");
+    let release = publish_lessons(&scratch.0, &[LESSON]);
+    let seeder = engine(&scratch.0).await;
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    let checking = seeder.transfer(&info_hash).unwrap().state;
+    let mut reader = tokio::time::timeout(Duration::from_secs(60), seeder.open_file(&info_hash, 1))
+        .await
+        .expect("the check finishes")
+        .expect("a stream opened during the check waits for it");
+    let mut start = vec![0_u8; 4096];
+    reader.read_exact(&mut start).await.unwrap();
+    let lesson = std::fs::read_dir(release.package.join("resources"))
+        .unwrap()
+        .flat_map(|entry| std::fs::read_dir(entry.unwrap().path()).unwrap())
+        .map(|entry| entry.unwrap().path())
+        .find(|path| std::fs::metadata(path).unwrap().len() == LESSON as u64)
+        .unwrap();
+    assert_eq!(start, std::fs::read(lesson).unwrap()[..4096]);
+    assert_eq!(checking, TransferState::Checking, "the race was exercised");
+    drop(reader);
+    seeder.shutdown().await;
+}
+
 /// When `course.json` completes, a learner with uploads off disconnects its
 /// peers. A stream opened while that disconnect is in progress used to wait
 /// forever; the reader now asks for the peers again while it waits.

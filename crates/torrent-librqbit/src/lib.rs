@@ -69,6 +69,8 @@ pub struct LibrqbitEngine {
 }
 
 const MAX_OPEN_FILES: usize = 4;
+/// How long a new reader waits for a torrent to finish checking local bytes.
+const INITIALIZE_WAIT: Duration = Duration::from_secs(120);
 
 /// How long a read waits before asking librqbit to reconnect needed peers.
 const RECONNECT_NUDGE: Duration = Duration::from_secs(3);
@@ -468,6 +470,17 @@ impl TorrentEngine for LibrqbitEngine {
                 "the torrent has no file {file_index}"
             )));
         }
+        // A torrent added moments ago is still checking local bytes, and
+        // librqbit refuses to stream until it leaves that state
+        // (`ManagedTorrent::wait_until_initialized`, librqbit 9.0.1
+        // src/torrent_state/mod.rs). Wait for it, bounded, before taking a
+        // reader permit.
+        tokio::time::timeout(INITIALIZE_WAIT, handle.wait_until_initialized())
+            .await
+            .map_err(|_| {
+                EngineError::Engine("the torrent is still checking its local files".to_owned())
+            })?
+            .map_err(|error| engine_error(&error))?;
         let permit = Arc::clone(&self.open_files)
             .try_acquire_owned()
             .map_err(|_| {
