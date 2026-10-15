@@ -56,6 +56,7 @@ pub struct CourseCache<E> {
 
 struct Removal {
     source: TorrentCourseSource,
+    piece_length: u64,
     selection: Vec<usize>,
     files: Vec<(String, PathBuf, u64)>,
     kept: Vec<String>,
@@ -84,13 +85,25 @@ impl<E: TorrentEngine> CourseCache<E> {
         course_id: &str,
         resources: Option<&[String]>,
     ) -> Result<RemovalReport, CacheError> {
-        let removal = self.plan(course_id, resources)?;
+        let mut removal = self.plan(course_id, resources)?;
         let info_hash = InfoHash::parse(&removal.source.info_hash)?;
-        let verified = self
-            .engine
-            .transfer(&info_hash)
-            .map(|stats| stats.file_verified_bytes)
+        let transfer = self.engine.transfer(&info_hash);
+        let verified = transfer
+            .as_ref()
+            .map(|stats| stats.file_verified_bytes.clone())
             .unwrap_or_default();
+        if transfer.is_some() {
+            // Restarting a transfer re-checks every byte of the course, and a
+            // lesson holding no more than a piece it shares with a neighbour
+            // frees nothing worth that (and would spoil the neighbour's piece).
+            let piece = removal.piece_length;
+            removal.files.retain(|(_, _, index)| {
+                usize::try_from(*index)
+                    .ok()
+                    .and_then(|index| verified.get(index))
+                    .is_some_and(|&bytes| bytes > piece)
+            });
+        }
         let mut report = RemovalReport {
             kept: removal.kept.clone(),
             ..RemovalReport::default()
@@ -194,7 +207,11 @@ impl<E: TorrentEngine> CourseCache<E> {
         let committed = library.committed_resources(course_id)?;
         let selection = library.download_selection(course_id)?.unwrap_or_default();
         let wanted: Option<BTreeSet<&String>> = resources.map(|ids| ids.iter().collect());
+        let piece_length = torrent_metainfo::inspect_torrent(&source.metainfo, &files)
+            .map_err(|_| CacheError::NotTorrentCourse)?
+            .piece_length;
         let mut removal = Removal {
+            piece_length,
             selection,
             files: Vec::new(),
             kept: Vec::new(),
@@ -243,13 +260,17 @@ impl<E: TorrentEngine> CourseCache<E> {
             };
             let committed = library.committed_resources(&source.course_id)?;
             let recency = library.playback_recency(&source.course_id)?;
+            // Pieces shared with a neighbour are not worth removing (see `remove`).
+            let piece = torrent_metainfo::file_table(&source.metainfo)
+                .and_then(|files| torrent_metainfo::inspect_torrent(&source.metainfo, &files))
+                .map_or(0, |summary| summary.piece_length);
             for resource in library.torrent_resources(&source.course_id)? {
                 let bytes = stats
                     .file_verified_bytes
                     .get(resource.file_index)
                     .copied()
                     .unwrap_or(0);
-                if bytes == 0 || committed.contains(&resource.resource_id) {
+                if bytes <= piece || committed.contains(&resource.resource_id) {
                     continue;
                 }
                 candidates.push(Candidate {

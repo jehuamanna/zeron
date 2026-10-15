@@ -1140,6 +1140,13 @@ async fn streamed_lessons_are_removed_and_the_transfer_goes_on() {
         content,
         lesson_file,
     } = cache_fixture("cache-remove").await;
+    // Nothing streamed yet: nothing is removed and the transfer is not restarted.
+    let empty = cache.remove(&course_id, None).await.unwrap();
+    assert_eq!(empty.removed.len(), 0);
+    assert_ne!(
+        course.learner.transfer(&course.info_hash).unwrap().state,
+        TransferState::Checking
+    );
     assert!(matches!(
         cache.remove("course_unknown", None).await,
         Err(CacheError::NotTorrentCourse)
