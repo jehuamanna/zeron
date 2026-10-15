@@ -5,8 +5,9 @@ use std::{
 
 use course_format::ResourceKind;
 use learning_application::{
-    CancellationFlag, CourseImportReceipt, CourseLibrary, CourseSharingStatus, NetworkProfile,
-    SharingError, TorrentImportSnapshot, TorrentImportStage, TorrentSource, TransferState,
+    CancellationFlag, CourseImportReceipt, CourseLibrary, CourseSharingStatus, ImportError,
+    LibraryError, NetworkProfile, SharingError, TorrentImportSnapshot, TorrentImportStage,
+    TorrentSource, TransferState,
 };
 use media_gateway::FileResource;
 use serde::Serialize;
@@ -237,9 +238,9 @@ pub(crate) async fn choose_and_import_course(
     let Some(selected) = selected else {
         return Ok(None);
     };
-    let root = selected.into_path().map_err(|error| CommandError {
+    let root = selected.into_path().map_err(|_| CommandError {
         code: "unsupported_folder_location",
-        message: error.to_string(),
+        message: "the selected folder is not on a local disk".to_owned(),
     })?;
     let library = Arc::clone(&state.library);
     run_blocking(move || {
@@ -248,9 +249,31 @@ pub(crate) async fn choose_and_import_course(
             .import_local_folder(&root, &CancellationFlag::default())
             .map(ImportReceiptDto::from)
             .map(Some)
-            .map_err(|error| command_error("course_import_failed", error))
+            .map_err(local_import_error)
     })
     .await
+}
+
+fn local_import_error(error: LibraryError) -> CommandError {
+    match error {
+        // OS, SQLite, and canonicalization errors can name local directories;
+        // they never cross IPC.
+        LibraryError::Import(ImportError::Io { operation, .. }) => CommandError {
+            code: "course_import_failed",
+            message: format!("the course folder could not be read while {operation}"),
+        },
+        LibraryError::PackageLocation(_) => CommandError {
+            code: "course_import_failed",
+            message: "the course folder location could not be resolved".to_owned(),
+        },
+        LibraryError::Storage(_) => CommandError {
+            code: "library_unavailable",
+            message: "the course was verified but could not be saved to the library".to_owned(),
+        },
+        // Remaining import failures name only manifest-relative paths, which
+        // `course.json` validation keeps relative.
+        LibraryError::Import(_) => command_error("course_import_failed", error),
+    }
 }
 
 #[tauri::command]
@@ -773,6 +796,42 @@ mod tests {
         ));
         assert_eq!(failed.code, "sharing_failed");
         assert!(!failed.message.contains("/home/"));
+    }
+
+    #[test]
+    fn local_import_failures_never_name_local_directories() {
+        let io = || std::io::Error::other("cannot open /home/learner/course");
+        let failures = [
+            LibraryError::Import(ImportError::Io {
+                operation: "opening course.json",
+                source: io(),
+            }),
+            LibraryError::PackageLocation(io()),
+            LibraryError::Storage(learning_storage::StorageError::MissingCapability(
+                "/home/learner/library.sqlite3",
+            )),
+        ];
+        for failure in failures {
+            let error = local_import_error(failure);
+            assert!(!error.message.contains("/home/"), "{}", error.message);
+        }
+
+        let read = local_import_error(LibraryError::Import(ImportError::Io {
+            operation: "opening course.json",
+            source: io(),
+        }));
+        assert_eq!(read.code, "course_import_failed");
+        assert_eq!(
+            read.message,
+            "the course folder could not be read while opening course.json"
+        );
+
+        let missing = local_import_error(LibraryError::Import(ImportError::MissingResource {
+            resource_id: "intro".to_owned(),
+            package_path: "media/intro.mp4".to_owned(),
+        }));
+        assert_eq!(missing.code, "course_import_failed");
+        assert!(missing.message.contains("media/intro.mp4"));
     }
 
     #[test]

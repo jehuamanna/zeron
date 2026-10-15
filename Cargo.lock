@@ -6361,6 +6361,7 @@ version = "0.1.0"
 dependencies = [
  "course-format",
  "learning-application",
+ "learning-storage",
  "media-gateway",
  "serde",
  "tauri",

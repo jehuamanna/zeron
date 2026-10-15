@@ -41,6 +41,9 @@ export function App() {
   });
 
   const torrentCourse = detail.data?.source === "torrent";
+  const importError = importCourse.isError
+    ? (asCommandError(importCourse.error)?.message ?? "The course folder could not be imported.")
+    : null;
 
   const leaveCourse = () => {
     setMediaUrl(null);
@@ -72,6 +75,15 @@ export function App() {
         </header>
 
         <section className="py-10">
+          {importError ? (
+            <div role="alert" className="mb-8 flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-red-400/30 bg-red-400/10 p-5 text-red-100">
+              <div>
+                <p className="font-medium">Course import failed</p>
+                <p className="mt-1 text-sm text-red-200/80">{importError}</p>
+              </div>
+              <Button variant="ghost" onClick={() => importCourse.reset()}>Dismiss</Button>
+            </div>
+          ) : null}
           {networkOpen ? (
             <NetworkSettings onBack={() => showNetwork(false)} />
           ) : selectedCourseId ? (
@@ -175,7 +187,7 @@ export function App() {
 
           <TorrentImportPanel engine={readiness.data?.torrentImport ?? "pending"} />
 
-          {readiness.isError || courses.isError || importCourse.isError ? (
+          {readiness.isError || courses.isError ? (
             <div role="alert" className="rounded-2xl border border-red-400/30 bg-red-400/10 p-5 text-red-100">
               Zeron could not open the local library. Restart the app and check that its data directory is writable.
             </div>

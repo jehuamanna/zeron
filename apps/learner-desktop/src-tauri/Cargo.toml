@@ -22,5 +22,8 @@ tauri-plugin-dialog.workspace = true
 tokio.workspace = true
 torrent-librqbit = { path = "../../../crates/torrent-librqbit" }
 
+[dev-dependencies]
+learning-storage = { path = "../../../crates/learning-storage" }
+
 [lints]
 workspace = true

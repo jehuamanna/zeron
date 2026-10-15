@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { libraryApi } from "../services/library";
@@ -217,5 +217,55 @@ describe("learner library", () => {
     expect(view.container.textContent).not.toContain("Your library is ready");
     fireEvent.click(button("Back")!);
     await waitFor(() => expect(view.container.textContent).toContain("Your library is ready"));
+  });
+
+  it("reports a failed folder import separately from the library and lets it be dismissed", async () => {
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.chooseAndImport).mockRejectedValue({
+      code: "course_import_failed",
+      message: "course.json is missing",
+    });
+
+    const view = renderApp();
+    const screen = within(view.container);
+    await waitFor(() => expect(view.container.textContent).toContain("Your library is ready"));
+    fireEvent.click(screen.getByRole("button", { name: /Import local course/ }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Course import failed");
+    expect(alert.textContent).toContain("course.json is missing");
+    expect(view.container.textContent).not.toContain("could not open the local library");
+    expect(view.container.textContent).toContain("Your library is ready");
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(view.container.textContent).toContain("Your library is ready");
+  });
+
+  it("falls back to a generic import message when the failure is not a command error", async () => {
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.chooseAndImport).mockRejectedValue(new Error("ipc channel closed"));
+
+    const view = renderApp();
+    const screen = within(view.container);
+    await waitFor(() => expect(view.container.textContent).toContain("Your library is ready"));
+    fireEvent.click(screen.getByRole("button", { name: /Import local course/ }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("The course folder could not be imported.");
+    expect(alert.textContent).not.toContain("ipc channel closed");
+  });
+
+  it("keeps the library alert for a library that cannot be listed", async () => {
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockRejectedValue({ code: "library_unavailable", message: "the course library worker is unavailable" });
+
+    const view = renderApp();
+    const screen = within(view.container);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Zeron could not open the local library");
+    expect(alert.textContent).not.toContain("Course import failed");
   });
 });
