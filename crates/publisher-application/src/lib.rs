@@ -33,7 +33,8 @@ pub use releases::{
     RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE, ReleaseTorrent, release_directory,
 };
 pub use seeding::{
-    ReleaseSeedingStatus, SeedingService, network_profile_name, parse_network_profile,
+    MAX_TRACKER_URL_BYTES, MAX_TRACKERS, ReleaseSeedingStatus, SeedingService,
+    network_profile_name, normalize_trackers, parse_network_profile,
 };
 pub use sources::{ResourceMediaFindings, SourceInfo, inspect_draft_media, source_info};
 pub use staging::{StagingReceipt, discard_abandoned_staging, discard_all_attempts, stage_draft};

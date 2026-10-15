@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 use course_format::ResourceKind;
 use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
-    DistributionOptions, DraftServiceError, DraftSummary, FindingSeverity, MetadataEdit,
-    PeerReachability, PublishJobSnapshot, PublishJobs, PublishStage, PublisherDrafts,
-    ReleaseRecord, ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit, TransferState,
+    DraftServiceError, DraftSummary, FindingSeverity, MAX_TRACKERS, MetadataEdit, PeerReachability,
+    PublishJobSnapshot, PublishJobs, PublishStage, PublisherDrafts, ReleaseRecord,
+    ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit, TransferState,
     inspect_draft_media, network_profile_name, parse_network_profile, source_info,
 };
 use serde::{Deserialize, Serialize};
@@ -217,6 +217,7 @@ struct PreparedReleaseDto {
     manifest_sha256: String,
     info_hash: String,
     magnet: String,
+    tracker_count: usize,
     piece_length: u64,
     piece_count: usize,
     file_count: usize,
@@ -244,6 +245,8 @@ pub(crate) struct DistributionDto {
     active_port_forwarding: bool,
     /// The stored network choice differs from the running engine's.
     restart_required: bool,
+    /// Trackers written into new releases.
+    trackers: Vec<String>,
     engine_error: Option<String>,
     releases: Vec<SeedingStatusDto>,
 }
@@ -392,29 +395,28 @@ pub(crate) async fn start_publish_preparation(
 ) -> Result<PublishJobDto, CommandError> {
     let drafts = Arc::clone(&state.drafts);
     let jobs = Arc::clone(&state.publish_jobs);
-    let (draft, started) = run_blocking(move || {
-        let draft = lock_drafts(&drafts)?
+    let (draft, distribution, started) = run_blocking(move || {
+        let drafts = lock_drafts(&drafts)?;
+        let draft = drafts
             .draft(&draft_id)
             .map_err(|error| service_error("draft_lookup_failed", error))?
             .ok_or_else(|| CommandError::new("draft_not_found", "the draft was not found"))?
             .draft;
+        let distribution = drafts
+            .distribution_options()
+            .map_err(|error| service_error("publish_start_failed", error))?;
         let started = jobs
             .begin(&draft)
             .map_err(|error| service_error("publish_start_failed", error))?;
-        Ok((draft, started))
+        Ok((draft, distribution, started))
     })
     .await?;
     let jobs = Arc::clone(&state.publish_jobs);
     let job_id = started.job_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        jobs.run(
-            &job_id,
-            &draft,
-            &DistributionOptions::default(),
-            &mut |snapshot| {
-                let _ = app.emit(PUBLISH_JOB_EVENT, PublishJobDto::from(snapshot));
-            },
-        );
+        jobs.run(&job_id, &draft, &distribution, &mut |snapshot| {
+            let _ = app.emit(PUBLISH_JOB_EVENT, PublishJobDto::from(snapshot));
+        });
     });
     Ok(PublishJobDto::from(&started))
 }
@@ -692,15 +694,14 @@ pub(crate) async fn get_distribution(
         .and_then(|engine| torrent_engine_port(engine));
     let engine_error = state.distribution.engine_error.clone();
     run_blocking(move || {
-        let (configured, reachability) = {
+        let (configured, reachability, trackers) = {
             let drafts = lock_drafts(&drafts)?;
-            let configured = drafts
-                .network_profile()
-                .map_err(|error| service_error("distribution_failed", error))?;
-            let reachability = drafts
-                .peer_reachability()
-                .map_err(|error| service_error("distribution_failed", error))?;
-            (configured, reachability)
+            let failed = |error| service_error("distribution_failed", error);
+            (
+                drafts.network_profile().map_err(failed)?,
+                drafts.peer_reachability().map_err(failed)?,
+                drafts.trackers().map_err(failed)?,
+            )
         };
         let releases = match seeding {
             Some(seeding) => seeding
@@ -731,6 +732,7 @@ pub(crate) async fn get_distribution(
             port_forwarding: reachability.port_forwarding,
             active_port_forwarding: active.1.port_forwarding,
             restart_required: (configured, reachability.for_profile(configured)) != active,
+            trackers,
             engine_error,
             releases,
         })
@@ -771,6 +773,27 @@ pub(crate) async fn set_network_profile(
     run_blocking(move || {
         lock_drafts(&drafts)?
             .set_network_profile(profile)
+            .map_err(|error| service_error("settings_failed", error))
+    })
+    .await
+}
+
+/// Store the trackers written into new releases; returns the normalized list.
+#[tauri::command]
+pub(crate) async fn set_trackers(
+    trackers: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, CommandError> {
+    if trackers.len() > MAX_TRACKERS * 4 {
+        return Err(CommandError {
+            field: Some("trackers".to_owned()),
+            ..CommandError::new("invalid_input", "too many tracker lines")
+        });
+    }
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || {
+        lock_drafts(&drafts)?
+            .set_trackers(&trackers)
             .map_err(|error| service_error("settings_failed", error))
     })
     .await
@@ -939,6 +962,7 @@ impl From<&PublishJobSnapshot> for PublishJobDto {
                     manifest_sha256: prepared.staging.manifest_sha256.clone(),
                     info_hash: prepared.torrent.info_hash.clone(),
                     magnet: prepared.torrent.magnet.clone(),
+                    tracker_count: prepared.torrent.tracker_count,
                     piece_length: prepared.torrent.piece_length,
                     piece_count: prepared.torrent.piece_count,
                     file_count: prepared.torrent.file_count,
@@ -1236,6 +1260,8 @@ mod tests {
 
     use course_format::ResourceKind;
     use course_publisher::{DraftLesson, DraftModule, DraftResource};
+
+    use publisher_application::DistributionOptions;
 
     use super::*;
 

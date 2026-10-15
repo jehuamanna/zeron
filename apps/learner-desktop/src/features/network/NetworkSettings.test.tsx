@@ -64,7 +64,7 @@ describe("network settings", () => {
     const { view } = renderSettings();
 
     await waitFor(() => expect(radio(view.container, "internet")).not.toBeNull());
-    expect(view.container.textContent).toContain("Your IP address becomes visible to other DHT users");
+    expect(view.container.textContent).toContain("Your IP address becomes visible to other DHT and tracker users");
     fireEvent.click(radio(view.container, "internet")!);
     await waitFor(() => expect(view.container.textContent).toContain("Restart Zeron to apply the new network setting."));
     expect(libraryApi.setNetworkProfile).toHaveBeenCalledWith("internet");

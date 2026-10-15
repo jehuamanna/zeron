@@ -349,12 +349,11 @@ fn validate_options(options: &TorrentOptions) -> Result<(), TorrentError> {
             "name must be a single safe path segment",
         ));
     }
-    if options.tracker_tiers.iter().any(|tier| {
-        tier.is_empty()
-            || !tier
-                .iter()
-                .all(|url| has_scheme(url, &["http", "https", "udp"]))
-    }) {
+    if options
+        .tracker_tiers
+        .iter()
+        .any(|tier| tier.is_empty() || !tier.iter().all(|url| is_tracker_url(url)))
+    {
         return Err(TorrentError::InvalidOptions(
             "tracker tiers must be non-empty lists of http, https, or udp URLs",
         ));
@@ -369,6 +368,13 @@ fn validate_options(options: &TorrentOptions) -> Result<(), TorrentError> {
         ));
     }
     Ok(())
+}
+
+/// Whether `value` is an absolute `http`, `https`, or `udp` URL with a host,
+/// the only tracker form the builder accepts.
+#[must_use]
+pub fn is_tracker_url(value: &str) -> bool {
+    has_scheme(value, &["http", "https", "udp"])
 }
 
 fn has_scheme(value: &str, schemes: &[&str]) -> bool {

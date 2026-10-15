@@ -111,6 +111,7 @@ pub fn run() {
             commands::stop_seeding,
             commands::set_network_profile,
             commands::set_peer_reachability,
+            commands::set_trackers,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Zeron Publisher");

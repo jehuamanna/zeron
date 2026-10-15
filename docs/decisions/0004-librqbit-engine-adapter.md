@@ -23,8 +23,10 @@ AGENTS.md requires engine types to stay behind a capability port and every engin
    | Profile | Listener | DHT | Trackers | Local discovery |
    |---|---|---|---|---|
    | `Loopback` | `127.0.0.1` | off | off | off |
-   | `LocalNetwork` | all interfaces | off | the torrent's own | on |
+   | `LocalNetwork` | all interfaces | off | off (amended 2026-10-16) | on |
    | `Internet` | all interfaces | on, no DHT persistence | the torrent's own | on |
+
+   Trackers are usually public servers, so `LocalNetwork` ignores every tracker a torrent or magnet lists. That keeps its promise that nothing is announced to the internet. A tracker on the local network is ignored too.
 
    `Loopback` additionally binds every socket to `lo` on Linux (`SO_BINDTODEVICE`), which also confines the always-created UDP tracker socket. Automated tests use `Loopback` and never touch public trackers or the DHT. Tests that exercise local service discovery use `LocalNetwork`, multicast on the machine's own networks, and are opt-in (`--ignored`).
 4. **Release seeding is read-only.** Seeding goes through `ReadOnlyContent`, a storage factory that:

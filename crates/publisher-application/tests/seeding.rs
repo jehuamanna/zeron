@@ -431,3 +431,57 @@ fn make_writable(path: &std::path::Path) {
         }
     }
 }
+
+#[test]
+fn trackers_are_validated_stored_in_order_and_become_one_tier_each() {
+    let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+    assert!(drafts.trackers().unwrap().is_empty());
+    assert_eq!(
+        drafts.distribution_options().unwrap(),
+        DistributionOptions::default()
+    );
+
+    let chosen = drafts
+        .set_trackers(&[
+            " udp://tracker.example:6969/announce ".to_owned(),
+            String::new(),
+            "https://tracker.example/announce".to_owned(),
+            "udp://tracker.example:6969/announce".to_owned(),
+        ])
+        .unwrap();
+    let expected = vec![
+        "udp://tracker.example:6969/announce".to_owned(),
+        "https://tracker.example/announce".to_owned(),
+    ];
+    assert_eq!(chosen, expected);
+    assert_eq!(drafts.trackers().unwrap(), expected);
+    assert_eq!(
+        drafts.distribution_options().unwrap().tracker_tiers,
+        vec![vec![expected[0].clone()], vec![expected[1].clone()]]
+    );
+
+    for bad in [
+        vec!["ftp://tracker.example/announce".to_owned()],
+        vec!["udp://".to_owned()],
+        vec!["tracker.example:6969".to_owned()],
+        vec![format!("https://tracker.example/{}", "a".repeat(600))],
+        vec!["https://tracker.example/a b".to_owned()],
+        (0..17)
+            .map(|index| format!("udp://tracker{index}.example:6969/announce"))
+            .collect(),
+    ] {
+        let error = drafts.set_trackers(&bad).unwrap_err();
+        assert!(
+            matches!(&error, DraftServiceError::InvalidInput { field, .. } if field == "trackers"),
+            "{bad:?}: {error}"
+        );
+    }
+    assert_eq!(
+        drafts.trackers().unwrap(),
+        expected,
+        "rejected input changes nothing"
+    );
+
+    drafts.set_trackers(&[]).unwrap();
+    assert!(drafts.trackers().unwrap().is_empty());
+}

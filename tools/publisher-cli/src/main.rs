@@ -9,8 +9,8 @@ use std::{
 
 use course_publisher::PublishStage;
 use publisher_application::{
-    DistributionOptions, PackagingCancellation, PublishJobSnapshot, PublishJobs, PublisherDrafts,
-    discard_all_attempts, discard_attempt,
+    PackagingCancellation, PublishJobSnapshot, PublishJobs, PublisherDrafts, discard_all_attempts,
+    discard_attempt,
 };
 
 const DATABASE_FILE: &str = "publisher.sqlite3";
@@ -165,21 +165,17 @@ fn prepare(
         .draft(draft_id)?
         .ok_or("the draft was not found")?
         .draft;
+    let distribution = drafts.distribution_options()?;
     let job = jobs.begin(&draft)?;
     let mut last_stage = None;
     let finished = jobs
-        .run(
-            &job.job_id,
-            &draft,
-            &DistributionOptions::default(),
-            &mut |snapshot| {
-                if last_stage != Some(snapshot.stage) {
-                    last_stage = Some(snapshot.stage);
-                    eprintln!("{}", stage_label(snapshot.stage));
-                    let _ = std::io::stderr().flush();
-                }
-            },
-        )
+        .run(&job.job_id, &draft, &distribution, &mut |snapshot| {
+            if last_stage != Some(snapshot.stage) {
+                last_stage = Some(snapshot.stage);
+                eprintln!("{}", stage_label(snapshot.stage));
+                let _ = std::io::stderr().flush();
+            }
+        })
         .ok_or("the preparation job disappeared")?;
     match (&finished.prepared, &finished.failure) {
         (Some(prepared), _) => {

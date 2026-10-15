@@ -46,6 +46,8 @@ pub struct TorrentReceipt {
     pub info_hash: String,
     /// Magnet link.
     pub magnet: String,
+    /// Trackers written into the torrent and magnet.
+    pub tracker_count: usize,
     /// Deterministically selected piece length.
     pub piece_length: u64,
     /// Number of pieces.
@@ -116,6 +118,7 @@ pub fn generate_torrent(
             attempt_id: attempt_id.to_owned(),
             info_hash: built.info_hash,
             magnet: built.magnet,
+            tracker_count: distribution.tracker_tiers.iter().map(Vec::len).sum(),
             piece_length: built.piece_length,
             piece_count: built.piece_count,
             file_count: attempt.files.len(),

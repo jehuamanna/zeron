@@ -149,6 +149,8 @@ function JobView({ job, draftRevision, onPublished }: { job: PublishJob; draftRe
             <dt className="text-slate-500">Files</dt><dd>{job.prepared.fileCount} ({formatBytes(job.prepared.totalBytes)})</dd>
             <dt className="text-slate-500">Pieces</dt><dd>{job.prepared.pieceCount} × {formatBytes(job.prepared.pieceLength)}</dd>
             <dt className="text-slate-500">Info hash</dt><dd className="break-all font-mono">{job.prepared.infoHash}</dd>
+            <dt className="text-slate-500">Trackers</dt>
+            <dd>{job.prepared.trackerCount ? job.prepared.trackerCount : "None: learners find it through local discovery or the DHT"}</dd>
           </dl>
           <label className="block text-xs text-slate-500">
             Magnet link

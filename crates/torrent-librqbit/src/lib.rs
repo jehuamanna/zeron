@@ -587,19 +587,22 @@ fn session_options(config: &EngineConfig) -> SessionOptions {
     let reachability = config.reachability.for_profile(config.profile);
     let port = reachability.port.unwrap_or(0);
     let loopback = config.profile == NetworkProfile::Loopback;
+    let internet = config.profile == NetworkProfile::Internet;
     let listen_addr = if loopback {
         SocketAddr::from((Ipv4Addr::LOCALHOST, port))
     } else {
         SocketAddr::from((Ipv6Addr::UNSPECIFIED, port))
     };
     SessionOptions {
-        dht: (config.profile == NetworkProfile::Internet).then_some(DhtSessionConfig {
+        dht: internet.then_some(DhtSessionConfig {
             bootstrap_addrs: None,
             port: None,
             persistence: None,
         }),
         bind_device_name: loopback_device(loopback),
-        disable_trackers: loopback,
+        // Trackers are usually public servers, so only the Internet profile
+        // may announce to them, whatever a torrent or magnet lists.
+        disable_trackers: !internet,
         disable_local_service_discovery: loopback,
         fastresume: false,
         persistence: None,
@@ -643,6 +646,24 @@ mod tests {
         })
         .listen
         .unwrap()
+    }
+
+    #[test]
+    fn only_the_internet_profile_announces_to_trackers_and_the_dht() {
+        for (profile, internet) in [
+            (NetworkProfile::Loopback, false),
+            (NetworkProfile::LocalNetwork, false),
+            (NetworkProfile::Internet, true),
+        ] {
+            let options = session_options(&EngineConfig {
+                profile,
+                state_directory: PathBuf::new(),
+                reachability: PeerReachability::default(),
+                allow_uploads: true,
+            });
+            assert_eq!(options.disable_trackers, !internet, "{profile:?}");
+            assert_eq!(options.dht.is_some(), internet, "{profile:?}");
+        }
     }
 
     #[test]

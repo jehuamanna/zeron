@@ -15,7 +15,7 @@ const profiles: Array<{ value: NetworkProfile; label: string; description: strin
     value: "internet",
     label: "Internet",
     description:
-      "Also uses the public DHT so Zeron can find courses shared anywhere. Your IP address becomes visible to other DHT users, and courses you share become reachable from the internet.",
+      "Also uses the public DHT and the trackers a course lists, so Zeron can find courses shared anywhere. Your IP address becomes visible to other DHT and tracker users, and courses you share become reachable from the internet.",
   },
   {
     value: "loopback",

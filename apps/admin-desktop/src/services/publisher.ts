@@ -85,6 +85,7 @@ export interface PreparedRelease {
   manifestSha256: string;
   infoHash: string;
   magnet: string;
+  trackerCount: number;
   pieceLength: number;
   pieceCount: number;
   fileCount: number;
@@ -201,6 +202,8 @@ export interface Distribution {
   portForwarding: boolean;
   activePortForwarding: boolean;
   restartRequired: boolean;
+  /** Trackers written into new releases. */
+  trackers: string[];
   engineError: string | null;
   releases: SeedingStatus[];
 }
@@ -250,6 +253,7 @@ export const publisherApi = {
   startSeeding: (releaseId: string) => invoke<void>("start_seeding", { releaseId }),
   stopSeeding: (releaseId: string) => invoke<void>("stop_seeding", { releaseId }),
   setNetworkProfile: (profile: NetworkProfile) => invoke<void>("set_network_profile", { profile }),
+  setTrackers: (trackers: string[]) => invoke<string[]>("set_trackers", { trackers }),
   setPeerReachability: (peerPort: number | null, portForwarding: boolean) =>
     invoke<void>("set_peer_reachability", { peerPort, portForwarding }),
   onDrag: (handler: (active: boolean) => void) => listen<{ active: boolean }>("builder-drag", (event) => handler(event.payload.active)),

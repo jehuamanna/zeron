@@ -4,6 +4,7 @@ import { AlertTriangle, CirclePause, CirclePlay, Loader2, Radio } from "lucide-r
 import { formatBytes } from "../../lib/format";
 import { asCommandError, publisherApi, type NetworkProfile, type SeedingStatus } from "../../services/publisher";
 import { PeerReachabilityForm } from "./PeerReachabilityForm";
+import { TrackersForm } from "./TrackersForm";
 
 const profiles: Array<{ value: NetworkProfile; label: string; description: string }> = [
   {
@@ -14,7 +15,8 @@ const profiles: Array<{ value: NetworkProfile; label: string; description: strin
   {
     value: "internet",
     label: "Internet",
-    description: "Also uses the public DHT so learners anywhere can find your releases. Your IP address becomes visible to other DHT users.",
+    description:
+      "Also uses the public DHT and the trackers below so learners anywhere can find your releases. Your IP address becomes visible to other DHT and tracker users.",
   },
   {
     value: "loopback",
@@ -33,6 +35,7 @@ export function DistributionPage() {
       publisherApi.setPeerReachability(peerPort, portForwarding),
     onSuccess: refresh,
   });
+  const saveTrackers = useMutation({ mutationFn: (trackers: string[]) => publisherApi.setTrackers(trackers), onSuccess: refresh });
 
   if (distribution.isPending) return <p className="text-slate-400">Loading distribution…</p>;
   if (distribution.isError) return <p role="alert" className="text-red-300">Distribution status is unavailable.</p>;
@@ -87,6 +90,13 @@ export function DistributionPage() {
           </p>
         )}
         {saveError ? <p role="alert" className="mt-3 text-xs text-red-200">{saveError}</p> : null}
+        <TrackersForm
+          key={data.trackers.join("\n")}
+          trackers={data.trackers}
+          saving={saveTrackers.isPending}
+          error={saveTrackers.isError ? (asCommandError(saveTrackers.error)?.message ?? "The trackers could not be saved.") : null}
+          onSave={(trackers) => saveTrackers.mutate(trackers)}
+        />
       </section>
 
       <section aria-labelledby="seeding-heading">

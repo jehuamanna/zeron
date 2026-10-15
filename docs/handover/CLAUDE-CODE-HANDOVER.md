@@ -122,7 +122,8 @@ Schemas, trust boundaries, crate graph, a local-only librqbit 9.0.1 spike, and a
 | `38b2139` | Per-course learner sharing (`TransferRouter`, sharing engine) |
 | `a939d27` | Learner network profile setting |
 | `10074ec` | Folder-import failures reported apart from library failures |
-| `02874ea` | Fixed peer port and UPnP forwarding, both apps (`phase-3-peer-reachability.md`) |
+| `02874ea`, `68ef538` | Fixed peer port and UPnP forwarding, both apps (`phase-3-peer-reachability.md`, ADR 0004 decision 8) |
+| (this slice) | Publisher tracker list; only the Internet profile announces to trackers (`phase-3-trackers.md`) |
 
 ### Phase 4 — streaming vertical slice: mostly done
 

@@ -7,7 +7,7 @@ import { DistributionPage } from "./DistributionPage";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { getDistribution: vi.fn(), startSeeding: vi.fn(), stopSeeding: vi.fn(), setNetworkProfile: vi.fn(), setPeerReachability: vi.fn() },
+  publisherApi: { getDistribution: vi.fn(), startSeeding: vi.fn(), stopSeeding: vi.fn(), setNetworkProfile: vi.fn(), setPeerReachability: vi.fn(), setTrackers: vi.fn() },
 }));
 
 function status(overrides: Partial<SeedingStatus>): SeedingStatus {
@@ -39,6 +39,7 @@ beforeEach(() => {
     portForwarding: false,
     activePortForwarding: false,
     restartRequired: false,
+    trackers: [],
     engineError: null,
     releases: [status({})],
   };
@@ -51,6 +52,10 @@ beforeEach(() => {
   });
   vi.mocked(publisherApi.setNetworkProfile).mockImplementation(async (profile) => {
     server = { ...server, configuredProfile: profile, restartRequired: true };
+  });
+  vi.mocked(publisherApi.setTrackers).mockImplementation(async (trackers) => {
+    server = { ...server, trackers };
+    return trackers;
   });
   vi.mocked(publisherApi.setPeerReachability).mockImplementation(async (peerPort, portForwarding) => {
     server = { ...server, peerPort, portForwarding, restartRequired: true };
@@ -140,6 +145,30 @@ describe("distribution workspace", () => {
     const view = renderPage();
     await waitFor(() => expect(view.container.textContent).toContain("Your router is asked to forward this port with UPnP."));
     expect(view.container.textContent).toContain("peers connect on port 51413");
+  });
+
+  it("saves trackers one per line and explains the privacy trade-off", async () => {
+    const view = renderPage();
+    const field = await waitFor(() => view.getByLabelText("Tracker URLs, one per line"));
+    expect(view.container.textContent).toContain("shows the IP address of everyone downloading");
+    expect(view.container.textContent).toContain("Only the Internet profile announces to trackers.");
+    expect((view.getByRole("button", { name: "Save trackers" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(field, { target: { value: " udp://tracker.example:6969/announce \n\nhttps://tracker.example/announce\n" } });
+    fireEvent.click(view.getByRole("button", { name: "Save trackers" }));
+    await waitFor(() => expect(publisherApi.setTrackers).toHaveBeenCalledWith(["udp://tracker.example:6969/announce", "https://tracker.example/announce"]));
+    await waitFor(() => expect((view.getByRole("button", { name: "Save trackers" }) as HTMLButtonElement).disabled).toBe(true));
+    expect((view.getByLabelText("Tracker URLs, one per line") as HTMLTextAreaElement).value).toBe(
+      "udp://tracker.example:6969/announce\nhttps://tracker.example/announce",
+    );
+  });
+
+  it("shows why trackers were rejected", async () => {
+    vi.mocked(publisherApi.setTrackers).mockRejectedValue({ code: "invalid_input", field: "trackers", message: "trackers must be http, https, or udp URLs with a host" });
+    const view = renderPage();
+    const field = await waitFor(() => view.getByLabelText("Tracker URLs, one per line"));
+    fireEvent.change(field, { target: { value: "ftp://tracker.example" } });
+    fireEvent.click(view.getByRole("button", { name: "Save trackers" }));
+    await waitFor(() => expect(view.getByRole("alert").textContent).toContain("must be http, https, or udp URLs"));
   });
 
   it("explains when the engine is unavailable", async () => {

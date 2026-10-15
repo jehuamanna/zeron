@@ -179,6 +179,7 @@ fn trackers_change_the_magnet_but_not_the_info_hash() {
     .unwrap();
     assert_eq!(plain.info_hash, tracked.info_hash);
     assert!(tracked.magnet.contains("&tr=udp%3A%2F%2Ftracker.example"));
+    assert_eq!((plain.tracker_count, tracked.tracker_count), (0, 1));
 }
 
 #[test]
