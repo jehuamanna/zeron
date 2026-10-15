@@ -45,7 +45,7 @@ Run the Learner Desktop during development:
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm --filter @zeron/learner-desktop tauri dev
+pnpm --filter @zeron/desktop tauri dev
 ```
 
 Read [AGENTS.md](AGENTS.md) and the architecture documents before changing module boundaries or dependencies.

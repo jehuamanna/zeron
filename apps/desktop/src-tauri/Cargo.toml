@@ -1,12 +1,12 @@
 [package]
-name = "zeron-learner-desktop"
+name = "zeron-desktop"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [lib]
-name = "zeron_learner_desktop_lib"
+name = "zeron_desktop_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]

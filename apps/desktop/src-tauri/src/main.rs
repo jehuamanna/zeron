@@ -1,5 +1,5 @@
-//! Native entry point for Zeron Learner Desktop.
+//! Native entry point for Zeron Desktop.
 
 fn main() {
-    zeron_learner_desktop_lib::run();
+    zeron_desktop_lib::run();
 }

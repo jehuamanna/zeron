@@ -1,4 +1,4 @@
-//! Thin Tauri composition root for Zeron Learner Desktop.
+//! Thin Tauri composition root for Zeron Desktop.
 
 mod commands;
 mod media;
@@ -77,7 +77,7 @@ fn spawn_background_work(torrents: &Torrents, library: &Arc<Mutex<CourseLibrary>
     tauri::async_runtime::spawn_blocking(move || commands::index_local_texts(&library));
 }
 
-/// Start the learner desktop application.
+/// Start the Zeron desktop application.
 ///
 /// # Panics
 ///
@@ -159,7 +159,7 @@ pub fn run() {
             commands::set_rate_limits,
         ])
         .build(tauri::generate_context!())
-        .expect("failed to build Zeron Learner Desktop");
+        .expect("failed to build Zeron");
     app.run(|app_handle, event| {
         if matches!(event, RunEvent::Exit) {
             let state = app_handle.state::<AppState>();

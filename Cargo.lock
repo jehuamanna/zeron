@@ -6547,7 +6547,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zeron-learner-desktop"
+name = "zeron-desktop"
 version = "0.1.0"
 dependencies = [
  "course-format",
