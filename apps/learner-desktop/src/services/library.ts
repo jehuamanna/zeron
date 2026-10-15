@@ -17,6 +17,10 @@ export interface NetworkSettings {
   portForwarding: boolean;
   activePortForwarding: boolean;
   restartRequired: boolean;
+  /** Download cap in KiB/s; null means unlimited. */
+  downloadLimitKib: number | null;
+  /** Upload cap for shared courses in KiB/s; null means unlimited. */
+  uploadLimitKib: number | null;
 }
 
 export interface CourseSummary {
@@ -160,6 +164,9 @@ export const libraryApi = {
   setNetworkProfile: (profile: NetworkProfile) => invoke<void>("set_network_profile", { profile }),
   setPeerReachability: (peerPort: number | null, portForwarding: boolean) =>
     invoke<void>("set_peer_reachability", { peerPort, portForwarding }),
+  /** Caps in KiB/s, null for unlimited; they apply immediately. */
+  setRateLimits: (downloadKib: number | null, uploadKib: number | null) =>
+    invoke<void>("set_rate_limits", { downloadKib, uploadKib }),
   /** Where the learner stopped in a lesson, in seconds, if recorded. */
   playbackPosition: (courseId: string, resourceId: string) =>
     invoke<number | null>("get_playback_position", { courseId, resourceId }),

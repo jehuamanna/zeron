@@ -1280,3 +1280,109 @@ async fn paused_transfers_download_nothing_until_resumed() {
     learner.shutdown().await;
     seeder.shutdown().await;
 }
+
+async fn timed_download(
+    learner: &LibrqbitEngine,
+    info_hash: &InfoHash,
+    index: usize,
+    length: u64,
+) -> Duration {
+    let started = Instant::now();
+    learner.select_files(info_hash, &[0, index]).await.unwrap();
+    wait_for_file(learner, info_hash, index, length).await;
+    started.elapsed()
+}
+
+/// Upload caps on a seeder and download caps on a learner both slow a
+/// transfer down, and lifting a cap takes effect immediately.
+#[tokio::test(flavor = "multi_thread")]
+async fn rate_limits_cap_uploads_and_downloads_live() {
+    use torrent_port::RateLimits;
+
+    const LESSON: usize = 2_000_000;
+    let scratch = Scratch::new("limits");
+    let release = publish_lessons(&scratch.0, &[LESSON; 3]);
+    let seeder = engine(&scratch.0).await;
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    wait_for_state(&seeder, &info_hash, TransferState::Seeding).await;
+    let learner = loopback(&scratch.0, "learner", false).await;
+    let resolved = learner
+        .resolve(torrent_port::ResolveRequest {
+            source: torrent_port::TorrentSource::Metainfo(release.torrent.clone()),
+            initial_peers: vec![],
+        })
+        .await
+        .unwrap();
+    let index_of = |suffix: &str| {
+        resolved
+            .files
+            .iter()
+            .find(|file| file.path.ends_with(suffix))
+            .unwrap()
+            .index
+    };
+    fetch_manifest(
+        &learner,
+        &release,
+        scratch.0.join("learner-content"),
+        seeder.listen_address().unwrap(),
+    )
+    .await;
+    wait_for_file(&learner, &info_hash, 0, resolved.files[0].length).await;
+    let cap = RateLimits::from_kib_per_second(Some(256), Some(256)).unwrap();
+
+    seeder
+        .set_rate_limits(RateLimits {
+            download_bytes_per_second: None,
+            ..cap
+        })
+        .unwrap();
+    let capped_upload = timed_download(
+        &learner,
+        &info_hash,
+        index_of("lesson-0.bin"),
+        LESSON as u64,
+    )
+    .await;
+    assert!(
+        capped_upload >= Duration::from_secs(4),
+        "upload cap: {capped_upload:?}"
+    );
+
+    seeder.set_rate_limits(RateLimits::default()).unwrap();
+    learner
+        .set_rate_limits(RateLimits {
+            upload_bytes_per_second: None,
+            ..cap
+        })
+        .unwrap();
+    let capped_download = timed_download(
+        &learner,
+        &info_hash,
+        index_of("lesson-1.bin"),
+        LESSON as u64,
+    )
+    .await;
+    assert!(
+        capped_download >= Duration::from_secs(4),
+        "download cap: {capped_download:?}"
+    );
+
+    learner.set_rate_limits(RateLimits::default()).unwrap();
+    let unlimited = timed_download(
+        &learner,
+        &info_hash,
+        index_of("lesson-2.bin"),
+        LESSON as u64,
+    )
+    .await;
+    assert!(unlimited < Duration::from_secs(4), "no cap: {unlimited:?}");
+    learner.shutdown().await;
+    seeder.shutdown().await;
+}

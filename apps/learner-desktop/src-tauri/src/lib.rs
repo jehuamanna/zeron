@@ -65,6 +65,15 @@ pub fn run() {
             let media_gateway = tauri::async_runtime::block_on(start_media_gateway())?;
             trust_media_gateway(app, &media_gateway);
             let torrents = start_torrents(profile, reachability, &app_data, &library);
+            if let Some(router) = &torrents.router {
+                let limits = library.lock().map_or_else(
+                    |_| Ok(learning_application::RateLimits::default()),
+                    |library| library.rate_limits(),
+                )?;
+                if let Err(error) = router.set_rate_limits(limits) {
+                    eprintln!("speed limits were not applied: {error}");
+                }
+            }
             if let Some(sharing) = &torrents.sharing {
                 sharing.load()?;
             }
@@ -102,6 +111,7 @@ pub fn run() {
             commands::get_playback_position,
             commands::set_network_profile,
             commands::set_peer_reachability,
+            commands::set_rate_limits,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Zeron Learner Desktop");

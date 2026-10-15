@@ -220,6 +220,8 @@ export interface Distribution {
   trackerLists: TrackerList[];
   /** How many trackers a release published now would carry. */
   effectiveTrackerCount: number;
+  /** Seeding upload cap in KiB/s; null means unlimited. */
+  uploadLimitKib: number | null;
   engineError: string | null;
   releases: SeedingStatus[];
 }
@@ -274,6 +276,8 @@ export const publisherApi = {
   refreshTrackerLists: () => invoke<TrackerListRefresh[]>("refresh_tracker_lists"),
   setPeerReachability: (peerPort: number | null, portForwarding: boolean) =>
     invoke<void>("set_peer_reachability", { peerPort, portForwarding }),
+  /** Seeding upload cap in KiB/s, null for unlimited; applies immediately. */
+  setUploadLimit: (uploadKib: number | null) => invoke<void>("set_upload_limit", { uploadKib }),
   onDrag: (handler: (active: boolean) => void) => listen<{ active: boolean }>("builder-drag", (event) => handler(event.payload.active)),
   onDrop: (handler: (summary: DropSummary) => void) => listen<DropSummary>("builder-drop", (event) => handler(event.payload)),
   /** Folders become new modules; loose files attach to `lessonId` when given. */

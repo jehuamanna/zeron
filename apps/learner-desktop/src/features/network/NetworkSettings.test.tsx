@@ -11,6 +11,7 @@ vi.mock("../../services/library", async (importOriginal) => ({
     getNetworkSettings: vi.fn(),
     setNetworkProfile: vi.fn(),
     setPeerReachability: vi.fn(),
+    setRateLimits: vi.fn(),
   },
 }));
 
@@ -24,6 +25,8 @@ const settings = (overrides: Partial<Settings>): Settings => ({
   portForwarding: false,
   activePortForwarding: false,
   restartRequired: false,
+  downloadLimitKib: null,
+  uploadLimitKib: null,
   ...overrides,
 });
 
@@ -142,5 +145,30 @@ describe("network settings", () => {
     const back = Array.from(view.container.querySelectorAll("button")).find((button) => button.textContent?.includes("Back"));
     fireEvent.click(back!);
     expect(onBack).toHaveBeenCalled();
+  });
+
+  it("saves speed limits, treats empty fields as no limit, and rejects tiny values", async () => {
+    let current = settings({ uploadLimitKib: 256 });
+    vi.mocked(libraryApi.getNetworkSettings).mockImplementation(async () => current);
+    vi.mocked(libraryApi.setRateLimits).mockImplementation(async (downloadKib, uploadKib) => {
+      current = { ...current, downloadLimitKib: downloadKib, uploadLimitKib: uploadKib };
+    });
+    const { view } = renderSettings();
+    const download = await waitFor(() => view.getByLabelText("Download limit") as HTMLInputElement);
+    const upload = view.getByLabelText("Upload limit (shared courses)") as HTMLInputElement;
+    expect(download.value).toBe("");
+    expect(upload.value).toBe("256");
+
+    fireEvent.change(download, { target: { value: "8" } });
+    fireEvent.click(view.getByRole("button", { name: "Save limits" }));
+    expect(view.getByRole("alert").textContent).toContain("at least 16 KiB/s");
+    expect(libraryApi.setRateLimits).not.toHaveBeenCalled();
+
+    fireEvent.change(download, { target: { value: "2048" } });
+    fireEvent.change(upload, { target: { value: " " } });
+    fireEvent.click(view.getByRole("button", { name: "Save limits" }));
+    await waitFor(() => expect(libraryApi.setRateLimits).toHaveBeenCalledWith(2048, null));
+    await waitFor(() => expect((view.getByLabelText("Download limit") as HTMLInputElement).value).toBe("2048"));
+    expect((view.getByLabelText("Upload limit (shared courses)") as HTMLInputElement).value).toBe("");
   });
 });

@@ -122,6 +122,7 @@ pub fn run() {
             commands::stop_seeding,
             commands::set_network_profile,
             commands::set_peer_reachability,
+            commands::set_upload_limit,
             commands::set_trackers,
             commands::set_tracker_lists,
             commands::refresh_tracker_lists,
@@ -154,6 +155,16 @@ fn start_distribution(
     match started {
         Ok(engine) => {
             let engine = Arc::new(engine);
+            let limits = drafts
+                .lock()
+                .ok()
+                .and_then(|drafts| drafts.upload_limit().ok())
+                .unwrap_or_default();
+            if let Err(error) =
+                publisher_application::TorrentEngine::set_rate_limits(&*engine, limits)
+            {
+                eprintln!("the upload limit was not applied: {error}");
+            }
             Distribution {
                 active_profile,
                 active_reachability,

@@ -4,6 +4,7 @@ import { ChevronLeft } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { asCommandError, libraryApi, type NetworkProfile } from "../../services/library";
 import { PeerReachabilityForm } from "./PeerReachabilityForm";
+import { SpeedLimitsForm } from "./SpeedLimitsForm";
 
 const profiles: Array<{ value: NetworkProfile; label: string; description: string }> = [
   {
@@ -38,8 +39,14 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
     onSuccess: refresh,
   });
 
+  const saveLimits = useMutation({
+    mutationFn: ({ downloadKib, uploadKib }: { downloadKib: number | null; uploadKib: number | null }) =>
+      libraryApi.setRateLimits(downloadKib, uploadKib),
+    onSuccess: refresh,
+  });
+
   const data = settings.data;
-  const failed = save.isError ? save.error : saveReachability.isError ? saveReachability.error : null;
+  const failed = save.isError ? save.error : saveReachability.isError ? saveReachability.error : saveLimits.isError ? saveLimits.error : null;
   const error = failed ? (asCommandError(failed)?.message ?? "The network setting could not be saved.") : null;
 
   return (
@@ -83,6 +90,13 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
               internet={data.configuredProfile === "internet"}
               saving={saveReachability.isPending}
               onSave={(peerPort, portForwarding) => saveReachability.mutate({ peerPort, portForwarding })}
+            />
+            <SpeedLimitsForm
+              key={`${data.downloadLimitKib}-${data.uploadLimitKib}`}
+              downloadKib={data.downloadLimitKib}
+              uploadKib={data.uploadLimitKib}
+              saving={saveLimits.isPending}
+              onSave={(downloadKib, uploadKib) => saveLimits.mutate({ downloadKib, uploadKib })}
             />
             {data.restartRequired ? (
               <p role="status" className="mt-4 text-xs text-amber-200">Restart Zeron to apply the new network setting.</p>

@@ -7,8 +7,8 @@ use std::{
 use publisher_storage::{ReleaseRecord, ReleaseStatus};
 use torrent_metainfo::inspect_torrent;
 use torrent_port::{
-    EngineError, InfoHash, NetworkProfile, PeerReachability, SeedRequest, TorrentEngine,
-    TransferStats,
+    EngineError, InfoHash, NetworkProfile, PeerReachability, RateLimits, SeedRequest,
+    TorrentEngine, TransferStats,
 };
 
 use crate::{
@@ -20,6 +20,7 @@ use crate::{
 const NETWORK_PROFILE_KEY: &str = "network_profile";
 const PEER_PORT_KEY: &str = "peer_port";
 const PORT_FORWARDING_KEY: &str = "port_forwarding";
+const UPLOAD_LIMIT_KEY: &str = "upload_limit_kib";
 
 /// Stable storage and IPC name of a network profile.
 #[must_use]
@@ -85,6 +86,27 @@ impl PublisherDrafts {
         Ok(self
             .storage
             .set_setting(PORT_FORWARDING_KEY, reachability.port_forwarding_setting())?)
+    }
+
+    /// Stored seeding upload cap; unlimited unless the publisher chose one.
+    /// The Admin only seeds, so it has no download cap.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn upload_limit(&self) -> Result<RateLimits, DraftServiceError> {
+        Ok(RateLimits::from_settings(
+            None,
+            self.storage.setting(UPLOAD_LIMIT_KEY)?.as_deref(),
+        ))
+    }
+
+    /// Persist the seeding upload cap; any download cap is ignored.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn set_upload_limit(&mut self, limits: RateLimits) -> Result<(), DraftServiceError> {
+        let (_, upload) = limits.to_settings();
+        Ok(self.storage.set_setting(UPLOAD_LIMIT_KEY, &upload)?)
     }
 
     /// One release record.

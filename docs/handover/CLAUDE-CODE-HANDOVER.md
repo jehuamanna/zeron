@@ -199,7 +199,7 @@ Each phase is broken into slices in the same style, ordered by dependency.
 
 ### Phase 5 — offline availability and transfer controls
 
-Done so far: engine file selection (`phase-5-file-selection.md`, ADR 0004 decision 9) and lesson/module/course download commitments with availability labels (`phase-5-download-commitments.md`, learner schema v6), and per-course pause/resume (`phase-5-pause-and-resume.md`, learner schema v7, ADR 0004 decision 10). Remaining below.
+Done so far: engine file selection (`phase-5-file-selection.md`, ADR 0004 decision 9) and lesson/module/course download commitments with availability labels (`phase-5-download-commitments.md`, learner schema v6), per-course pause/resume (`phase-5-pause-and-resume.md`, learner schema v7, ADR 0004 decision 10), and speed limits in both apps (`phase-5-speed-limits.md`, ADR 0004 decision 11). Remaining below.
 
 - Download commitments for a lesson, a module, or a whole course, persisted and recovered after restart.
 - Accurate availability labels: online-only, downloading, partially available, available offline.

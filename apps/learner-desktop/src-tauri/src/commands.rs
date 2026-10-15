@@ -7,8 +7,8 @@ use course_format::ResourceKind;
 use learning_application::{
     Availability, CancellationFlag, CourseImportReceipt, CourseLibrary, CourseSharingStatus,
     DownloadScope, EngineError, ImportError, InfoHash, LibraryError, LocalResource, NetworkProfile,
-    PeerReachability, SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage,
-    TorrentResource, TorrentSource, TransferState,
+    PeerReachability, RateLimits, SharingError, TorrentEngine, TorrentImportSnapshot,
+    TorrentImportStage, TorrentResource, TorrentSource, TransferState,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::{Deserialize, Serialize};
@@ -140,6 +140,10 @@ pub(crate) struct NetworkSettingsDto {
     active_port_forwarding: bool,
     /// The stored network choice differs from the running engines'.
     restart_required: bool,
+    /// Download cap in KiB/s; `None` means unlimited. Applies immediately.
+    download_limit_kib: Option<u32>,
+    /// Upload cap for shared courses in KiB/s; `None` means unlimited.
+    upload_limit_kib: Option<u32>,
 }
 
 /// Verified bytes of one torrent lesson on this computer.
@@ -502,17 +506,17 @@ pub(crate) async fn get_network_settings(
         torrents.download_port,
         torrents.sharing_port,
     );
-    let (configured, reachability) = run_blocking(move || {
+    let (configured, reachability, limits) = run_blocking(move || {
         let library = lock_library(&library)?;
-        let configured = library
-            .network_profile()
-            .map_err(|error| command_error("settings_failed", error))?;
-        let reachability = library
-            .peer_reachability()
-            .map_err(|error| command_error("settings_failed", error))?;
-        Ok((configured, reachability))
+        let failed = |error| command_error("settings_failed", error);
+        Ok((
+            library.network_profile().map_err(failed)?,
+            library.peer_reachability().map_err(failed)?,
+            library.rate_limits().map_err(failed)?,
+        ))
     })
     .await?;
+    let (download_limit_kib, upload_limit_kib) = limits.as_kib_per_second();
     Ok(NetworkSettingsDto {
         configured_profile: configured.name(),
         active_profile: active.0.name(),
@@ -524,6 +528,45 @@ pub(crate) async fn get_network_settings(
         // Only a running sharing engine asks the router to forward its port.
         active_port_forwarding: active.1.port_forwarding && sharing_port.is_some(),
         restart_required: (configured, reachability.for_profile(configured)) != active,
+        download_limit_kib,
+        upload_limit_kib,
+    })
+}
+
+/// Store speed caps in KiB/s (`None` or 0 for unlimited) and apply them to
+/// the running engines at once.
+#[tauri::command]
+pub(crate) async fn set_rate_limits(
+    download_kib: Option<u32>,
+    upload_kib: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    let limits = parse_rate_limits(download_kib, upload_kib)?;
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .set_rate_limits(limits)
+            .map_err(|error| command_error("settings_failed", error))
+    })
+    .await?;
+    if let Some(router) = state.torrents.router.clone() {
+        router
+            .set_rate_limits(limits)
+            .map_err(|error| command_error("settings_failed", error))?;
+    }
+    Ok(())
+}
+
+fn parse_rate_limits(
+    download_kib: Option<u32>,
+    upload_kib: Option<u32>,
+) -> Result<RateLimits, CommandError> {
+    RateLimits::from_kib_per_second(download_kib, upload_kib).ok_or_else(|| CommandError {
+        code: "invalid_input",
+        message: format!(
+            "choose at least {} KiB/s, or leave the limit empty for no limit",
+            RateLimits::MIN_BYTES_PER_SECOND / 1024
+        ),
     })
 }
 
@@ -1106,6 +1149,28 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({ "paused": false, "course": false, "modules": [], "lessons": [] })
+        );
+    }
+
+    #[test]
+    fn rate_limits_are_validated() {
+        assert_eq!(
+            parse_rate_limits(None, Some(0)).unwrap(),
+            RateLimits::default()
+        );
+        assert_eq!(
+            parse_rate_limits(Some(64), None)
+                .unwrap()
+                .as_kib_per_second(),
+            (Some(64), None)
+        );
+        assert_eq!(
+            parse_rate_limits(Some(1), None).unwrap_err().code,
+            "invalid_input"
+        );
+        assert_eq!(
+            parse_rate_limits(None, Some(u32::MAX)).unwrap_err().code,
+            "invalid_input"
         );
     }
 

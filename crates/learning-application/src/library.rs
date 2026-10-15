@@ -8,13 +8,15 @@ use learning_storage::{
     PlaybackPosition, Storage, StorageError, StoredCourseSummary, TorrentCourseSource,
 };
 use thiserror::Error;
-use torrent_port::{NetworkProfile, PeerReachability};
+use torrent_port::{NetworkProfile, PeerReachability, RateLimits};
 
 use crate::{CancellationFlag, ImportError, ImportLimits, import_local_course};
 
 const NETWORK_PROFILE_KEY: &str = "network_profile";
 const PEER_PORT_KEY: &str = "peer_port";
 const PORT_FORWARDING_KEY: &str = "port_forwarding";
+const DOWNLOAD_LIMIT_KEY: &str = "download_limit_kib";
+const UPLOAD_LIMIT_KEY: &str = "upload_limit_kib";
 
 /// Result of a verified and durably persisted local course import.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,6 +280,29 @@ impl CourseLibrary {
         Ok(self
             .storage
             .set_setting(PORT_FORWARDING_KEY, reachability.port_forwarding_setting())?)
+    }
+
+    /// Stored speed caps for both engines; unlimited unless the learner chose.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on query failure.
+    pub fn rate_limits(&self) -> Result<RateLimits, LibraryError> {
+        Ok(RateLimits::from_settings(
+            self.storage.setting(DOWNLOAD_LIMIT_KEY)?.as_deref(),
+            self.storage.setting(UPLOAD_LIMIT_KEY)?.as_deref(),
+        ))
+    }
+
+    /// Persist speed caps.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Storage`] on write failure.
+    pub fn set_rate_limits(&mut self, limits: RateLimits) -> Result<(), LibraryError> {
+        let (download, upload) = limits.to_settings();
+        self.storage.set_setting(DOWNLOAD_LIMIT_KEY, &download)?;
+        Ok(self.storage.set_setting(UPLOAD_LIMIT_KEY, &upload)?)
     }
 
     /// List durably imported courses.

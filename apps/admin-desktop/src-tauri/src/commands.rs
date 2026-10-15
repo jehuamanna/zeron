@@ -5,7 +5,7 @@ use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
     DraftServiceError, DraftSummary, FindingSeverity, MAX_TRACKER_LISTS, MAX_TRACKERS,
     MetadataEdit, PeerReachability, PublishJobSnapshot, PublishJobs, PublishStage, PublisherDrafts,
-    ReleaseRecord, ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit,
+    RateLimits, ReleaseRecord, ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit,
     TrackerListStatus, TransferState, inspect_draft_media, network_profile_name,
     parse_network_profile, source_info,
 };
@@ -252,6 +252,8 @@ pub(crate) struct DistributionDto {
     tracker_lists: Vec<TrackerListDto>,
     /// How many trackers a release published now would carry.
     effective_tracker_count: usize,
+    /// Seeding upload cap in KiB/s; `None` means unlimited. Applies immediately.
+    upload_limit_kib: Option<u32>,
     engine_error: Option<String>,
     releases: Vec<SeedingStatusDto>,
 }
@@ -726,7 +728,14 @@ pub(crate) async fn get_distribution(
         .and_then(|engine| torrent_engine_port(engine));
     let engine_error = state.distribution.engine_error.clone();
     run_blocking(move || {
-        let (configured, reachability, trackers, tracker_lists, effective_tracker_count) = {
+        let (
+            configured,
+            reachability,
+            trackers,
+            tracker_lists,
+            effective_tracker_count,
+            upload_limit,
+        ) = {
             let drafts = lock_drafts(&drafts)?;
             let failed = |error| service_error("distribution_failed", error);
             (
@@ -735,6 +744,7 @@ pub(crate) async fn get_distribution(
                 drafts.trackers().map_err(failed)?,
                 drafts.tracker_list_statuses().map_err(failed)?,
                 drafts.effective_trackers().map_err(failed)?.len(),
+                drafts.upload_limit().map_err(failed)?,
             )
         };
         let releases = match seeding {
@@ -772,6 +782,7 @@ pub(crate) async fn get_distribution(
                 .map(TrackerListDto::from)
                 .collect(),
             effective_tracker_count,
+            upload_limit_kib: upload_limit.as_kib_per_second().1,
             engine_error,
             releases,
         })
@@ -918,6 +929,41 @@ pub(crate) async fn refresh_lists(
             .collect()
     })
     .await
+}
+
+/// Store the seeding upload cap in KiB/s (`None` or 0 for unlimited) and
+/// apply it to the running engine at once.
+#[tauri::command]
+pub(crate) async fn set_upload_limit(
+    upload_kib: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<(), CommandError> {
+    let limits = parse_upload_limit(upload_kib)?;
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || {
+        lock_drafts(&drafts)?
+            .set_upload_limit(limits)
+            .map_err(|error| service_error("settings_failed", error))
+    })
+    .await?;
+    if let Some(engine) = &state.distribution.engine {
+        publisher_application::TorrentEngine::set_rate_limits(&**engine, limits)
+            .map_err(|error| CommandError::new("settings_failed", error))?;
+    }
+    Ok(())
+}
+
+fn parse_upload_limit(upload_kib: Option<u32>) -> Result<RateLimits, CommandError> {
+    RateLimits::from_kib_per_second(None, upload_kib).ok_or_else(|| CommandError {
+        field: Some("uploadLimitKib".to_owned()),
+        ..CommandError::new(
+            "invalid_input",
+            format_args!(
+                "choose at least {} KiB/s, or leave the limit empty for no limit",
+                RateLimits::MIN_BYTES_PER_SECOND / 1024
+            ),
+        )
+    })
 }
 
 /// Store the peer port and `UPnP` choice used the next time the engine starts.
@@ -1819,6 +1865,19 @@ mod tests {
         assert!(!deleted.to_string().contains(&*directory.to_string_lossy()));
         make_writable(&directory);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn upload_limits_are_validated() {
+        assert_eq!(parse_upload_limit(None).unwrap(), RateLimits::default());
+        assert_eq!(parse_upload_limit(Some(0)).unwrap(), RateLimits::default());
+        assert_eq!(
+            parse_upload_limit(Some(512)).unwrap().as_kib_per_second(),
+            (None, Some(512))
+        );
+        let error = parse_upload_limit(Some(4)).unwrap_err();
+        assert_eq!(error.code, "invalid_input");
+        assert_eq!(error.field.as_deref(), Some("uploadLimitKib"));
     }
 
     #[test]

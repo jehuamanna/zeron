@@ -647,3 +647,26 @@ fn tracker_lists_default_cache_per_list_and_follow_hand_added_trackers() {
     }
     assert_eq!(drafts.tracker_lists().unwrap(), [extra]);
 }
+
+#[test]
+fn the_upload_limit_defaults_to_unlimited_and_persists() {
+    let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+    assert_eq!(
+        drafts.upload_limit().unwrap(),
+        publisher_application::RateLimits::default()
+    );
+    let limits =
+        publisher_application::RateLimits::from_kib_per_second(Some(4096), Some(256)).unwrap();
+    drafts.set_upload_limit(limits).unwrap();
+    assert_eq!(
+        drafts.upload_limit().unwrap().as_kib_per_second(),
+        (None, Some(256))
+    );
+    drafts
+        .set_upload_limit(publisher_application::RateLimits::default())
+        .unwrap();
+    assert_eq!(
+        drafts.upload_limit().unwrap(),
+        publisher_application::RateLimits::default()
+    );
+}

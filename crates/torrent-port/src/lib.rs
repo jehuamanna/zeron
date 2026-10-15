@@ -277,6 +277,71 @@ pub enum EngineError {
     Engine(String),
 }
 
+/// Session-wide transfer speed caps; `None` means unlimited.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RateLimits {
+    /// Download cap in bytes per second.
+    pub download_bytes_per_second: Option<std::num::NonZeroU32>,
+    /// Upload cap in bytes per second.
+    pub upload_bytes_per_second: Option<std::num::NonZeroU32>,
+}
+
+impl RateLimits {
+    /// Smallest cap a user may set, so a typo cannot stall every transfer.
+    pub const MIN_BYTES_PER_SECOND: u32 = 16 * 1024;
+
+    /// Limits from optional KiB/s values; zero or `None` means unlimited.
+    /// Returns `None` when a set value is below
+    /// [`Self::MIN_BYTES_PER_SECOND`] or does not fit in bytes per second.
+    #[must_use]
+    pub fn from_kib_per_second(download: Option<u32>, upload: Option<u32>) -> Option<Self> {
+        let convert = |value: Option<u32>| -> Option<Option<std::num::NonZeroU32>> {
+            match value {
+                None | Some(0) => Some(None),
+                Some(kib) => {
+                    let bytes = kib.checked_mul(1024)?;
+                    (bytes >= Self::MIN_BYTES_PER_SECOND).then(|| std::num::NonZeroU32::new(bytes))
+                }
+            }
+        };
+        Some(Self {
+            download_bytes_per_second: convert(download)?,
+            upload_bytes_per_second: convert(upload)?,
+        })
+    }
+
+    /// Limits from stored settings in KiB/s. Missing, empty, or invalid
+    /// values mean unlimited, so a damaged setting never stalls transfers.
+    #[must_use]
+    pub fn from_settings(download: Option<&str>, upload: Option<&str>) -> Self {
+        let parse = |value: Option<&str>| value.and_then(|text| text.parse::<u32>().ok());
+        let only =
+            |download, upload| Self::from_kib_per_second(download, upload).unwrap_or_default();
+        Self {
+            download_bytes_per_second: only(parse(download), None).download_bytes_per_second,
+            upload_bytes_per_second: only(None, parse(upload)).upload_bytes_per_second,
+        }
+    }
+
+    /// Settings values in KiB/s; an empty string means unlimited.
+    #[must_use]
+    pub fn to_settings(self) -> (String, String) {
+        let (download, upload) = self.as_kib_per_second();
+        let text = |value: Option<u32>| value.map_or_else(String::new, |kib| kib.to_string());
+        (text(download), text(upload))
+    }
+
+    /// The caps in KiB/s, for settings and display.
+    #[must_use]
+    pub fn as_kib_per_second(self) -> (Option<u32>, Option<u32>) {
+        (
+            self.download_bytes_per_second
+                .map(|bytes| bytes.get() / 1024),
+            self.upload_bytes_per_second.map(|bytes| bytes.get() / 1024),
+        )
+    }
+}
+
 /// Capabilities an application may request from a torrent engine.
 pub trait TorrentEngine: Send + Sync {
     /// Start serving a complete, immutable content directory after the engine
@@ -326,6 +391,15 @@ pub trait TorrentEngine: Send + Sync {
         async { Err(EngineError::UnsupportedCapability("resume")) }
     }
 
+    /// Apply session-wide speed caps to every current and future transfer.
+    ///
+    /// # Errors
+    /// Engines without rate limiting return [`EngineError::UnsupportedCapability`].
+    fn set_rate_limits(&self, limits: RateLimits) -> Result<(), EngineError> {
+        let _ = limits;
+        Err(EngineError::UnsupportedCapability("rate limits"))
+    }
+
     /// Stop serving a torrent. Content files are never deleted.
     fn stop(&self, info_hash: &InfoHash) -> impl Future<Output = Result<(), EngineError>> + Send;
 
@@ -353,6 +427,30 @@ pub trait TorrentEngine: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_limits_convert_from_kib_and_reject_tiny_or_huge_caps() {
+        let limits = RateLimits::from_kib_per_second(Some(512), None).unwrap();
+        assert_eq!(limits.download_bytes_per_second.unwrap().get(), 512 * 1024);
+        assert_eq!(limits.upload_bytes_per_second, None);
+        assert_eq!(limits.as_kib_per_second(), (Some(512), None));
+        assert_eq!(
+            RateLimits::from_kib_per_second(Some(0), Some(0)),
+            Some(RateLimits::default())
+        );
+        assert_eq!(RateLimits::from_kib_per_second(Some(8), None), None);
+        assert_eq!(RateLimits::from_kib_per_second(None, Some(u32::MAX)), None);
+        assert_eq!(limits.to_settings(), ("512".to_owned(), String::new()));
+        assert_eq!(RateLimits::from_settings(Some("512"), Some("")), limits);
+        assert_eq!(
+            RateLimits::from_settings(Some("x"), Some("4")),
+            RateLimits::default()
+        );
+        assert_eq!(
+            RateLimits::from_settings(None, Some("64")).as_kib_per_second(),
+            (None, Some(64))
+        );
+    }
 
     #[test]
     fn info_hashes_are_normalized_and_validated() {

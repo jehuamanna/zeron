@@ -7,7 +7,7 @@ import { DistributionPage } from "./DistributionPage";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { getDistribution: vi.fn(), startSeeding: vi.fn(), stopSeeding: vi.fn(), setNetworkProfile: vi.fn(), setPeerReachability: vi.fn(), setTrackers: vi.fn(), setTrackerLists: vi.fn(), refreshTrackerLists: vi.fn() },
+  publisherApi: { getDistribution: vi.fn(), startSeeding: vi.fn(), stopSeeding: vi.fn(), setNetworkProfile: vi.fn(), setPeerReachability: vi.fn(), setUploadLimit: vi.fn(), setTrackers: vi.fn(), setTrackerLists: vi.fn(), refreshTrackerLists: vi.fn() },
 }));
 
 function status(overrides: Partial<SeedingStatus>): SeedingStatus {
@@ -45,6 +45,7 @@ beforeEach(() => {
       { url: "https://other.example/best.txt", trackerCount: 0, fetchedAtUnixSeconds: null },
     ],
     effectiveTrackerCount: 20,
+    uploadLimitKib: null,
     engineError: null,
     releases: [status({})],
   };
@@ -113,6 +114,23 @@ describe("distribution workspace", () => {
     expect(view.container.textContent).toContain("Verifying release files before serving them");
     expect(view.getByRole("alert").textContent).toContain("nothing is being served");
     expect(view.container.textContent).toContain("Not serving");
+  });
+
+  it("saves an upload limit and rejects values that are too small", async () => {
+    vi.mocked(publisherApi.setUploadLimit).mockImplementation(async (uploadKib) => {
+      server = { ...server, uploadLimitKib: uploadKib };
+    });
+    const view = renderPage();
+    const field = await waitFor(() => view.getByLabelText(/Upload limit/) as HTMLInputElement);
+    expect(field.value).toBe("");
+    fireEvent.change(field, { target: { value: "4" } });
+    fireEvent.click(view.getByRole("button", { name: "Save upload limit" }));
+    expect(view.getByRole("alert").textContent).toContain("at least 16 KiB/s");
+    expect(publisherApi.setUploadLimit).not.toHaveBeenCalled();
+    fireEvent.change(field, { target: { value: "512" } });
+    fireEvent.click(view.getByRole("button", { name: "Save upload limit" }));
+    await waitFor(() => expect(publisherApi.setUploadLimit).toHaveBeenCalledWith(512));
+    await waitFor(() => expect((view.getByLabelText(/Upload limit/) as HTMLInputElement).value).toBe("512"));
   });
 
   it("does not offer to seed archived releases", async () => {

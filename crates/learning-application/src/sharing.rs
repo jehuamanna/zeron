@@ -6,7 +6,7 @@ use std::{
 
 use thiserror::Error;
 use torrent_port::{
-    EngineError, FetchRequest, InfoHash, ResolveRequest, ResolvedTorrent, SeedRequest,
+    EngineError, FetchRequest, InfoHash, RateLimits, ResolveRequest, ResolvedTorrent, SeedRequest,
     TorrentEngine, TransferStats, VerifiedFile,
 };
 
@@ -158,6 +158,15 @@ impl<E: TorrentEngine> TorrentEngine for TransferRouter<E> {
         engine.select_files(info_hash, files).await?;
         if let Some(request) = self.routes().requests.get_mut(info_hash) {
             request.files = files.to_vec();
+        }
+        Ok(())
+    }
+
+    /// Applies the caps to both engines; only the sharing engine uploads.
+    fn set_rate_limits(&self, limits: RateLimits) -> Result<(), EngineError> {
+        self.private.set_rate_limits(limits)?;
+        if let Some(sharing) = &self.sharing {
+            sharing.set_rate_limits(limits)?;
         }
         Ok(())
     }

@@ -35,7 +35,7 @@ function renderApp() {
 beforeEach(() => {
   useBuilderUi.setState({ selectedDraftId: null, workspace: "courses" });
   vi.mocked(publisherApi.listReleases).mockResolvedValue([]);
-  vi.mocked(publisherApi.getDistribution).mockResolvedValue({ configuredProfile: "local_network", activeProfile: "local_network", listenPort: null, peerPort: null, portForwarding: false, activePortForwarding: false, restartRequired: false, trackers: [], trackerLists: [], effectiveTrackerCount: 0, engineError: null, releases: [] });
+  vi.mocked(publisherApi.getDistribution).mockResolvedValue({ configuredProfile: "local_network", activeProfile: "local_network", listenPort: null, peerPort: null, portForwarding: false, activePortForwarding: false, restartRequired: false, trackers: [], trackerLists: [], effectiveTrackerCount: 0, uploadLimitKib: null, engineError: null, releases: [] });
 });
 afterEach(cleanup);
 

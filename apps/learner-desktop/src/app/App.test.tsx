@@ -274,6 +274,8 @@ describe("learner library", () => {
       configuredProfile: "local_network",
       activeProfile: "local_network",
       torrentEngine: "ready",
+      downloadLimitKib: null,
+      uploadLimitKib: null,
       downloadPort: 1,
       sharingPort: 2,
       peerPort: null,

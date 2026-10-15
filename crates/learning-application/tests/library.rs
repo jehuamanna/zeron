@@ -241,3 +241,21 @@ fn playback_positions_persist_across_restarts_and_reset_when_finished() {
         Some(0.0)
     );
 }
+
+#[test]
+fn rate_limits_default_to_unlimited_and_persist() {
+    use learning_application::RateLimits;
+
+    let root = TempRoot::new();
+    let database = root.path().join("library.sqlite3");
+    let limits = RateLimits::from_kib_per_second(Some(2048), Some(128)).unwrap();
+    {
+        let mut library = CourseLibrary::open(&database, ImportLimits::default()).unwrap();
+        assert_eq!(library.rate_limits().unwrap(), RateLimits::default());
+        library.set_rate_limits(limits).unwrap();
+    }
+    let mut library = CourseLibrary::open(&database, ImportLimits::default()).unwrap();
+    assert_eq!(library.rate_limits().unwrap(), limits);
+    library.set_rate_limits(RateLimits::default()).unwrap();
+    assert_eq!(library.rate_limits().unwrap(), RateLimits::default());
+}

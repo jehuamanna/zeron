@@ -5,6 +5,7 @@ import { formatBytes } from "../../lib/format";
 import { asCommandError, publisherApi, type NetworkProfile, type SeedingStatus } from "../../services/publisher";
 import { PeerReachabilityForm } from "./PeerReachabilityForm";
 import { TrackersSection } from "./TrackersSection";
+import { UploadLimitForm } from "./UploadLimitForm";
 
 const profiles: Array<{ value: NetworkProfile; label: string; description: string }> = [
   {
@@ -35,11 +36,15 @@ export function DistributionPage() {
       publisherApi.setPeerReachability(peerPort, portForwarding),
     onSuccess: refresh,
   });
+  const setUploadLimit = useMutation({
+    mutationFn: (uploadKib: number | null) => publisherApi.setUploadLimit(uploadKib),
+    onSuccess: refresh,
+  });
 
   if (distribution.isPending) return <p className="text-slate-400">Loading distribution…</p>;
   if (distribution.isError) return <p role="alert" className="text-red-300">Distribution status is unavailable.</p>;
   const data = distribution.data;
-  const failed = setProfile.isError ? setProfile.error : setReachability.isError ? setReachability.error : null;
+  const failed = setProfile.isError ? setProfile.error : setReachability.isError ? setReachability.error : setUploadLimit.isError ? setUploadLimit.error : null;
   const saveError = failed ? (asCommandError(failed)?.message ?? "The network setting could not be saved.") : null;
 
   return (
@@ -89,6 +94,12 @@ export function DistributionPage() {
           </p>
         )}
         {saveError ? <p role="alert" className="mt-3 text-xs text-red-200">{saveError}</p> : null}
+        <UploadLimitForm
+          key={String(data.uploadLimitKib)}
+          uploadKib={data.uploadLimitKib}
+          saving={setUploadLimit.isPending}
+          onSave={(uploadKib) => setUploadLimit.mutate(uploadKib)}
+        />
         <TrackersSection data={data} onChanged={refresh} />
       </section>
 

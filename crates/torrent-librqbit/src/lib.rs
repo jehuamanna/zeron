@@ -22,9 +22,9 @@ use librqbit::{
 };
 pub use torrent_port::PeerReachability;
 use torrent_port::{
-    EngineError, FetchRequest, InfoHash, NetworkProfile, ResolveRequest, ResolvedTorrent,
-    SeedRequest, TorrentEngine, TorrentFile, TorrentSource, TransferState, TransferStats,
-    VerifiedFile,
+    EngineError, FetchRequest, InfoHash, NetworkProfile, RateLimits, ResolveRequest,
+    ResolvedTorrent, SeedRequest, TorrentEngine, TorrentFile, TorrentSource, TransferState,
+    TransferStats, VerifiedFile,
 };
 
 use crate::storage::{ContentMismatch, MetadataOnly, ReadOnlyContent};
@@ -512,6 +512,19 @@ impl TorrentEngine for LibrqbitEngine {
             .unpause(&handle)
             .await
             .map_err(|error| engine_error(&error))
+    }
+
+    /// Sets librqbit's live session limits (`Session::ratelimits`,
+    /// `Limits::set_download_bps` and `set_upload_bps`, librqbit 9.0.1
+    /// src/limits.rs), which every torrent of the session shares.
+    fn set_rate_limits(&self, limits: RateLimits) -> Result<(), EngineError> {
+        self.session
+            .ratelimits
+            .set_download_bps(limits.download_bytes_per_second);
+        self.session
+            .ratelimits
+            .set_upload_bps(limits.upload_bytes_per_second);
+        Ok(())
     }
 
     async fn stop(&self, info_hash: &InfoHash) -> Result<(), EngineError> {

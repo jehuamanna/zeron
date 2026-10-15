@@ -25,7 +25,7 @@ function seeding(overrides: Partial<SeedingStatus>): SeedingStatus {
 }
 
 function distribution(releases: SeedingStatus[]): Distribution {
-  return { configuredProfile: "local_network", activeProfile: "local_network", listenPort: 6881, peerPort: null, portForwarding: false, activePortForwarding: false, restartRequired: false, trackers: [], trackerLists: [], effectiveTrackerCount: 0, engineError: null, releases };
+  return { configuredProfile: "local_network", activeProfile: "local_network", listenPort: 6881, peerPort: null, portForwarding: false, activePortForwarding: false, restartRequired: false, trackers: [], trackerLists: [], effectiveTrackerCount: 0, uploadLimitKib: null, engineError: null, releases };
 }
 
 const releases = [
