@@ -92,6 +92,8 @@ fn start_torrents(
         profile,
         state_directory: app_data.join("engine"),
         listen_port: None,
+        // Learners share nothing unless they opt in.
+        allow_uploads: false,
     }));
     match started {
         Ok(engine) => {

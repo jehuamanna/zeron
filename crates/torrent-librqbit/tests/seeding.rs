@@ -125,6 +125,7 @@ async fn engine(root: &Path) -> LibrqbitEngine {
         profile: NetworkProfile::Loopback,
         state_directory: root.join("engine"),
         listen_port: None,
+        allow_uploads: true,
     })
     .await
     .unwrap()
@@ -364,6 +365,7 @@ async fn learners_resolve_metadata_and_fetch_only_selected_files() {
         profile: NetworkProfile::Loopback,
         state_directory: scratch.0.join("learner-engine"),
         listen_port: None,
+        allow_uploads: false,
     })
     .await
     .unwrap();
@@ -477,6 +479,7 @@ async fn magnet_resolution_leaves_no_transfer_or_content_behind() {
         profile: NetworkProfile::Loopback,
         state_directory: scratch.0.join("learner-engine"),
         listen_port: None,
+        allow_uploads: false,
     })
     .await
     .unwrap();
@@ -547,12 +550,15 @@ async fn magnets_resolve_through_local_service_discovery_alone() {
 
     let scratch = Scratch::new("lsd");
     let release = publish(&scratch.0);
-    let local = |name: &str| EngineConfig {
+    let local = |name: &str, allow_uploads: bool| EngineConfig {
         profile: NetworkProfile::LocalNetwork,
         state_directory: scratch.0.join(name),
         listen_port: None,
+        allow_uploads,
     };
-    let seeder = LibrqbitEngine::start(local("seeder-engine")).await.unwrap();
+    let seeder = LibrqbitEngine::start(local("seeder-engine", true))
+        .await
+        .unwrap();
     let info_hash = seeder
         .seed(SeedRequest {
             torrent: release.torrent.clone(),
@@ -564,7 +570,7 @@ async fn magnets_resolve_through_local_service_discovery_alone() {
     // Let the seeder's own start-up announcement pass, as when a learner joins later.
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    let learner = LibrqbitEngine::start(local("learner-engine"))
+    let learner = LibrqbitEngine::start(local("learner-engine", false))
         .await
         .unwrap();
     let started = Instant::now();
@@ -586,4 +592,90 @@ async fn magnets_resolve_through_local_service_discovery_alone() {
     );
     learner.shutdown().await;
     seeder.shutdown().await;
+}
+
+async fn loopback(root: &Path, name: &str, allow_uploads: bool) -> LibrqbitEngine {
+    LibrqbitEngine::start(EngineConfig {
+        profile: NetworkProfile::Loopback,
+        state_directory: root.join(name),
+        listen_port: None,
+        allow_uploads,
+    })
+    .await
+    .unwrap()
+}
+
+async fn fetch_manifest(
+    engine: &LibrqbitEngine,
+    release: &Release,
+    content_root: PathBuf,
+    peer: SocketAddr,
+) -> InfoHash {
+    engine
+        .fetch(torrent_port::FetchRequest {
+            metainfo: release.torrent.clone(),
+            content_root,
+            files: vec![0],
+            initial_peers: vec![peer],
+        })
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn engines_with_uploads_disabled_serve_no_pieces() {
+    let scratch = Scratch::new("no-upload");
+    let release = publish(&scratch.0);
+    let seeder = engine(&scratch.0).await;
+    let info_hash = seeder
+        .seed(SeedRequest {
+            torrent: release.torrent.clone(),
+            content_root: release.package.clone(),
+        })
+        .await
+        .unwrap();
+    wait_for_state(&seeder, &info_hash, TransferState::Seeding).await;
+    let seeder_address = seeder.listen_address().unwrap();
+
+    let private = loopback(&scratch.0, "private", false).await;
+    assert!(matches!(
+        private
+            .seed(SeedRequest {
+                torrent: release.torrent.clone(),
+                content_root: release.package.clone(),
+            })
+            .await,
+        Err(EngineError::UnsupportedCapability(_))
+    ));
+    let sharing = loopback(&scratch.0, "sharing", true).await;
+    let manifest_length = torrent_metainfo_length(&release);
+    for (learner, name) in [(&private, "private-content"), (&sharing, "sharing-content")] {
+        fetch_manifest(learner, &release, scratch.0.join(name), seeder_address).await;
+        wait_for_file(learner, &info_hash, 0, manifest_length).await;
+    }
+    seeder.shutdown().await;
+
+    // Only the private learner holds course.json now: nothing reaches a peer.
+    let from_private = loopback(&scratch.0, "from-private", false).await;
+    let address = private.listen_address().unwrap();
+    fetch_manifest(&from_private, &release, scratch.0.join("a"), address).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let stats = from_private.transfer(&info_hash).unwrap();
+    assert_eq!(stats.file_verified_bytes[0], 0, "{stats:?}");
+    assert_eq!(private.transfer(&info_hash).unwrap().uploaded_bytes, 0);
+
+    // The same request to a sharing learner completes.
+    let from_sharing = loopback(&scratch.0, "from-sharing", false).await;
+    let address = sharing.listen_address().unwrap();
+    fetch_manifest(&from_sharing, &release, scratch.0.join("b"), address).await;
+    wait_for_file(&from_sharing, &info_hash, 0, manifest_length).await;
+    for engine in [private, sharing, from_private, from_sharing] {
+        engine.shutdown().await;
+    }
+}
+
+fn torrent_metainfo_length(release: &Release) -> u64 {
+    std::fs::metadata(release.package.join("course.json"))
+        .unwrap()
+        .len()
 }

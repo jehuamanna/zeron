@@ -119,12 +119,13 @@ fn publish(root: &Path) -> Release {
     }
 }
 
-async fn loopback_engine(root: &Path, name: &str) -> Arc<LibrqbitEngine> {
+async fn loopback_engine(root: &Path, name: &str, allow_uploads: bool) -> Arc<LibrqbitEngine> {
     Arc::new(
         LibrqbitEngine::start(EngineConfig {
             profile: NetworkProfile::Loopback,
             state_directory: root.join(name),
             listen_port: None,
+            allow_uploads,
         })
         .await
         .unwrap(),
@@ -192,13 +193,13 @@ async fn run<E: TorrentEngine>(
 async fn a_magnet_import_fetches_only_the_manifest_and_restores_after_restart() {
     let scratch = Scratch::new("magnet");
     let release = publish(&scratch.0);
-    let seeder = loopback_engine(&scratch.0, "seeder").await;
+    let seeder = loopback_engine(&scratch.0, "seeder", true).await;
     let address = seed(&seeder, release.torrent.clone(), release.package.clone()).await;
 
     let library = Arc::new(Mutex::new(
         CourseLibrary::open(&scratch.0.join("library.sqlite3"), ImportLimits::default()).unwrap(),
     ));
-    let learner = loopback_engine(&scratch.0, "learner").await;
+    let learner = loopback_engine(&scratch.0, "learner", false).await;
     let courses = scratch.0.join("courses");
     let importer = imports(
         Arc::clone(&learner),
@@ -265,7 +266,7 @@ async fn a_magnet_import_fetches_only_the_manifest_and_restores_after_restart() 
     );
     learner.shutdown().await;
 
-    let restarted = loopback_engine(&scratch.0, "learner-2").await;
+    let restarted = loopback_engine(&scratch.0, "learner-2", false).await;
     let restored = imports(
         Arc::clone(&restarted),
         &library,
@@ -285,12 +286,13 @@ async fn a_magnet_import_fetches_only_the_manifest_and_restores_after_restart() 
 async fn a_magnet_imports_through_local_service_discovery_alone() {
     let scratch = Scratch::new("lsd");
     let release = publish(&scratch.0);
-    let local = |name: &str| EngineConfig {
+    let local = |name: &str, allow_uploads: bool| EngineConfig {
         profile: NetworkProfile::LocalNetwork,
         state_directory: scratch.0.join(name),
         listen_port: None,
+        allow_uploads,
     };
-    let seeder = Arc::new(LibrqbitEngine::start(local("seeder")).await.unwrap());
+    let seeder = Arc::new(LibrqbitEngine::start(local("seeder", true)).await.unwrap());
     seed(&seeder, release.torrent.clone(), release.package.clone()).await;
     // Let the seeder's own start-up announcement pass, as when a learner joins later.
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -298,7 +300,11 @@ async fn a_magnet_imports_through_local_service_discovery_alone() {
     let library = Arc::new(Mutex::new(
         CourseLibrary::open_in_memory(ImportLimits::default()).unwrap(),
     ));
-    let learner = Arc::new(LibrqbitEngine::start(local("learner")).await.unwrap());
+    let learner = Arc::new(
+        LibrqbitEngine::start(local("learner", false))
+            .await
+            .unwrap(),
+    );
     let importer = imports(
         Arc::clone(&learner),
         &library,
@@ -341,13 +347,13 @@ async fn a_torrent_whose_inventory_differs_from_course_json_is_rejected() {
         &mut |_| {},
     )
     .unwrap();
-    let seeder = loopback_engine(&scratch.0, "seeder").await;
+    let seeder = loopback_engine(&scratch.0, "seeder", true).await;
     let address = seed(&seeder, torrent.bytes.clone(), package.clone()).await;
 
     let library = Arc::new(Mutex::new(
         CourseLibrary::open_in_memory(ImportLimits::default()).unwrap(),
     ));
-    let learner = loopback_engine(&scratch.0, "learner").await;
+    let learner = loopback_engine(&scratch.0, "learner", false).await;
     let courses = scratch.0.join("courses");
     let importer = imports(
         Arc::clone(&learner),

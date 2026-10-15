@@ -43,6 +43,9 @@ pub struct EngineConfig {
     pub state_directory: PathBuf,
     /// Fixed peer port, or `None` for an ephemeral port.
     pub listen_port: Option<u16>,
+    /// Whether peers may download from this engine. When off, the engine
+    /// advertises no pieces, rejects every piece request, and cannot seed.
+    pub allow_uploads: bool,
 }
 
 struct Active {
@@ -56,6 +59,7 @@ pub struct LibrqbitEngine {
     active: Arc<Mutex<HashMap<InfoHash, Active>>>,
     /// Never written: magnet resolution uses storage that refuses all I/O.
     resolve_folder: PathBuf,
+    allow_uploads: bool,
 }
 
 impl LibrqbitEngine {
@@ -75,6 +79,7 @@ impl LibrqbitEngine {
             session,
             active: Arc::new(Mutex::new(HashMap::new())),
             resolve_folder,
+            allow_uploads: config.allow_uploads,
         })
     }
 
@@ -226,6 +231,11 @@ fn resolved(
 
 impl TorrentEngine for LibrqbitEngine {
     async fn seed(&self, request: SeedRequest) -> Result<InfoHash, EngineError> {
+        if !self.allow_uploads {
+            return Err(EngineError::UnsupportedCapability(
+                "seeding while uploads are disabled",
+            ));
+        }
         let parsed = librqbit::torrent_from_bytes(&request.torrent)
             .map_err(|error| EngineError::InvalidTorrent(error.to_string()))?;
         let info_hash = InfoHash::parse(&parsed.info_hash.as_string())?;
@@ -474,6 +484,7 @@ fn session_options(config: &EngineConfig) -> SessionOptions {
             ipv4_only: loopback,
             ..ListenerOptions::default()
         }),
+        disable_upload: !config.allow_uploads,
         ..SessionOptions::default()
     }
 }

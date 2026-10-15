@@ -105,6 +105,7 @@ fn start_distribution(
         profile: active_profile,
         state_directory,
         listen_port: None,
+        allow_uploads: true,
     }));
     match started {
         Ok(engine) => {

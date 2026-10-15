@@ -19,6 +19,7 @@ async fn engine(root: &Path, name: &str) -> Arc<LibrqbitEngine> {
             profile: NetworkProfile::Loopback,
             state_directory: root.join(name),
             listen_port: None,
+            allow_uploads: true,
         })
         .await
         .unwrap(),

@@ -78,6 +78,6 @@ Status: complete. Learners can add a course from a `.torrent` file or a magnet l
 
 - Only `course.json` is downloaded. Lesson media download, verified streaming through the gateway, and playback of torrent courses come in the following Phase 3/4 slices.
 - There is no learner UI to change the network profile; the default Local-network profile applies unless the setting is changed in storage.
-- No learner seeding, upload controls, or dashboard metrics yet. The engine only keeps the `course.json` selection active and serves those verified pieces to peers.
+- No learner seeding, upload controls, or dashboard metrics yet. When this slice shipped, the learner engine also served its verified `course.json` pieces to peers. `phase-3-learner-uploads-off.md` turned learner uploads off.
 - **Corrected after release:** a later real-window check (see `phase-3-magnet-local-discovery.md`) found that magnet imports did not work through local discovery alone. librqbit's metadata-only resolve never announced, so the import timed out unless the seeder's five-minute announcement happened to arrive in time. `.torrent` imports were unaffected. The follow-up slice fixes this.
 - Only one import runs at a time. Finished import snapshots are kept in memory (the last 16) and are lost on restart; the imported course itself is durable.
