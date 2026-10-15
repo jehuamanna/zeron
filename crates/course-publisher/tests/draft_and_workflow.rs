@@ -10,6 +10,7 @@ use course_publisher::{
 
 fn draft(source_path: PathBuf) -> DraftCourse {
     DraftCourse {
+        draft_id: "draft_one".to_owned(),
         revision: 4,
         metadata: DraftMetadata {
             course_id: "course_one".to_owned(),

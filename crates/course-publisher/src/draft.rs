@@ -34,6 +34,8 @@ pub struct DraftMetadata {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DraftCourse {
+    /// Stable draft identity, independent of course and release identity.
+    pub draft_id: String,
     /// Optimistic-concurrency revision incremented by every mutation.
     pub revision: u64,
     /// Course-level fields.

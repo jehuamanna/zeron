@@ -6,6 +6,7 @@ members = [
     "crates/learning-application",
     "crates/learning-storage",
     "crates/media-gateway",
+    "crates/publisher-storage",
     "tools/course-cli",
 ]
 resolver = "3"
