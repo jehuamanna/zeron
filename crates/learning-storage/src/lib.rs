@@ -13,7 +13,7 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 5;
+const CURRENT_SCHEMA_VERSION: i64 = 6;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
 
 /// Where a learner stopped in one lesson resource.
@@ -329,6 +329,61 @@ impl Storage {
         .transpose()
     }
 
+    /// Add or remove a download commitment. `scope` is `course`, `module`, or
+    /// `lesson`; for a course the scope ID is the course ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock or `SQLite` failures, including an
+    /// unknown course or scope.
+    pub fn set_download_commitment(
+        &mut self,
+        course_id: &str,
+        scope: &str,
+        scope_id: &str,
+        committed: bool,
+    ) -> Result<(), StorageError> {
+        if committed {
+            let created_at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| StorageError::InvalidSystemClock)?
+                .as_secs();
+            self.connection.execute(
+                "INSERT INTO download_commitments (course_id, scope, scope_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING",
+                params![
+                    course_id,
+                    scope,
+                    scope_id,
+                    sqlite_integer(created_at, "commitment timestamp")?
+                ],
+            )?;
+        } else {
+            self.connection.execute(
+                "DELETE FROM download_commitments WHERE course_id = ?1 AND scope = ?2 AND scope_id = ?3",
+                params![course_id, scope, scope_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// A course's download commitments as `(scope, scope_id)` pairs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn download_commitments(
+        &self,
+        course_id: &str,
+    ) -> Result<Vec<(String, String)>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT scope, scope_id FROM download_commitments WHERE course_id = ?1 ORDER BY created_at, scope, scope_id",
+        )?;
+        let rows = statement.query_map([course_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
+    }
+
     /// Read a learner setting.
     ///
     /// # Errors
@@ -638,6 +693,10 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     }
     if found == 4 {
         add_playback_positions(connection)?;
+        found = 5;
+    }
+    if found == 5 {
+        add_download_commitments(connection)?;
     }
     Ok(())
 }
@@ -656,6 +715,24 @@ fn add_playback_positions(connection: &mut Connection) -> Result<(), StorageErro
            PRIMARY KEY(course_id, resource_id)
          ) STRICT;
          PRAGMA user_version = 5;",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Schema 6. What the learner asked to keep offline, by course, module, or
+/// lesson. Keyed by course only, like playback positions.
+fn add_download_commitments(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE download_commitments (
+           course_id TEXT NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+           scope TEXT NOT NULL CHECK(scope IN ('course', 'module', 'lesson')),
+           scope_id TEXT NOT NULL,
+           created_at INTEGER NOT NULL CHECK(created_at >= 0),
+           PRIMARY KEY(course_id, scope, scope_id)
+         ) STRICT;
+         PRAGMA user_version = 6;",
     )?;
     tx.commit()?;
     Ok(())
@@ -957,7 +1034,9 @@ mod tests {
                 .unwrap();
             storage
                 .connection
-                .execute_batch("DROP TABLE playback_positions; PRAGMA user_version = 4;")
+                .execute_batch(
+                    "DROP TABLE download_commitments; DROP TABLE playback_positions; PRAGMA user_version = 4;",
+                )
                 .unwrap();
         }
         let mut storage = Storage::open(&path).unwrap();
@@ -975,6 +1054,55 @@ mod tests {
         );
         drop(storage);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn download_commitments_are_idempotent_and_scoped_to_known_courses() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Rust", "systems");
+        let id = course.course_id.clone();
+        assert!(
+            storage
+                .set_download_commitment(&id, "lesson", "l1", true)
+                .is_err()
+        );
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/rust"))
+            .unwrap();
+        assert!(
+            storage
+                .set_download_commitment(&id, "chapter", "x", true)
+                .is_err()
+        );
+        storage
+            .set_download_commitment(&id, "lesson", "l1", true)
+            .unwrap();
+        storage
+            .set_download_commitment(&id, "lesson", "l1", true)
+            .unwrap();
+        storage
+            .set_download_commitment(&id, "module", "m1", true)
+            .unwrap();
+        assert_eq!(
+            storage.download_commitments(&id).unwrap(),
+            [
+                ("lesson".to_owned(), "l1".to_owned()),
+                ("module".to_owned(), "m1".to_owned())
+            ]
+        );
+        storage
+            .set_download_commitment(&id, "lesson", "l1", false)
+            .unwrap();
+        storage
+            .set_download_commitment(&id, "lesson", "unknown", false)
+            .unwrap();
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/rust"))
+            .unwrap();
+        assert_eq!(
+            storage.download_commitments(&id).unwrap(),
+            [("module".to_owned(), "m1".to_owned())]
+        );
     }
 
     #[test]

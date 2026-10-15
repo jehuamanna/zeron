@@ -25,6 +25,8 @@ vi.mock("../services/library", async (importOriginal) => ({
     setNetworkProfile: vi.fn(),
     setCourseSharing: vi.fn(),
     playbackPosition: vi.fn(() => Promise.resolve(null)),
+    downloads: vi.fn(() => Promise.resolve({ course: false, modules: [], lessons: [] })),
+    setDownload: vi.fn(),
     savePlaybackPosition: vi.fn(() => Promise.resolve(true)),
   },
 }));
@@ -177,7 +179,7 @@ describe("learner library", () => {
         id: "lesson", title: "Lesson", resources: [{ id: "video", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }],
       }] }],
     });
-    vi.mocked(libraryApi.availability).mockResolvedValue([{ resourceId: "video", verifiedBytes: 50, byteLength: 200 }]);
+    vi.mocked(libraryApi.availability).mockResolvedValue([{ resourceId: "video", verifiedBytes: 50, byteLength: 200, kept: false, state: "partially_available" }]);
     vi.mocked(libraryApi.registerMedia).mockResolvedValue({
       url: "http://127.0.0.1:49152/v1/media/stream/secret", mediaType: "video/mp4", byteLength: 200,
     });
@@ -190,6 +192,48 @@ describe("learner library", () => {
     await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("/v1/media/stream/secret"));
     expect(libraryApi.registerMedia).toHaveBeenCalledWith("course_torrent", "video");
     expect(view.container.querySelector('[aria-current="true"]')?.textContent).toContain("Playing");
+    expect(view.container.querySelector("[data-availability]")?.textContent).toBe("Partly on this computer");
+  });
+
+  it("keeps lessons, modules, and whole courses offline and labels their availability", async () => {
+    useLibraryUi.getState().selectCourse("course_torrent");
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "course_torrent", courseVersion: "1.0.0", title: "Torrent Course", description: null,
+      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), modules: [{ id: "module", title: "Module", lessons: [
+        { id: "lesson_a", title: "First", resources: [{ id: "video_a", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }] },
+        { id: "lesson_b", title: "Second", resources: [{ id: "video_b", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }] },
+      ] }],
+    });
+    let kept = { course: false, modules: [] as string[], lessons: [] as string[] };
+    vi.mocked(libraryApi.downloads).mockImplementation(async () => kept);
+    vi.mocked(libraryApi.availability).mockImplementation(async () => [
+      { resourceId: "video_a", verifiedBytes: kept.lessons.includes("lesson_a") || kept.course ? 200 : 0, byteLength: 200, kept: kept.lessons.includes("lesson_a") || kept.course, state: kept.lessons.includes("lesson_a") || kept.course ? "available_offline" : "online_only" },
+      { resourceId: "video_b", verifiedBytes: 80, byteLength: 200, kept: kept.course, state: kept.course ? "downloading" : "partially_available" },
+    ]);
+    vi.mocked(libraryApi.setDownload).mockImplementation(async (_course, scope, keep) => {
+      if (scope.kind === "course") kept = { ...kept, course: keep };
+      if (scope.kind === "lesson") kept = { ...kept, lessons: keep ? [...kept.lessons, scope.id] : kept.lessons.filter((id) => id !== scope.id) };
+      return kept;
+    });
+
+    const view = renderApp();
+    const lessonToggle = await waitFor(() => view.getByRole("button", { name: "Keep lesson First offline" }));
+    const labels = () => Array.from(view.container.querySelectorAll("[data-availability]")).map((label) => label.textContent);
+    await waitFor(() => expect(labels()).toEqual(["Online only", "Partly on this computer"]));
+    expect(lessonToggle.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(lessonToggle);
+    await waitFor(() => expect(libraryApi.setDownload).toHaveBeenCalledWith("course_torrent", { kind: "lesson", id: "lesson_a" }, true));
+    await waitFor(() => expect(view.getByRole("button", { name: "Keep lesson First offline" }).getAttribute("aria-pressed")).toBe("true"));
+    await waitFor(() => expect(labels()).toEqual(["Available offline", "Partly on this computer"]));
+
+    fireEvent.click(view.getByRole("button", { name: "Keep the whole course offline" }));
+    await waitFor(() => expect(libraryApi.setDownload).toHaveBeenCalledWith("course_torrent", { kind: "course" }, true));
+    await waitFor(() => expect(view.getByRole("button", { name: "Keep module Module offline" }).hasAttribute("disabled")).toBe(true));
+    expect(view.getByRole("button", { name: "Keep lesson Second offline" }).getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => expect(labels()).toEqual(["Available offline", "Downloading for offline"]));
   });
 
   it("shows the source of each course in the library", async () => {

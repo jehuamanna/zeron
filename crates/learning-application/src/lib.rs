@@ -1,11 +1,13 @@
 //! Application use cases shared by Zeron desktop composition roots.
 
+mod downloads;
 mod library;
 mod local_import;
 mod sharing;
 mod streaming;
 mod torrent_import;
 
+pub use downloads::{Availability, DownloadScope};
 pub use library::{
     CourseImportReceipt, CourseLibrary, LibraryError, LocalResource, TorrentResource,
 };

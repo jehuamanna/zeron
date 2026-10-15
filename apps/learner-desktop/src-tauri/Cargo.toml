@@ -24,6 +24,7 @@ torrent-librqbit = { path = "../../../crates/torrent-librqbit" }
 
 [dev-dependencies]
 learning-storage = { path = "../../../crates/learning-storage" }
+serde_json.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "=2.0.2", features = ["v2_6"] }

@@ -5,13 +5,13 @@ use std::{
 
 use course_format::ResourceKind;
 use learning_application::{
-    CancellationFlag, CourseImportReceipt, CourseLibrary, CourseSharingStatus, ImportError,
-    InfoHash, LibraryError, LocalResource, NetworkProfile, PeerReachability, SharingError,
-    TorrentEngine as _, TorrentImportSnapshot, TorrentImportStage, TorrentResource, TorrentSource,
-    TransferState,
+    Availability, CancellationFlag, CourseImportReceipt, CourseLibrary, CourseSharingStatus,
+    DownloadScope, EngineError, ImportError, InfoHash, LibraryError, LocalResource, NetworkProfile,
+    PeerReachability, SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage,
+    TorrentResource, TorrentSource, TransferState,
 };
 use media_gateway::{FileResource, StreamResource};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 
@@ -149,6 +149,29 @@ pub(crate) struct ResourceAvailabilityDto {
     resource_id: String,
     verified_bytes: u64,
     byte_length: u64,
+    /// Whether the learner keeps this lesson offline.
+    kept: bool,
+    /// `online_only`, `downloading`, `partially_available`, or `available_offline`.
+    state: &'static str,
+}
+
+/// What a torrent course keeps offline.
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CourseDownloadsDto {
+    course: bool,
+    modules: Vec<String>,
+    lessons: Vec<String>,
+}
+
+/// Part of a course to keep offline.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) enum DownloadScopeInput {
+    // A struct variant, so unknown fields are rejected here too.
+    Course {},
+    Module { id: String },
+    Lesson { id: String },
 }
 
 /// A torrent course's sharing choice and metrics measured by this computer.
@@ -704,32 +727,118 @@ pub(crate) async fn get_course_availability(
         return Ok(Vec::new());
     };
     let library = Arc::clone(&state.library);
-    run_blocking(move || {
-        let resources = lock_library(&library)?
-            .torrent_resources(&course_id)
+    run_blocking(move || availability(&*lock_library(&library)?, &*router, &course_id)).await
+}
+
+/// Which parts of a torrent course the learner keeps offline.
+#[tauri::command]
+pub(crate) async fn get_course_downloads(
+    course_id: String,
+    state: State<'_, AppState>,
+) -> Result<CourseDownloadsDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || downloads(&*lock_library(&library)?, &course_id)).await
+}
+
+/// Keep part of a torrent course offline, or stop keeping it, and update the
+/// running transfer's selection. Verified bytes are never deleted here.
+#[tauri::command]
+pub(crate) async fn set_course_download(
+    course_id: String,
+    scope: DownloadScopeInput,
+    keep: bool,
+    state: State<'_, AppState>,
+) -> Result<CourseDownloadsDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    let (selection, info_hash, kept) = run_blocking(move || {
+        let mut library = lock_library(&library)?;
+        let scope = match scope {
+            DownloadScopeInput::Course {} => DownloadScope::Course,
+            DownloadScopeInput::Module { id } => DownloadScope::Module(id),
+            DownloadScopeInput::Lesson { id } => DownloadScope::Lesson(id),
+        };
+        let failed = |error| command_error("library_query_failed", error);
+        if !library
+            .set_download(&course_id, &scope, keep)
+            .map_err(failed)?
+        {
+            return Err(CommandError {
+                code: "download_target_not_found",
+                message:
+                    "only lessons, modules, and courses imported from a torrent can be kept offline"
+                        .to_owned(),
+            });
+        }
+        Ok((
+            library.download_selection(&course_id).map_err(failed)?,
+            library.torrent_info_hash(&course_id).map_err(failed)?,
+            downloads(&library, &course_id)?,
+        ))
+    })
+    .await?;
+    if let (Some(router), Some(selection), Some(info_hash)) =
+        (state.torrents.router.clone(), selection, info_hash)
+    {
+        let info_hash = InfoHash::parse(&info_hash)
             .map_err(|error| command_error("library_query_failed", error))?;
-        let transfer = resources
-            .first()
-            .and_then(|resource| InfoHash::parse(&resource.info_hash).ok())
-            .and_then(|info_hash| router.transfer(&info_hash));
-        Ok(resources
-            .into_iter()
-            .map(|resource| ResourceAvailabilityDto {
-                verified_bytes: transfer
-                    .as_ref()
-                    .and_then(|transfer| {
-                        transfer
-                            .file_verified_bytes
-                            .get(resource.file_index)
-                            .copied()
-                    })
-                    .unwrap_or(0),
+        // An inactive course picks the selection up when it is restored.
+        match router.select_files(&info_hash, &selection).await {
+            Ok(()) | Err(EngineError::NotActive) => {}
+            Err(error) => return Err(command_error("download_selection_failed", error)),
+        }
+    }
+    Ok(kept)
+}
+
+fn downloads(library: &CourseLibrary, course_id: &str) -> Result<CourseDownloadsDto, CommandError> {
+    let scopes = library
+        .downloads(course_id)
+        .map_err(|error| command_error("library_query_failed", error))?;
+    let mut dto = CourseDownloadsDto::default();
+    for scope in scopes {
+        match scope {
+            DownloadScope::Course => dto.course = true,
+            DownloadScope::Module(id) => dto.modules.push(id),
+            DownloadScope::Lesson(id) => dto.lessons.push(id),
+        }
+    }
+    Ok(dto)
+}
+
+fn availability<E: TorrentEngine>(
+    library: &CourseLibrary,
+    engine: &E,
+    course_id: &str,
+) -> Result<Vec<ResourceAvailabilityDto>, CommandError> {
+    let failed = |error| command_error("library_query_failed", error);
+    let resources = library.torrent_resources(course_id).map_err(failed)?;
+    let kept = library.committed_resources(course_id).map_err(failed)?;
+    let transfer = resources
+        .first()
+        .and_then(|resource| InfoHash::parse(&resource.info_hash).ok())
+        .and_then(|info_hash| engine.transfer(&info_hash));
+    Ok(resources
+        .into_iter()
+        .map(|resource| {
+            let verified_bytes = transfer
+                .as_ref()
+                .and_then(|transfer| {
+                    transfer
+                        .file_verified_bytes
+                        .get(resource.file_index)
+                        .copied()
+                })
+                .unwrap_or(0);
+            let kept = kept.contains(&resource.resource_id);
+            ResourceAvailabilityDto {
+                state: Availability::of(kept, verified_bytes, resource.byte_length).as_str(),
+                kept,
+                verified_bytes,
                 byte_length: resource.byte_length,
                 resource_id: resource.resource_id,
-            })
-            .collect())
-    })
-    .await
+            }
+        })
+        .collect())
 }
 
 impl From<CourseImportReceipt> for ImportReceiptDto {
@@ -919,6 +1028,35 @@ mod tests {
             save_position(&mut library, "course", "resource", f64::NAN, 10.0).unwrap_err();
         assert_eq!(invalid.code, "invalid_input");
         assert!(!save_position(&mut library, "course", "resource", 1.0, 10.0).unwrap());
+    }
+
+    #[test]
+    fn download_scopes_parse_strictly_and_non_torrent_courses_keep_nothing() {
+        let parse = |value| serde_json::from_value::<DownloadScopeInput>(value);
+        assert!(matches!(
+            parse(serde_json::json!({ "kind": "course" })).unwrap(),
+            DownloadScopeInput::Course {}
+        ));
+        assert!(matches!(
+            parse(serde_json::json!({ "kind": "lesson", "id": "lesson_1" })).unwrap(),
+            DownloadScopeInput::Lesson { id } if id == "lesson_1"
+        ));
+        assert!(parse(serde_json::json!({ "kind": "module" })).is_err());
+        assert!(parse(serde_json::json!({ "kind": "file", "id": "x" })).is_err());
+        assert!(parse(serde_json::json!({ "kind": "course", "path": "/etc" })).is_err());
+
+        let mut library =
+            CourseLibrary::open_in_memory(learning_application::ImportLimits::default()).unwrap();
+        assert!(
+            !library
+                .set_download("course", &DownloadScope::Course, true)
+                .unwrap()
+        );
+        let json = serde_json::to_value(downloads(&library, "course").unwrap()).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "course": false, "modules": [], "lessons": [] })
+        );
     }
 
     #[test]

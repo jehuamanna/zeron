@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
+import { AvailabilityLabel, KeepOfflineToggle, useCourseDownloads } from "../features/downloads/downloads";
 import { LessonPlayer } from "../features/player/LessonPlayer";
 import { CourseSharingCard } from "../features/sharing/CourseSharingCard";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
@@ -72,6 +73,9 @@ export function App() {
       item.byteLength > 0 ? Math.floor((item.verifiedBytes / item.byteLength) * 100) : 100,
     ]),
   );
+
+  const availabilityById = new Map((availability.data ?? []).map((item) => [item.resourceId, item]));
+  const offline = useCourseDownloads(selectedCourseId ?? "", selectedCourseId !== null && torrentCourse);
 
   const leaveCourse = () => {
     setMediaUrl(null);
@@ -167,20 +171,54 @@ export function App() {
                     </div>
                   </div>
                   <aside aria-label="Course contents" className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
-                    <h2 className="mb-5 font-semibold">Course contents</h2>
+                    <h2 className="mb-3 font-semibold">Course contents</h2>
+                    {torrentCourse ? (
+                      <div className="mb-5 space-y-2">
+                        <KeepOfflineToggle
+                          label="Keep the whole course offline"
+                          kept={offline.downloads?.course ?? false}
+                          disabled={offline.change.isPending || !offline.downloads}
+                          onToggle={(keep) => offline.change.mutate({ scope: { kind: "course" }, keep })}
+                        />
+                        <p className="text-xs text-slate-500">Kept lessons download in full. Stopping keeps what is already on this computer.</p>
+                        {offline.error ? <p role="alert" className="text-xs text-red-300">{offline.error}</p> : null}
+                      </div>
+                    ) : null}
                     <div className="space-y-6">
                       {detail.data.modules.map((module) => (
                         <section key={module.id}>
-                          <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">{module.title}</h3>
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">{module.title}</h3>
+                            {torrentCourse ? (
+                              <KeepOfflineToggle
+                                label={`Keep module ${module.title} offline`}
+                                kept={offline.downloads?.modules.includes(module.id) ?? false}
+                                inherited={offline.downloads?.course ?? false}
+                                disabled={offline.change.isPending || !offline.downloads}
+                                onToggle={(keep) => offline.change.mutate({ scope: { kind: "module", id: module.id }, keep })}
+                              />
+                            ) : null}
+                          </div>
                           <div className="space-y-2">
                             {module.lessons.map((lesson) => (
                               <div key={lesson.id} className="rounded-xl border border-white/10 bg-black/10 p-3">
-                                <p className="text-sm font-medium">{lesson.title}</p>
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="text-sm font-medium">{lesson.title}</p>
+                                  {torrentCourse ? (
+                                    <KeepOfflineToggle
+                                      label={`Keep lesson ${lesson.title} offline`}
+                                      kept={offline.downloads?.lessons.includes(lesson.id) ?? false}
+                                      inherited={(offline.downloads?.course ?? false) || (offline.downloads?.modules.includes(module.id) ?? false)}
+                                      disabled={offline.change.isPending || !offline.downloads}
+                                      onToggle={(keep) => offline.change.mutate({ scope: { kind: "lesson", id: lesson.id }, keep })}
+                                    />
+                                  ) : null}
+                                </div>
                                 <div className="mt-2 flex flex-wrap gap-2">
                                   {lesson.resources.map((resource) => resource.kind === "video" ? (
+                                    <span key={resource.id} className="inline-flex flex-wrap items-center gap-2">
                                     <button
                                       type="button"
-                                      key={resource.id}
                                       onClick={() => openMedia.mutate(resource.id)}
                                       disabled={openMedia.isPending}
                                       aria-current={playing === resource.id ? "true" : undefined}
@@ -189,6 +227,8 @@ export function App() {
                                       <Play size={12} /> {playing === resource.id ? "Playing" : "Play video"}
                                       {torrentCourse ? <span className="text-cyan-200/70">· {downloaded.get(resource.id) ?? 0}% downloaded</span> : null}
                                     </button>
+                                    {torrentCourse ? <AvailabilityLabel item={availabilityById.get(resource.id)} /> : null}
+                                    </span>
                                   ) : (
                                     <span key={resource.id} className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-400">
                                       <File size={12} /> {resource.kind}

@@ -50,7 +50,20 @@ export interface ResourceAvailability {
   resourceId: string;
   verifiedBytes: number;
   byteLength: number;
+  /** Whether the learner keeps this lesson offline. */
+  kept: boolean;
+  state: AvailabilityState;
 }
+
+export type AvailabilityState = "online_only" | "downloading" | "partially_available" | "available_offline";
+
+export interface CourseDownloads {
+  course: boolean;
+  modules: string[];
+  lessons: string[];
+}
+
+export type DownloadScope = { kind: "course" } | { kind: "module"; id: string } | { kind: "lesson"; id: string };
 
 export interface CourseSharing {
   courseId: string;
@@ -151,6 +164,10 @@ export const libraryApi = {
   /** A position in the last seconds of a lesson is stored as its start. */
   savePlaybackPosition: (courseId: string, resourceId: string, positionSeconds: number, durationSeconds: number) =>
     invoke<boolean>("save_playback_position", { courseId, resourceId, positionSeconds, durationSeconds }),
+  downloads: (courseId: string) => invoke<CourseDownloads>("get_course_downloads", { courseId }),
+  /** Keeping a scope offline downloads it in full; stopping keeps what is already verified. */
+  setDownload: (courseId: string, scope: DownloadScope, keep: boolean) =>
+    invoke<CourseDownloads>("set_course_download", { courseId, scope, keep }),
   availability: (courseId: string) => invoke<ResourceAvailability[]>("get_course_availability", { courseId }),
   getCourseSharing: (courseId: string) => invoke<CourseSharing | null>("get_course_sharing", { courseId }),
   setCourseSharing: (courseId: string, sharing: boolean) =>

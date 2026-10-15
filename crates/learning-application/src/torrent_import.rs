@@ -17,7 +17,7 @@ use torrent_port::{
 
 use crate::{CancellationFlag, CourseLibrary, ImportLimits};
 
-const MANIFEST_PATH: &str = "course.json";
+pub(crate) const MANIFEST_PATH: &str = "course.json";
 const RETAINED_FINISHED_IMPORTS: usize = 16;
 
 /// Stage of a metadata-first torrent import.
@@ -254,7 +254,8 @@ impl<E: TorrentEngine> TorrentImports<E> {
         finished
     }
 
-    /// Re-activate every torrent-sourced course's manifest after a restart.
+    /// Re-activate every torrent-sourced course after a restart, selecting its
+    /// manifest and every lesson the learner keeps offline.
     /// Returns how many were restored; failures leave the library unchanged.
     pub async fn restore(&self) -> usize {
         let Ok(sources) = self.library().torrent_course_sources() else {
@@ -278,12 +279,19 @@ impl<E: TorrentEngine> TorrentImports<E> {
             }) else {
                 continue;
             };
+            // The manifest plus whatever the learner keeps offline.
+            let files = self
+                .library()
+                .download_selection(&source.course_id)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| vec![manifest]);
             let fetched = self
                 .engine
                 .fetch(FetchRequest {
                     metainfo: source.metainfo,
                     content_root: source.content_root,
-                    files: vec![manifest],
+                    files,
                     initial_peers: Vec::new(),
                 })
                 .await;

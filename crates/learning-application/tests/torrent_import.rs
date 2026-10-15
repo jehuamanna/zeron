@@ -817,3 +817,204 @@ async fn sharing_is_refused_without_a_sharing_engine() {
     router.set_shared(&info_hash, false).await.unwrap();
     private.shutdown().await;
 }
+
+struct Imported {
+    scratch: Scratch,
+    seeder: Arc<LibrqbitEngine>,
+    learner: Arc<LibrqbitEngine>,
+    library: Arc<Mutex<CourseLibrary>>,
+    courses: PathBuf,
+    course_id: String,
+    info_hash: InfoHash,
+}
+
+/// A course imported by magnet from a loopback seeder into a file-backed library.
+async fn imported_course(name: &str) -> Imported {
+    let scratch = Scratch::new(name);
+    let release = publish(&scratch.0);
+    let seeder = loopback_engine(&scratch.0, "seeder", true).await;
+    let address = seed(&seeder, release.torrent.clone(), release.package.clone()).await;
+    let library = Arc::new(Mutex::new(
+        CourseLibrary::open(&scratch.0.join("library.sqlite3"), ImportLimits::default()).unwrap(),
+    ));
+    let learner = loopback_engine(&scratch.0, "learner", false).await;
+    let courses = scratch.0.join("courses");
+    let importer = imports(
+        Arc::clone(&learner),
+        &library,
+        courses.clone(),
+        TorrentImportTimeouts::default(),
+    );
+    let magnet = format!("magnet:?xt=urn:btih:{}", release.info_hash);
+    let (finished, _) = run(&importer, TorrentSource::Magnet(magnet), vec![address]).await;
+    Imported {
+        course_id: finished.course_id.expect("imported"),
+        info_hash: InfoHash::parse(&release.info_hash).unwrap(),
+        scratch,
+        seeder,
+        learner,
+        library,
+        courses,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn kept_lessons_download_in_full_and_are_selected_again_on_restore() {
+    use learning_application::{Availability, DownloadScope};
+
+    let course = imported_course("downloads").await;
+    let library = &course.library;
+    let course_id = &course.course_id;
+    let (lesson_id, resource) = {
+        let library = library.lock().unwrap();
+        let manifest = library.manifest(course_id).unwrap().unwrap();
+        let resource = library.torrent_resources(course_id).unwrap().remove(0);
+        (manifest.modules[0].lessons[0].id.clone(), resource)
+    };
+    let manifest_only = library
+        .lock()
+        .unwrap()
+        .download_selection(course_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(manifest_only.len(), 1);
+    {
+        let mut library = library.lock().unwrap();
+        assert!(
+            !library
+                .set_download(
+                    course_id,
+                    &DownloadScope::Lesson("lesson_x".to_owned()),
+                    true
+                )
+                .unwrap()
+        );
+        assert!(
+            !library
+                .set_download(
+                    course_id,
+                    &DownloadScope::Module("module_x".to_owned()),
+                    true
+                )
+                .unwrap()
+        );
+        assert!(
+            !library
+                .set_download("course_unknown", &DownloadScope::Course, true)
+                .unwrap()
+        );
+        assert!(
+            library
+                .set_download(course_id, &DownloadScope::Lesson(lesson_id), true)
+                .unwrap()
+        );
+        assert!(
+            library
+                .committed_resources(course_id)
+                .unwrap()
+                .contains(&resource.resource_id)
+        );
+    }
+    let selection = library
+        .lock()
+        .unwrap()
+        .download_selection(course_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(selection, [manifest_only[0], resource.file_index]);
+    let verified = |engine: &LibrqbitEngine| {
+        engine
+            .transfer(&course.info_hash)
+            .unwrap()
+            .file_verified_bytes[resource.file_index]
+    };
+    assert_eq!(
+        Availability::of(true, verified(&course.learner), resource.byte_length),
+        Availability::Downloading
+    );
+
+    course
+        .learner
+        .select_files(&course.info_hash, &selection)
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while verified(&course.learner) < resource.byte_length {
+        assert!(Instant::now() < deadline, "the kept lesson downloads");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        Availability::of(true, verified(&course.learner), resource.byte_length),
+        Availability::AvailableOffline
+    );
+    course.learner.shutdown().await;
+    course.seeder.shutdown().await;
+
+    // A restore selects the kept lesson again, not just the manifest.
+    let restoring = scripted(Script::StallManifest);
+    let restorer = imports(
+        Arc::clone(&restoring),
+        library,
+        course.courses.clone(),
+        TorrentImportTimeouts::default(),
+    );
+    assert_eq!(restorer.restore().await, 1);
+    assert_eq!(restoring.fetched.lock().unwrap()[0].files, selection);
+    drop(course.scratch);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn module_and_course_scopes_cover_their_lessons_and_labels_follow_availability() {
+    use learning_application::{Availability, DownloadScope};
+
+    let course = imported_course("download-scopes").await;
+    let course_id = &course.course_id;
+    {
+        let mut library = course.library.lock().unwrap();
+        let module_id = library.manifest(course_id).unwrap().unwrap().modules[0]
+            .id
+            .clone();
+        let resource = library.torrent_resources(course_id).unwrap().remove(0);
+        let manifest_only = library.download_selection(course_id).unwrap().unwrap();
+        let with_lesson = [manifest_only[0], resource.file_index];
+
+        library
+            .set_download(course_id, &DownloadScope::Module(module_id.clone()), true)
+            .unwrap();
+        assert_eq!(
+            library.download_selection(course_id).unwrap().unwrap(),
+            with_lesson
+        );
+        library
+            .set_download(course_id, &DownloadScope::Module(module_id), false)
+            .unwrap();
+        assert_eq!(
+            library.download_selection(course_id).unwrap().unwrap(),
+            manifest_only
+        );
+        library
+            .set_download(course_id, &DownloadScope::Course, true)
+            .unwrap();
+        assert_eq!(
+            library.downloads(course_id).unwrap(),
+            [DownloadScope::Course]
+        );
+        assert_eq!(
+            library.download_selection(course_id).unwrap().unwrap(),
+            with_lesson
+        );
+    }
+
+    assert_eq!(Availability::of(false, 0, 10), Availability::OnlineOnly);
+    assert_eq!(
+        Availability::of(false, 4, 10),
+        Availability::PartiallyAvailable
+    );
+    assert_eq!(Availability::of(true, 4, 10), Availability::Downloading);
+    assert_eq!(
+        Availability::of(false, 10, 10).as_str(),
+        "available_offline"
+    );
+    course.learner.shutdown().await;
+    course.seeder.shutdown().await;
+}

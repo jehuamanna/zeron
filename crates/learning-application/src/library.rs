@@ -84,7 +84,7 @@ const FINISHED_WITHIN_SECONDS: f64 = 10.0;
 /// This type composes verification and persistence while keeping both adapters
 /// out of UI and Tauri command handlers.
 pub struct CourseLibrary {
-    storage: Storage,
+    pub(crate) storage: Storage,
     import_limits: ImportLimits,
 }
 
