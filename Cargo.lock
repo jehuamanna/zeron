@@ -2553,6 +2553,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "publisher-application"
+version = "0.1.0"
+dependencies = [
+ "course-publisher",
+ "getrandom 0.4.3",
+ "publisher-storage",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "publisher-storage"
 version = "0.1.0"
 dependencies = [
@@ -4762,8 +4772,7 @@ version = "0.1.0"
 dependencies = [
  "course-format",
  "course-publisher",
- "getrandom 0.4.3",
- "publisher-storage",
+ "publisher-application",
  "serde",
  "serde_json",
  "tauri",

@@ -1,0 +1,301 @@
+//! Admin publisher use cases shared by Zeron composition roots.
+
+use std::path::Path;
+
+use course_publisher::{DraftCourse, DraftMetadata, DraftValidationIssue, EditError};
+use publisher_storage::PublisherStorage;
+pub use publisher_storage::{DraftSummary, PublisherStorageError, StoredDraft};
+use thiserror::Error;
+
+const MAX_LIST_ENTRIES: usize = 32;
+const MAX_DESCRIPTION_CHARS: usize = 10_000;
+
+/// Publisher-supplied course metadata for one autosave.
+///
+/// The logical course ID is deliberately absent: it is assigned at draft
+/// creation and never changes through editing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MetadataEdit {
+    /// Intended semantic version of the next release.
+    pub version: String,
+    /// Display title.
+    pub title: String,
+    /// Optional multi-line description.
+    pub description: Option<String>,
+    /// Publisher display name.
+    pub publisher_name: String,
+    /// BCP-47-style content language.
+    pub language: String,
+    /// Optional category.
+    pub category: Option<String>,
+    /// Discovery tags.
+    pub tags: Vec<String>,
+    /// Suggested prior knowledge.
+    pub prerequisites: Vec<String>,
+    /// Optional license name or SPDX identifier.
+    pub license_name: Option<String>,
+}
+
+/// Draft use-case failure.
+#[derive(Debug, Error)]
+pub enum DraftServiceError {
+    /// No draft has the requested ID.
+    #[error("draft '{draft_id}' was not found")]
+    NotFound {
+        /// Requested draft ID.
+        draft_id: String,
+    },
+    /// The editor's snapshot is older than the durable draft.
+    #[error("draft revision conflict: expected {expected}, current {actual}")]
+    RevisionConflict {
+        /// Revision the editor started from.
+        expected: u64,
+        /// Durable revision that must be reloaded.
+        actual: u64,
+    },
+    /// An edit exceeded a bound or contained disallowed characters.
+    #[error("{field} {message}")]
+    InvalidInput {
+        /// Draft field path suitable for focusing the editor.
+        field: String,
+        /// Remediation text.
+        message: &'static str,
+    },
+    /// The OS random source could not create an identifier.
+    #[error("cannot generate an opaque identifier: {0}")]
+    IdGeneration(#[source] getrandom::Error),
+    /// Durable storage failed.
+    #[error(transparent)]
+    Storage(PublisherStorageError),
+}
+
+impl From<PublisherStorageError> for DraftServiceError {
+    fn from(error: PublisherStorageError) -> Self {
+        match error {
+            PublisherStorageError::RevisionConflict { expected, actual } => {
+                Self::RevisionConflict { expected, actual }
+            }
+            other => Self::Storage(other),
+        }
+    }
+}
+
+/// Draft creation, autosave, and validation use cases.
+pub struct PublisherDrafts {
+    storage: PublisherStorage,
+}
+
+impl PublisherDrafts {
+    /// Open the file-backed publisher database.
+    ///
+    /// # Errors
+    /// Returns an error when the database cannot be opened or migrated.
+    pub fn open(path: &Path) -> Result<Self, DraftServiceError> {
+        Ok(Self {
+            storage: PublisherStorage::open(path)?,
+        })
+    }
+
+    /// Open an isolated in-memory database for tests.
+    ///
+    /// # Errors
+    /// Returns an error when the database cannot be migrated.
+    pub fn open_in_memory() -> Result<Self, DraftServiceError> {
+        Ok(Self {
+            storage: PublisherStorage::open_in_memory()?,
+        })
+    }
+
+    /// List path-free draft summaries, most recently saved first.
+    ///
+    /// # Errors
+    /// Returns an error when storage cannot be queried.
+    pub fn list(&self) -> Result<Vec<DraftSummary>, DraftServiceError> {
+        Ok(self.storage.list_drafts()?)
+    }
+
+    /// Create an empty draft with fresh opaque draft and course IDs.
+    ///
+    /// # Errors
+    /// Returns an error when randomness or storage fails.
+    pub fn create(&mut self) -> Result<StoredDraft, DraftServiceError> {
+        let draft = DraftCourse {
+            draft_id: opaque_id("draft")?,
+            revision: 0,
+            metadata: DraftMetadata {
+                course_id: opaque_id("course")?,
+                version: "0.1.0".to_owned(),
+                title: "Untitled course".to_owned(),
+                description: None,
+                publisher_name: "Local publisher".to_owned(),
+                language: "en".to_owned(),
+                category: None,
+                tags: Vec::new(),
+                prerequisites: Vec::new(),
+                license_name: None,
+            },
+            modules: Vec::new(),
+        };
+        let summary = self.storage.create_draft(&draft)?;
+        Ok(StoredDraft {
+            draft,
+            updated_at_unix_seconds: summary.updated_at_unix_seconds,
+        })
+    }
+
+    /// Load one draft snapshot.
+    ///
+    /// # Errors
+    /// Returns an error when storage cannot be queried.
+    pub fn draft(&self, draft_id: &str) -> Result<Option<StoredDraft>, DraftServiceError> {
+        Ok(self.storage.stored_draft(draft_id)?)
+    }
+
+    /// Autosave metadata when the editor still owns the durable revision.
+    ///
+    /// # Errors
+    /// Reports stale revisions as [`DraftServiceError::RevisionConflict`] and
+    /// rejects unbounded or control-character input before any write.
+    pub fn update_metadata(
+        &mut self,
+        draft_id: &str,
+        expected_revision: u64,
+        edit: MetadataEdit,
+    ) -> Result<StoredDraft, DraftServiceError> {
+        let mut draft = self.require(draft_id)?;
+        let metadata = normalize(edit, draft.metadata.course_id.clone())?;
+        draft
+            .replace_metadata(expected_revision, metadata)
+            .map_err(edit_error)?;
+        let summary = self.storage.update_draft(expected_revision, &draft)?;
+        Ok(StoredDraft {
+            draft,
+            updated_at_unix_seconds: summary.updated_at_unix_seconds,
+        })
+    }
+
+    /// Validate the saved draft with the same policy used before packaging.
+    ///
+    /// # Errors
+    /// Returns [`DraftServiceError::NotFound`] or a storage failure.
+    pub fn validate(&self, draft_id: &str) -> Result<Vec<DraftValidationIssue>, DraftServiceError> {
+        Ok(self.require(draft_id)?.validate())
+    }
+
+    fn require(&self, draft_id: &str) -> Result<DraftCourse, DraftServiceError> {
+        self.storage
+            .draft(draft_id)?
+            .ok_or_else(|| DraftServiceError::NotFound {
+                draft_id: draft_id.to_owned(),
+            })
+    }
+}
+
+fn normalize(edit: MetadataEdit, course_id: String) -> Result<DraftMetadata, DraftServiceError> {
+    Ok(DraftMetadata {
+        course_id,
+        version: line("metadata.version", edit.version, 64)?,
+        title: line("metadata.title", edit.title, 200)?,
+        description: optional(
+            edit.description
+                .map(|value| multiline("metadata.description", value))
+                .transpose()?,
+        ),
+        publisher_name: line("metadata.publisherName", edit.publisher_name, 200)?,
+        language: line("metadata.language", edit.language, 63)?,
+        category: optional(
+            edit.category
+                .map(|value| line("metadata.category", value, 100))
+                .transpose()?,
+        ),
+        tags: list("metadata.tags", edit.tags, 64)?,
+        prerequisites: list("metadata.prerequisites", edit.prerequisites, 200)?,
+        license_name: optional(
+            edit.license_name
+                .map(|value| line("metadata.licenseName", value, 100))
+                .transpose()?,
+        ),
+    })
+}
+
+fn line(field: &str, value: String, max_chars: usize) -> Result<String, DraftServiceError> {
+    if value.chars().count() > max_chars {
+        return Err(invalid(field, "is too long"));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(invalid(field, "must be a single line of text"));
+    }
+    Ok(value)
+}
+
+fn multiline(field: &str, value: String) -> Result<String, DraftServiceError> {
+    if value.chars().count() > MAX_DESCRIPTION_CHARS {
+        return Err(invalid(field, "is too long"));
+    }
+    if value
+        .chars()
+        .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
+    {
+        return Err(invalid(field, "contains unsupported control characters"));
+    }
+    Ok(value)
+}
+
+fn optional(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.trim().is_empty())
+}
+
+fn list(
+    field: &str,
+    values: Vec<String>,
+    max_chars: usize,
+) -> Result<Vec<String>, DraftServiceError> {
+    if values.len() > MAX_LIST_ENTRIES {
+        return Err(invalid(field, "has too many entries"));
+    }
+    let mut entries = Vec::new();
+    for (index, value) in values.into_iter().enumerate() {
+        let value = line(&format!("{field}[{index}]"), value, max_chars)?;
+        let value = value.trim();
+        if !value.is_empty() && !entries.iter().any(|entry| entry == value) {
+            entries.push(value.to_owned());
+        }
+    }
+    Ok(entries)
+}
+
+fn invalid(field: &str, message: &'static str) -> DraftServiceError {
+    DraftServiceError::InvalidInput {
+        field: field.to_owned(),
+        message,
+    }
+}
+
+fn edit_error(error: EditError) -> DraftServiceError {
+    match error {
+        EditError::RevisionConflict { expected, actual } => {
+            DraftServiceError::RevisionConflict { expected, actual }
+        }
+        EditError::NotFound { entity, id } => DraftServiceError::InvalidInput {
+            field: format!("{entity}:{id}"),
+            message: "was not found",
+        },
+        EditError::InvalidPosition { entity, .. } => DraftServiceError::InvalidInput {
+            field: entity.to_owned(),
+            message: "target position is outside the collection",
+        },
+    }
+}
+
+fn opaque_id(prefix: &str) -> Result<String, DraftServiceError> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).map_err(DraftServiceError::IdGeneration)?;
+    let mut id = String::with_capacity(prefix.len() + 1 + bytes.len() * 2);
+    id.push_str(prefix);
+    id.push('_');
+    for byte in bytes {
+        use std::fmt::Write;
+        let _ = write!(id, "{byte:02x}");
+    }
+    Ok(id)
+}

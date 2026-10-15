@@ -38,21 +38,25 @@ The last fully green baseline at `930b4d5` passed Rust formatting, Clippy with w
 
 `AGENTS.md` is modified by the user. Preserve it and exclude it from implementation commits. Its added instruction is to keep implementing and testing all phases continuously.
 
-## Completed after handover: Admin Desktop foundation
+## Completed after handover
 
-The Admin Desktop foundation slice is committed (see `docs/releases/phase-2-admin-desktop-foundation.md`). `apps/admin-desktop/src-tauri` composes `publisher-storage` against app-data `publisher.sqlite3` and exposes thin `list_drafts`, `create_draft`, and `get_draft` commands with path-free DTOs. Command bodies are Tauri-independent functions tested against in-memory storage.
+- Admin Desktop foundation (`docs/releases/phase-2-admin-desktop-foundation.md`).
+- Draft application service and metadata autosave (`docs/releases/phase-2-draft-application-service.md`). `publisher-application::PublisherDrafts` owns draft use cases; `apps/admin-desktop/src-tauri` composes it against app-data `publisher.sqlite3`. Command bodies are Tauri-independent functions tested against in-memory storage. Command errors carry `code`, plus `currentRevision` for conflicts and `field` for invalid input.
 
 Local tooling note: `pnpm` is not on `PATH` in this environment; it is available as `corepack pnpm` from `~/.nvm/versions/node/v22.22.2/bin`. The root scripts invoke nested `pnpm`, so put a `pnpm` shim that execs `corepack pnpm` on `PATH` before running the JS gates.
 
 ## Next slice
 
-Admin draft application service and autosave edits with conflict reporting (item 1 below).
+Module/lesson/resource CRUD and accessible reordering (item 2 below). Add edit operations to `course-publisher::DraftCourse`, expose them through `PublisherDrafts` with the same revision/conflict contract as metadata autosave, and extend the Builder structure panel.
+
+When testing UI in the browser pane, Tauri IPC can be faked by assigning `window.__TAURI_INTERNALS__ = { invoke, transformCallback }` after the page loads, then using the app (the initial list query will already have failed).
 
 ## Important module boundaries
 
 - `course-format`: manifest wire contract and semantic validation.
 - `course-publisher`: SQLite/Tauri-independent draft and publishing policy.
 - `publisher-storage`: mutable Admin draft persistence and compare-and-swap saves.
+- `publisher-application`: Admin draft use cases (create, autosave, validate) and input bounds.
 - `learning-application`: learner import/library use cases.
 - `learning-storage`: learner persistence.
 - `media-gateway`: authenticated loopback HTTP delivery; no Tauri or torrent dependency.
@@ -66,7 +70,7 @@ Phase 1 is functionally established, including complete local-file playback. Pha
 
 Continue Phase 2 in small slices:
 
-1. Admin draft application service and autosave edits with conflict reporting.
+1. ~~Admin draft application service and autosave edits with conflict reporting.~~ Done.
 2. Module/lesson/resource CRUD and accessible reordering.
 3. Backend-only source selection plus path-free resource DTOs.
 4. Deterministic package staging and canonical `course.json` generation.

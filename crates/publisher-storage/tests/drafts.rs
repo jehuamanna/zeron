@@ -46,6 +46,19 @@ fn draft_survives_restart_and_lists_without_source_paths() {
 }
 
 #[test]
+fn stored_draft_reports_the_last_save_time() {
+    let mut storage = PublisherStorage::open_in_memory().unwrap();
+    let summary = storage.create_draft(&draft()).unwrap();
+    let stored = storage.stored_draft("draft_one").unwrap().unwrap();
+    assert_eq!(stored.draft, draft());
+    assert_eq!(
+        stored.updated_at_unix_seconds,
+        summary.updated_at_unix_seconds
+    );
+    assert!(storage.stored_draft("draft_missing").unwrap().is_none());
+}
+
+#[test]
 fn compare_and_swap_rejects_a_stale_autosave() {
     let mut storage = PublisherStorage::open_in_memory().unwrap();
     let original = draft();

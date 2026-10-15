@@ -1,8 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use course_publisher::{DraftCourse, DraftMetadata};
-use publisher_storage::{DraftSummary, PublisherStorage};
-use serde::Serialize;
+use course_publisher::DraftValidationIssue;
+use publisher_application::{
+    DraftServiceError, DraftSummary, MetadataEdit, PublisherDrafts, StoredDraft,
+};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::AppState;
@@ -30,6 +32,10 @@ pub(crate) struct DraftDetailDto {
     description: Option<String>,
     publisher_name: String,
     language: String,
+    category: Option<String>,
+    tags: Vec<String>,
+    prerequisites: Vec<String>,
+    license_name: Option<String>,
     modules: Vec<ModuleDto>,
 }
 
@@ -49,27 +55,53 @@ struct LessonDto {
     resource_count: usize,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DraftMetadataInput {
+    course_version: String,
+    title: String,
+    description: Option<String>,
+    publisher_name: String,
+    language: String,
+    category: Option<String>,
+    tags: Vec<String>,
+    prerequisites: Vec<String>,
+    license_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ValidationIssueDto {
+    code: &'static str,
+    field: String,
+    message: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CommandError {
     code: &'static str,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_revision: Option<u64>,
 }
 
 #[tauri::command]
 pub(crate) async fn list_drafts(
     state: State<'_, AppState>,
 ) -> Result<Vec<DraftSummaryDto>, CommandError> {
-    let storage = Arc::clone(&state.storage);
-    run_blocking(move || list(&*lock_storage(&storage)?)).await
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || list(&*lock_drafts(&drafts)?)).await
 }
 
 #[tauri::command]
 pub(crate) async fn create_draft(
     state: State<'_, AppState>,
 ) -> Result<DraftDetailDto, CommandError> {
-    let storage = Arc::clone(&state.storage);
-    run_blocking(move || create(&mut *lock_storage(&storage)?)).await
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || create(&mut *lock_drafts(&drafts)?)).await
 }
 
 #[tauri::command]
@@ -77,76 +109,108 @@ pub(crate) async fn get_draft(
     draft_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<DraftDetailDto>, CommandError> {
-    let storage = Arc::clone(&state.storage);
-    run_blocking(move || detail(&*lock_storage(&storage)?, &draft_id)).await
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || detail(&*lock_drafts(&drafts)?, &draft_id)).await
 }
 
-fn list(storage: &PublisherStorage) -> Result<Vec<DraftSummaryDto>, CommandError> {
-    storage
-        .list_drafts()
-        .map(|drafts| drafts.into_iter().map(DraftSummaryDto::from).collect())
-        .map_err(|error| command_error("draft_list_failed", error))
+#[tauri::command]
+pub(crate) async fn update_draft_metadata(
+    draft_id: String,
+    expected_revision: u64,
+    metadata: DraftMetadataInput,
+    state: State<'_, AppState>,
+) -> Result<DraftDetailDto, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || {
+        update_metadata(
+            &mut *lock_drafts(&drafts)?,
+            &draft_id,
+            expected_revision,
+            metadata,
+        )
+    })
+    .await
 }
 
-fn create(storage: &mut PublisherStorage) -> Result<DraftDetailDto, CommandError> {
-    let draft = new_draft().map_err(|error| command_error("draft_id_generation_failed", error))?;
-    storage
-        .create_draft(&draft)
-        .map(|summary| DraftDetailDto::from_draft(draft, summary.updated_at_unix_seconds))
-        .map_err(|error| command_error("draft_create_failed", error))
+#[tauri::command]
+pub(crate) async fn validate_draft(
+    draft_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ValidationIssueDto>, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || validate(&*lock_drafts(&drafts)?, &draft_id)).await
+}
+
+fn list(drafts: &PublisherDrafts) -> Result<Vec<DraftSummaryDto>, CommandError> {
+    drafts
+        .list()
+        .map(|summaries| summaries.into_iter().map(DraftSummaryDto::from).collect())
+        .map_err(|error| service_error("draft_list_failed", error))
+}
+
+fn create(drafts: &mut PublisherDrafts) -> Result<DraftDetailDto, CommandError> {
+    drafts
+        .create()
+        .map(DraftDetailDto::from)
+        .map_err(|error| service_error("draft_create_failed", error))
 }
 
 fn detail(
-    storage: &PublisherStorage,
+    drafts: &PublisherDrafts,
     draft_id: &str,
 ) -> Result<Option<DraftDetailDto>, CommandError> {
-    let Some(draft) = storage
+    drafts
         .draft(draft_id)
-        .map_err(|error| command_error("draft_lookup_failed", error))?
-    else {
-        return Ok(None);
-    };
-    let updated_at_unix_seconds = storage
-        .list_drafts()
-        .map_err(|error| command_error("draft_lookup_failed", error))?
-        .into_iter()
-        .find(|summary| summary.draft_id == draft_id)
-        .map_or(0, |summary| summary.updated_at_unix_seconds);
-    Ok(Some(DraftDetailDto::from_draft(
-        draft,
-        updated_at_unix_seconds,
-    )))
+        .map(|stored| stored.map(DraftDetailDto::from))
+        .map_err(|error| service_error("draft_lookup_failed", error))
 }
 
-fn new_draft() -> Result<DraftCourse, getrandom::Error> {
-    Ok(DraftCourse {
-        draft_id: opaque_id("draft")?,
-        revision: 0,
-        metadata: DraftMetadata {
-            course_id: opaque_id("course")?,
-            version: "0.1.0".to_owned(),
-            title: "Untitled course".to_owned(),
-            description: None,
-            publisher_name: "Local publisher".to_owned(),
-            language: "en".to_owned(),
-            category: None,
-            tags: Vec::new(),
-            prerequisites: Vec::new(),
-            license_name: None,
-        },
-        modules: Vec::new(),
-    })
+fn update_metadata(
+    drafts: &mut PublisherDrafts,
+    draft_id: &str,
+    expected_revision: u64,
+    metadata: DraftMetadataInput,
+) -> Result<DraftDetailDto, CommandError> {
+    drafts
+        .update_metadata(draft_id, expected_revision, metadata.into())
+        .map(DraftDetailDto::from)
+        .map_err(|error| service_error("draft_save_failed", error))
 }
 
-fn opaque_id(prefix: &str) -> Result<String, getrandom::Error> {
-    let mut bytes = [0_u8; 16];
-    getrandom::fill(&mut bytes)?;
-    let mut hex = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write;
-        let _ = write!(hex, "{byte:02x}");
+fn validate(
+    drafts: &PublisherDrafts,
+    draft_id: &str,
+) -> Result<Vec<ValidationIssueDto>, CommandError> {
+    drafts
+        .validate(draft_id)
+        .map(|issues| issues.into_iter().map(ValidationIssueDto::from).collect())
+        .map_err(|error| service_error("draft_validation_failed", error))
+}
+
+impl From<DraftMetadataInput> for MetadataEdit {
+    fn from(input: DraftMetadataInput) -> Self {
+        Self {
+            version: input.course_version,
+            title: input.title,
+            description: input.description,
+            publisher_name: input.publisher_name,
+            language: input.language,
+            category: input.category,
+            tags: input.tags,
+            prerequisites: input.prerequisites,
+            license_name: input.license_name,
+        }
     }
-    Ok(format!("{prefix}_{hex}"))
+}
+
+impl From<DraftValidationIssue> for ValidationIssueDto {
+    fn from(issue: DraftValidationIssue) -> Self {
+        Self {
+            code: issue.code,
+            field: issue.field,
+            message: issue.message,
+        }
+    }
 }
 
 impl From<DraftSummary> for DraftSummaryDto {
@@ -162,18 +226,23 @@ impl From<DraftSummary> for DraftSummaryDto {
     }
 }
 
-impl DraftDetailDto {
-    fn from_draft(draft: DraftCourse, updated_at_unix_seconds: u64) -> Self {
+impl From<StoredDraft> for DraftDetailDto {
+    fn from(stored: StoredDraft) -> Self {
+        let draft = stored.draft;
         Self {
             draft_id: draft.draft_id,
             course_id: draft.metadata.course_id,
             course_version: draft.metadata.version,
             title: draft.metadata.title,
             revision: draft.revision,
-            updated_at_unix_seconds,
+            updated_at_unix_seconds: stored.updated_at_unix_seconds,
             description: draft.metadata.description,
             publisher_name: draft.metadata.publisher_name,
             language: draft.metadata.language,
+            category: draft.metadata.category,
+            tags: draft.metadata.tags,
+            prerequisites: draft.metadata.prerequisites,
+            license_name: draft.metadata.license_name,
             modules: draft
                 .modules
                 .into_iter()
@@ -200,25 +269,45 @@ async fn run_blocking<T: Send + 'static>(
 ) -> Result<T, CommandError> {
     tauri::async_runtime::spawn_blocking(work)
         .await
-        .map_err(|error| CommandError {
-            code: "worker_failed",
-            message: error.to_string(),
-        })?
+        .map_err(|error| CommandError::new("worker_failed", error))?
 }
 
-fn lock_storage(
-    storage: &Arc<Mutex<PublisherStorage>>,
-) -> Result<std::sync::MutexGuard<'_, PublisherStorage>, CommandError> {
-    storage.lock().map_err(|_| CommandError {
-        code: "storage_unavailable",
-        message: "the publisher storage worker is unavailable".to_owned(),
+fn lock_drafts(
+    drafts: &Arc<Mutex<PublisherDrafts>>,
+) -> Result<std::sync::MutexGuard<'_, PublisherDrafts>, CommandError> {
+    drafts.lock().map_err(|_| {
+        CommandError::new(
+            "storage_unavailable",
+            "the publisher storage worker is unavailable",
+        )
     })
 }
 
-fn command_error(code: &'static str, error: impl std::fmt::Display) -> CommandError {
-    CommandError {
-        code,
-        message: error.to_string(),
+fn service_error(code: &'static str, error: DraftServiceError) -> CommandError {
+    match error {
+        DraftServiceError::RevisionConflict { actual, .. } => CommandError {
+            current_revision: Some(actual),
+            ..CommandError::new("revision_conflict", error)
+        },
+        DraftServiceError::NotFound { .. } => CommandError::new("draft_not_found", error),
+        DraftServiceError::InvalidInput { ref field, .. } => CommandError {
+            field: Some(field.clone()),
+            ..CommandError::new("invalid_input", error)
+        },
+        DraftServiceError::IdGeneration(_) | DraftServiceError::Storage(_) => {
+            CommandError::new(code, error)
+        }
+    }
+}
+
+impl CommandError {
+    fn new(code: &'static str, message: impl std::fmt::Display) -> Self {
+        Self {
+            code,
+            message: message.to_string(),
+            field: None,
+            current_revision: None,
+        }
     }
 }
 
@@ -231,55 +320,84 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn new_draft_uses_defaults_and_opaque_ids() {
-        let first = new_draft().unwrap();
-        let second = new_draft().unwrap();
-        assert_eq!(first.revision, 0);
-        assert_eq!(first.metadata.version, "0.1.0");
-        assert_eq!(first.metadata.title, "Untitled course");
-        assert_eq!(first.metadata.publisher_name, "Local publisher");
-        assert_eq!(first.metadata.language, "en");
-        assert!(first.modules.is_empty());
-        assert!(
-            first
-                .validate()
-                .iter()
-                .any(|issue| issue.code == "empty_course")
-        );
-        for (id, prefix) in [
-            (&first.draft_id, "draft_"),
-            (&first.metadata.course_id, "course_"),
-        ] {
-            let hex = id.strip_prefix(prefix).unwrap();
-            assert_eq!(hex.len(), 32);
-            assert!(hex.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        }
-        assert_ne!(first.draft_id, second.draft_id);
-        assert_ne!(first.metadata.course_id, second.metadata.course_id);
+    fn input(title: &str) -> DraftMetadataInput {
+        serde_json::from_value(serde_json::json!({
+            "courseVersion": "1.0.0",
+            "title": title,
+            "description": null,
+            "publisherName": "Zeron Tests",
+            "language": "en",
+            "category": null,
+            "tags": ["rust"],
+            "prerequisites": [],
+            "licenseName": "MIT"
+        }))
+        .unwrap()
     }
 
     #[test]
-    fn created_draft_round_trips_through_storage() {
-        let mut storage = PublisherStorage::open_in_memory().unwrap();
-        let created = create(&mut storage).unwrap();
-        let listed = list(&storage).unwrap();
+    fn create_list_get_round_trip_without_paths() {
+        let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+        let created = create(&mut drafts).unwrap();
+        let listed = list(&drafts).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].draft_id, created.draft_id);
-        assert_eq!(listed[0].revision, 0);
-        let loaded = detail(&storage, &created.draft_id).unwrap().unwrap();
-        assert_eq!(loaded.course_id, created.course_id);
+        let loaded = detail(&drafts, &created.draft_id).unwrap().unwrap();
+        assert_eq!(loaded.revision, 0);
         assert_eq!(
             loaded.updated_at_unix_seconds,
             created.updated_at_unix_seconds
         );
-        assert!(detail(&storage, "draft_missing").unwrap().is_none());
+        assert!(detail(&drafts, "draft_missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn metadata_save_returns_next_revision_and_conflicts_report_current() {
+        let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+        let draft_id = create(&mut drafts).unwrap().draft_id;
+        let saved = update_metadata(&mut drafts, &draft_id, 0, input("First")).unwrap();
+        assert_eq!(saved.revision, 1);
+        assert_eq!(saved.title, "First");
+        assert_eq!(saved.license_name.as_deref(), Some("MIT"));
+        let conflict = update_metadata(&mut drafts, &draft_id, 0, input("Stale")).unwrap_err();
+        let json = serde_json::to_value(conflict).unwrap();
+        assert_eq!(json["code"], "revision_conflict");
+        assert_eq!(json["currentRevision"], 1);
+        assert!(json.get("field").is_none());
+    }
+
+    #[test]
+    fn invalid_input_names_the_field_and_unknown_input_is_rejected() {
+        let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+        let draft_id = create(&mut drafts).unwrap().draft_id;
+        let error = update_metadata(&mut drafts, &draft_id, 0, input("bad\u{0}")).unwrap_err();
+        let json = serde_json::to_value(error).unwrap();
+        assert_eq!(json["code"], "invalid_input");
+        assert_eq!(json["field"], "metadata.title");
+        let unknown: Result<DraftMetadataInput, _> = serde_json::from_value(serde_json::json!({
+            "courseVersion": "1.0.0", "title": "T", "description": null, "publisherName": "P",
+            "language": "en", "category": null, "tags": [], "prerequisites": [],
+            "licenseName": null, "courseId": "course_hijack"
+        }));
+        assert!(unknown.is_err());
+    }
+
+    #[test]
+    fn validation_issues_are_path_free() {
+        let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+        let draft_id = create(&mut drafts).unwrap().draft_id;
+        let issues = validate(&drafts, &draft_id).unwrap();
+        assert!(issues.iter().any(|issue| issue.code == "empty_course"));
+        let error = validate(&drafts, "draft_missing").unwrap_err();
+        assert_eq!(error.code, "draft_not_found");
     }
 
     #[test]
     fn detail_dto_counts_resources_without_exposing_source_paths() {
-        let mut draft = new_draft().unwrap();
-        draft.modules.push(DraftModule {
+        let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+        let mut stored = drafts.create().unwrap();
+        stored.updated_at_unix_seconds = 7;
+        stored.draft.modules.push(DraftModule {
             id: "module_one".to_owned(),
             title: "Module".to_owned(),
             lessons: vec![DraftLesson {
@@ -297,7 +415,7 @@ mod tests {
                 }],
             }],
         });
-        let json = serde_json::to_value(DraftDetailDto::from_draft(draft, 7)).unwrap();
+        let json = serde_json::to_value(DraftDetailDto::from(stored)).unwrap();
         assert_eq!(json["modules"][0]["lessons"][0]["resourceCount"], 1);
         assert_eq!(json["updatedAtUnixSeconds"], 7);
         let text = json.to_string();

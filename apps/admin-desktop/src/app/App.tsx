@@ -1,25 +1,46 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BookPlus, Boxes, CheckCircle2, FileVideo, Network, Settings2 } from "lucide-react";
-import { useState } from "react";
+import { AlertCircle, ArrowLeft, BookPlus, Boxes, CheckCircle2, FileVideo, Network, Settings2 } from "lucide-react";
+import { useCallback, useState } from "react";
 
-import { publisherApi } from "../services/publisher";
+import { MetadataForm } from "../features/builder/MetadataForm";
+import { publisherApi, type DraftDetail } from "../services/publisher";
+import { useBuilderUi } from "../stores/builder";
 
 export function App() {
   const queryClient = useQueryClient();
-  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
+  const { selectedDraftId, selectDraft } = useBuilderUi();
+  const [reloadCount, setReloadCount] = useState(0);
   const drafts = useQuery({ queryKey: ["publisher-drafts"], queryFn: publisherApi.listDrafts });
   const draft = useQuery({
     queryKey: ["publisher-draft", selectedDraftId],
     queryFn: () => publisherApi.getDraft(selectedDraftId!),
     enabled: selectedDraftId !== null,
   });
+  const validation = useQuery({
+    queryKey: ["publisher-draft-validation", selectedDraftId],
+    queryFn: () => publisherApi.validateDraft(selectedDraftId!),
+    enabled: selectedDraftId !== null,
+  });
   const createDraft = useMutation({
     mutationFn: publisherApi.createDraft,
     onSuccess: async (created) => {
+      queryClient.setQueryData(["publisher-draft", created.draftId], created);
       await queryClient.invalidateQueries({ queryKey: ["publisher-drafts"] });
-      setSelectedDraftId(created.draftId);
+      selectDraft(created.draftId);
     },
   });
+  const handleSaved = useCallback(
+    (saved: DraftDetail) => {
+      queryClient.setQueryData(["publisher-draft", saved.draftId], saved);
+      void queryClient.invalidateQueries({ queryKey: ["publisher-drafts"] });
+      void queryClient.invalidateQueries({ queryKey: ["publisher-draft-validation", saved.draftId] });
+    },
+    [queryClient],
+  );
+  const reloadDraft = async () => {
+    await Promise.all([draft.refetch(), validation.refetch()]);
+    setReloadCount((count) => count + 1);
+  };
 
   return (
     <main className="min-h-screen bg-[#090d16] text-slate-100">
@@ -52,23 +73,38 @@ export function App() {
           <div className="py-8">
             {selectedDraftId ? (
               <div>
-                <button type="button" onClick={() => setSelectedDraftId(null)} className="mb-6 flex items-center gap-2 text-sm text-slate-400"><ArrowLeft size={16} /> Back to courses</button>
+                <button type="button" onClick={() => selectDraft(null)} className="mb-6 flex items-center gap-2 text-sm text-slate-400"><ArrowLeft size={16} /> Back to courses</button>
                 {draft.isPending ? <p className="text-slate-400">Opening draft…</p> : draft.data ? (
                   <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-                    <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7">
-                      <div className="flex items-start justify-between gap-4">
-                        <div><h2 className="text-3xl font-semibold">{draft.data.title}</h2><p className="mt-2 text-slate-400">{draft.data.description ?? "Add course details and structure before validation."}</p></div>
-                        <span className="rounded-full bg-emerald-300/10 px-3 py-1 text-xs text-emerald-300">Draft saved · r{draft.data.revision}</span>
+                    <div className="space-y-6">
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7">
+                        <MetadataForm key={`${draft.data.draftId}:${reloadCount}`} draft={draft.data} onSaved={handleSaved} onReload={() => void reloadDraft()} />
                       </div>
-                      <div className="mt-8 space-y-4">
-                        {draft.data.modules.length ? draft.data.modules.map((module) => <div key={module.id} className="rounded-2xl border border-white/10 p-5"><h3 className="font-semibold">{module.title}</h3></div>) : (
-                          <div className="rounded-2xl border border-dashed border-white/15 py-16 text-center text-slate-500"><FileVideo className="mx-auto mb-3" /><p>Add your first module and lesson</p></div>
-                        )}
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7">
+                        <h2 className="text-lg font-semibold">Structure</h2>
+                        <div className="mt-5 space-y-4">
+                          {draft.data.modules.length ? draft.data.modules.map((module) => <div key={module.id} className="rounded-2xl border border-white/10 p-5"><h3 className="font-semibold">{module.title}</h3></div>) : (
+                            <div className="rounded-2xl border border-dashed border-white/15 py-12 text-center text-slate-500"><FileVideo className="mx-auto mb-3" /><p>Add your first module and lesson</p></div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <aside className="rounded-3xl border border-white/10 bg-black/20 p-6">
+                    <aside className="h-fit rounded-3xl border border-white/10 bg-black/20 p-6">
                       <h2 className="font-semibold">Publishing readiness</h2>
-                      <div className="mt-5 flex gap-3 text-sm text-slate-400"><CheckCircle2 className="shrink-0 text-emerald-300" size={18} /><span>Draft identity and autosave are durable. Structure editing is the next active slice.</span></div>
+                      {validation.isPending ? <p className="mt-5 text-sm text-slate-400">Checking draft…</p> : validation.isError ? (
+                        <p role="alert" className="mt-5 text-sm text-red-300">Validation is unavailable.</p>
+                      ) : validation.data?.length ? (
+                        <ul aria-label="Blocking issues" className="mt-5 space-y-3 text-sm">
+                          {validation.data.map((issue) => (
+                            <li key={`${issue.field}:${issue.code}`} className="flex gap-3 text-slate-300">
+                              <AlertCircle className="mt-0.5 shrink-0 text-amber-300" size={16} />
+                              <span><span className="block font-mono text-xs text-slate-500">{issue.field}</span>{issue.message}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="mt-5 flex gap-3 text-sm text-slate-400"><CheckCircle2 className="shrink-0 text-emerald-300" size={18} /><span>No blocking draft issues. Packaging checks run when publishing.</span></div>
+                      )}
                     </aside>
                   </div>
                 ) : <p role="alert" className="text-red-300">This draft could not be recovered.</p>}
@@ -77,7 +113,7 @@ export function App() {
               <p role="alert" className="rounded-2xl border border-red-400/30 bg-red-400/10 p-5 text-red-200">Publisher storage is unavailable.</p>
             ) : drafts.data?.length ? (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{drafts.data.map((item) => (
-                <button type="button" key={item.draftId} onClick={() => setSelectedDraftId(item.draftId)} className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-left hover:border-amber-300/40">
+                <button type="button" key={item.draftId} onClick={() => selectDraft(item.draftId)} className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-left hover:border-amber-300/40">
                   <p className="text-xs text-amber-300">DRAFT · r{item.revision}</p><h2 className="mt-4 text-lg font-semibold">{item.title}</h2><p className="mt-1 text-sm text-slate-500">Version {item.courseVersion}</p>
                 </button>
               ))}</div>

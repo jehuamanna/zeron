@@ -28,6 +28,15 @@ pub struct DraftSummary {
     pub updated_at_unix_seconds: u64,
 }
 
+/// Backend-only draft snapshot with its durable save time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredDraft {
+    /// Exact saved snapshot, including backend-only source references.
+    pub draft: DraftCourse,
+    /// Last successful save time as Unix seconds.
+    pub updated_at_unix_seconds: u64,
+}
+
 /// Publisher persistence failure.
 #[derive(Debug, Error)]
 pub enum PublisherStorageError {
@@ -176,18 +185,32 @@ impl PublisherStorage {
     /// # Errors
     /// Returns an error for database or corrupt JSON failures.
     pub fn draft(&self, draft_id: &str) -> Result<Option<DraftCourse>, PublisherStorageError> {
-        let snapshot: Option<Vec<u8>> = self
+        Ok(self.stored_draft(draft_id)?.map(|stored| stored.draft))
+    }
+
+    /// Load the exact saved draft snapshot with its last save time.
+    ///
+    /// # Errors
+    /// Returns an error for database or corrupt JSON failures.
+    pub fn stored_draft(
+        &self,
+        draft_id: &str,
+    ) -> Result<Option<StoredDraft>, PublisherStorageError> {
+        let row: Option<(Vec<u8>, i64)> = self
             .connection
             .query_row(
-                "SELECT snapshot_json FROM drafts WHERE draft_id=?1",
+                "SELECT snapshot_json, updated_at FROM drafts WHERE draft_id=?1",
                 [draft_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        snapshot
-            .map(|bytes| serde_json::from_slice(&bytes))
-            .transpose()
-            .map_err(PublisherStorageError::from)
+        row.map(|(bytes, updated_at)| {
+            Ok(StoredDraft {
+                draft: serde_json::from_slice(&bytes)?,
+                updated_at_unix_seconds: from_i64(updated_at, 1)?,
+            })
+        })
+        .transpose()
     }
 
     /// List path-free draft summaries in most-recently-saved order.

@@ -4,11 +4,11 @@ mod commands;
 
 use std::sync::{Arc, Mutex};
 
-use publisher_storage::PublisherStorage;
+use publisher_application::PublisherDrafts;
 use tauri::Manager;
 
 pub(crate) struct AppState {
-    pub(crate) storage: Arc<Mutex<PublisherStorage>>,
+    pub(crate) drafts: Arc<Mutex<PublisherDrafts>>,
 }
 
 /// Start the publisher desktop application.
@@ -23,9 +23,9 @@ pub fn run() {
         .setup(|app| {
             let app_data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data)?;
-            let storage = PublisherStorage::open(&app_data.join("publisher.sqlite3"))?;
+            let drafts = PublisherDrafts::open(&app_data.join("publisher.sqlite3"))?;
             app.manage(AppState {
-                storage: Arc::new(Mutex::new(storage)),
+                drafts: Arc::new(Mutex::new(drafts)),
             });
             Ok(())
         })
@@ -33,6 +33,8 @@ pub fn run() {
             commands::list_drafts,
             commands::create_draft,
             commands::get_draft,
+            commands::update_draft_metadata,
+            commands::validate_draft,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Zeron Publisher");

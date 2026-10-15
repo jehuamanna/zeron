@@ -1,17 +1,39 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { publisherApi } from "../services/publisher";
+import { publisherApi, type DraftDetail } from "../services/publisher";
+import { useBuilderUi } from "../stores/builder";
 import { App } from "./App";
 
-vi.mock("../services/publisher", () => ({
-  publisherApi: { listDrafts: vi.fn(), createDraft: vi.fn(), getDraft: vi.fn() },
+vi.mock("../services/publisher", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/publisher")>()),
+  publisherApi: { listDrafts: vi.fn(), createDraft: vi.fn(), getDraft: vi.fn(), updateDraftMetadata: vi.fn(), validateDraft: vi.fn() },
 }));
+
+const created: DraftDetail = {
+  draftId: "draft_new",
+  courseId: "course_new",
+  courseVersion: "0.1.0",
+  title: "Untitled course",
+  revision: 0,
+  updatedAtUnixSeconds: 1,
+  description: null,
+  publisherName: "Local publisher",
+  language: "en",
+  category: null,
+  tags: [],
+  prerequisites: [],
+  licenseName: null,
+  modules: [],
+};
 
 function renderApp() {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><App /></QueryClientProvider>);
 }
+
+beforeEach(() => useBuilderUi.setState({ selectedDraftId: null }));
+afterEach(cleanup);
 
 describe("publisher courses", () => {
   it("lists path-free draft summaries", async () => {
@@ -21,15 +43,18 @@ describe("publisher courses", () => {
     expect(view.container.textContent).not.toContain("/home/");
   });
 
-  it("creates and opens a durable draft", async () => {
+  it("creates and opens a durable draft with readiness issues", async () => {
     vi.mocked(publisherApi.listDrafts).mockResolvedValue([]);
-    const created = { draftId: "draft_new", courseId: "course_new", courseVersion: "0.1.0", title: "Untitled course", revision: 0, updatedAtUnixSeconds: 1, description: null, publisherName: "Local publisher", language: "en", modules: [] };
     vi.mocked(publisherApi.createDraft).mockResolvedValue(created);
     vi.mocked(publisherApi.getDraft).mockResolvedValue(created);
+    vi.mocked(publisherApi.validateDraft).mockResolvedValue([{ code: "empty_course", field: "modules", message: "add at least one module" }]);
     const view = renderApp();
     const button = await waitFor(() => Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.includes("New course"))!);
     fireEvent.click(button);
     await waitFor(() => expect(view.container.textContent).toContain("Course builder"));
     expect(publisherApi.createDraft).toHaveBeenCalledOnce();
+    await waitFor(() => expect(view.getByLabelText("Blocking issues").textContent).toContain("add at least one module"));
+    expect((view.getByLabelText("Title") as HTMLInputElement).value).toBe("Untitled course");
+    expect(view.getByRole("status").textContent).toContain("Saved · r0");
   });
 });

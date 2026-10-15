@@ -14,8 +14,7 @@ tauri-build.workspace = true
 
 [dependencies]
 course-publisher = { path = "../../../crates/course-publisher" }
-publisher-storage = { path = "../../../crates/publisher-storage" }
-getrandom.workspace = true
+publisher-application = { path = "../../../crates/publisher-application" }
 serde.workspace = true
 tauri.workspace = true
 
