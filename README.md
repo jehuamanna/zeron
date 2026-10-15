@@ -14,6 +14,7 @@ The initial Rust workspace contains `course-format`, the framework-independent o
 - bundled SQLite migrations, foreign-key enforcement, WAL negotiation, FTS5 capability checks, transactional course snapshots, and local metadata search.
 - backend-only package-location recovery and a path-free course/module/lesson/resource navigation interface.
 - authenticated loopback playback for complete verified video resources, including strict byte-range responses and bounded streaming.
+- a publisher-domain foundation with revision-safe course drafts, structural validation, and explicit immutable-release workflow transitions.
 
 The latest completed slice is documented in [Phase 2: authenticated loopback media gateway](docs/releases/phase-2-loopback-media-gateway.md).
 

@@ -2,6 +2,7 @@
 members = [
     "apps/learner-desktop/src-tauri",
     "crates/course-format",
+    "crates/course-publisher",
     "crates/learning-application",
     "crates/learning-storage",
     "crates/media-gateway",
