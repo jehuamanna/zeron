@@ -1,0 +1,29 @@
+[package]
+name = "license-issuer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Reference license issuer for paid Zeron courses (ADR 0017)"
+
+[dependencies]
+axum.workspace = true
+course-access = { path = "../../crates/course-access" }
+course-signing = { path = "../../crates/course-signing" }
+getrandom.workspace = true
+hkdf.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
+tower-http = { workspace = true, features = ["timeout"] }
+x25519-dalek.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+
+[lints]
+workspace = true

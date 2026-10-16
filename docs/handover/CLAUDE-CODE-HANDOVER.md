@@ -362,6 +362,7 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 - `course-signing`: pure Ed25519 keys, canonical statements, release signatures, rotation chains, revocations, catalogs (ADR 0014), and licenses with issuer delegations (ADR 0017).
 - `publisher-identity`: the publisher's signing key in the OS credential store, rotation, and passphrase backups. Its `passphrase` module and `OsStore::open_service` are shared with learner keys.
 - `learner-identity`: the learner key (ADR 0017): one keychain seed, derived Ed25519 and X25519 keys, and passphrase backups.
+- `services/license-issuer`: the reference license issuer (ADR 0017): an HTTP service with SQLite and a private key file, plus the `init`, `info`, `serve`, and `grant` commands. Operator guide: `docs/operations/license-issuer.md`.
 - `port-mapping`: PCP, NAT-PMP, and `UPnP` IGD mapping for TCP and UDP, with renewal, removal, and status (ADR 0013).
 - `data-import`: one-time, crash-safe import of the former Learner and Publisher data into `app.zeron` (ADR 0011).
 - `apps/desktop/src-tauri`: composition and path-free DTO translation only; Publish commands live in its `publish` module. Command bodies are plain functions tested against in-memory storage. Errors carry `code`, plus `field` or `currentRevision` where relevant.

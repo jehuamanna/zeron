@@ -20,6 +20,7 @@ members = [
     "crates/torrent-librqbit",
     "crates/torrent-metainfo",
     "crates/torrent-port",
+    "services/license-issuer",
     "tools/course-cli",
     "tools/publisher-cli",
 ]

@@ -106,6 +106,17 @@ The user does not want Zeron accounts, meaning no Zeron passwords, profiles, or 
    - The provider's tokens never reach the desktop app.
    - A learner who skips sign-in can still buy. The purchase is bound to the key alone, and only the learner key backup can recover it.
 8. **New course versions.** A license holder asks the issuer for keys to later versions with a request signed by their learner key. No sign-in is needed. Whether a purchase covers future versions is the publisher's per-course setting.
+
+   As built in slice 5 (2026-10-17), the reference issuer works like this:
+   - **Publisher requests:**
+     - Publishers submit `{ publisherId, rotations, delegation }`. They register releases with a `zeron.release-registration.v1` statement `{ courseId, courseVersion, sealedContentKey, issuerKey, publisherKey, registeredAt }`, signed by their current key.
+     - The issuer refuses content keys that do not open under its own key for that course and version.
+     - The first registering publisher owns the course on that issuer, and a registered version keeps its content key.
+   - **Learner requests:**
+     - Learners ask with a `zeron.license-request.v1` statement `{ courseId, learnerKey, encryptionKey, issuerKey, requestedAt }`, signed by their learner key. The signature binds the encryption key to the learner key.
+     - The request must be within 5 minutes of the issuer's clock. Replaying one only returns a license that the same learner alone can open.
+   - **Entitlements** are keyed by learner signing key. Until slice 6 they are granted with the `grant` command.
+   - **Future versions:** a license lists every registered version, so open question 4 is answered "yes" by default until the per-course setting exists.
 9. **Refunds and revocation.**
    - A refund stops the issuer from re-issuing that purchase and from handing out keys for future versions.
    - A key that was already delivered cannot be taken back offline. The UI and the publisher documentation say so.

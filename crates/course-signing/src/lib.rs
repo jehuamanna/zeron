@@ -5,6 +5,7 @@
 //! Callers supply randomness and untrusted bytes.
 
 mod catalog;
+mod issuer;
 mod keys;
 mod license;
 mod release;
@@ -13,6 +14,11 @@ mod statements;
 pub use catalog::{
     CATALOG_FORMAT, Catalog, CatalogEntry, CatalogStatement, MAX_CATALOG_BYTES,
     MAX_CATALOG_ENTRIES, VerifiedCatalog, parse_catalog, sign_catalog, verify_catalog,
+};
+pub use issuer::{
+    DelegationSubmission, LicenseRequest, RegistrationSubmission, ReleaseRegistration,
+    VerifiedChain, VerifiedLicenseRequest, sign_license_request, sign_release_registration,
+    verify_delegation_submission, verify_license_request, verify_release_registration,
 };
 pub use keys::{PublicKey, SecretKey, fingerprint};
 pub use license::{

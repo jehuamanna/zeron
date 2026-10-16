@@ -2,9 +2,11 @@
 //! mutation changes verifies as the publisher's statement.
 
 use course_signing::{
-    CatalogEntry, LicensedKey, SecretKey, license_file, parse_catalog, parse_license,
-    parse_release_signature, revoke, rotate, sign_catalog, sign_delegation, sign_license,
-    sign_release, verify_catalog, verify_license, verify_release,
+    CatalogEntry, LicenseRequest, LicensedKey, RegistrationSubmission, SecretKey, Signed,
+    license_file, parse_catalog, parse_license, parse_release_signature, revoke, rotate,
+    sign_catalog, sign_delegation, sign_license, sign_license_request, sign_release,
+    sign_release_registration, verify_catalog, verify_license, verify_license_request,
+    verify_release, verify_release_registration,
 };
 use mutation_testing::mutations;
 
@@ -111,6 +113,55 @@ fn mutated_licenses_never_verify_as_something_else() {
             assert_eq!(
                 parsed.license.statement, file.license.statement,
                 "mutation {index} verified a changed license"
+            );
+        }
+    }
+}
+
+#[test]
+fn mutated_issuer_requests_never_verify_as_something_else() {
+    let (publisher, issuer, learner) = (
+        SecretKey::from_bytes(&[8; 32]),
+        SecretKey::from_bytes(&[9; 32]).public_key(),
+        SecretKey::from_bytes(&[10; 32]),
+    );
+    let registration = sign_release_registration(
+        &publisher,
+        &publisher.public_key(),
+        Vec::new(),
+        ("course_a", "1.0.0", &"f".repeat(160)),
+        &issuer,
+        5,
+    );
+    let original = serde_json::to_vec(&registration).unwrap();
+    for (index, input) in mutations(&[&original], 0x5161_0004, 3_000, 64 * 1024)
+        .iter()
+        .enumerate()
+    {
+        let Ok(parsed) = serde_json::from_slice::<RegistrationSubmission>(input) else {
+            continue;
+        };
+        if verify_release_registration(&parsed, &issuer, &[]).is_ok() {
+            assert_eq!(
+                parsed.registration.statement, registration.registration.statement,
+                "mutation {index} verified a changed registration"
+            );
+        }
+    }
+
+    let request = sign_license_request(&learner, "course_a", &[3; 32], &issuer, 7);
+    let original = serde_json::to_vec(&request).unwrap();
+    for (index, input) in mutations(&[&original], 0x5161_0005, 3_000, 64 * 1024)
+        .iter()
+        .enumerate()
+    {
+        let Ok(parsed) = serde_json::from_slice::<Signed<LicenseRequest>>(input) else {
+            continue;
+        };
+        if verify_license_request(&parsed, &issuer).is_ok() {
+            assert_eq!(
+                parsed.statement, request.statement,
+                "mutation {index} verified a changed license request"
             );
         }
     }

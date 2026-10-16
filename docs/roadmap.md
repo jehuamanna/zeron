@@ -99,6 +99,9 @@ Slices, in dependency order:
    - license issuance for requests signed by a learner key;
    - later-version keys;
    - controlled local tests with no public network.
+
+   Done 2026-10-17: see [phase-11-license-issuer.md](releases/phase-11-license-issuer.md) and the [operator guide](operations/license-issuer.md). Entitlements are granted by command until slice 6.
+
 6. **Payment.** One provider's checkout and webhook, idempotent purchase recording, and refunds that stop re-issue.
 7. **Sign-in with Google or GitHub.**
    - Issuer-side OIDC/OAuth.
