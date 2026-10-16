@@ -68,7 +68,7 @@ export function SidePanel({ tabs, active, onClose, resizable, children }: {
             </button>
           ))}
         </div>
-        <button type="button" aria-label="Hide side panel" title="Hide panel (])" onClick={onClose} className="grid size-8 place-items-center rounded-md text-muted hover:bg-white/10 hover:text-fg">
+        <button type="button" aria-label="Close panel" title="Close panel (])" onClick={onClose} className="grid size-8 place-items-center rounded-md text-muted hover:bg-white/10 hover:text-fg">
           <X size={16} />
         </button>
       </div>

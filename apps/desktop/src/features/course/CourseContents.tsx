@@ -1,6 +1,6 @@
 import { BookOpen, File, NotebookPen, Play } from "lucide-react";
 
-import { AvailabilityLabel, formatSize, KeepOfflineToggle, PauseTransfersButton, useCourseDownloads } from "../downloads/downloads";
+import { AvailabilityLabel, formatSize, percentOf, KeepOfflineToggle, PauseTransfersButton, useCourseDownloads } from "../downloads/downloads";
 import { LessonStatusIcon, MarkCompleteButton, ProgressBar, useCourseProgress } from "../progress/progress";
 import type { CourseDetail, ResourceAvailability } from "../../services/library";
 import { formatDuration, isReadable, lessonDuration, type Lesson, type PlacedLesson } from "./lessons";
@@ -26,11 +26,6 @@ export function CourseContents({ course, placed, activeLessonId, showing, openin
   onNotes: (lesson: Lesson) => void;
 }) {
   const number = new Map(placed.map((item) => [item.lesson.id, item.index + 1]));
-  const percent = (resourceId: string) => {
-    const item = availability.get(resourceId);
-    if (!item) return 0;
-    return item.byteLength > 0 ? Math.floor((item.verifiedBytes / item.byteLength) * 100) : 100;
-  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -78,7 +73,7 @@ export function CourseContents({ course, placed, activeLessonId, showing, openin
         ) : null}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+      <div className="relative min-h-0 flex-1 overflow-y-auto px-2 py-2">
         {course.modules.map((module) => (
           <section key={module.id} aria-label={`Module ${module.title}`} className="mb-3">
             <div className="sticky top-0 z-[1] flex items-center justify-between gap-2 bg-surface/95 px-2 py-1.5 backdrop-blur">
@@ -125,7 +120,7 @@ export function CourseContents({ course, placed, activeLessonId, showing, openin
                               <span key={resource.id} className="inline-flex flex-wrap items-center gap-1.5">
                                 <button type="button" onClick={() => onOpenResource(lesson, resource.id)} disabled={opening} aria-current={current ? "true" : undefined} className={chip}>
                                   <Play size={10} /> {current ? "Playing" : "Play video"}
-                                  {torrent ? <span className="opacity-75">· {percent(resource.id)}% downloaded</span> : null}
+                                  {torrent ? <span className="opacity-75">· {percentOf(item)}% downloaded</span> : null}
                                 </button>
                                 {torrent ? <AvailabilityLabel item={item} /> : null}
                                 {torrent && item?.kept === false && item.verifiedBytes > 0 && !current ? (

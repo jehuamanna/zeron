@@ -108,7 +108,7 @@ export function DocumentViewer({ courseId, resourceId, title, page, onPage, high
           <button type="button" className="underline" onClick={() => onRegion(null)}>clear it</button>.
         </p>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-auto bg-sunken p-4">
+      <div className="relative min-h-0 flex-1 overflow-auto bg-sunken p-4">
         {renderFailed ? (
           <p role="alert" className="text-sm text-red-300">This PDF could not be displayed.</p>
         ) : (

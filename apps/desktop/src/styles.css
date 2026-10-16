@@ -145,8 +145,10 @@
 
 html, body, #root { height: 100%; }
 
+/* The app fits the window; panes scroll on their own, never the page. */
 body {
   margin: 0;
+  overflow: hidden;
   min-width: 320px;
   background: var(--zr-bg);
   color: var(--zr-fg);

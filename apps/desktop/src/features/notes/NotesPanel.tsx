@@ -31,7 +31,7 @@ type Draft = { noteId: string | null; revision: number; anchor: NoteAnchor; body
 export type NoteRequest = { id: number; anchor: NoteAnchor };
 
 /** Notes of one lesson. The player handle supplies timestamps and seeking. */
-export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, currentTime, onSeek, onOpenPage, documentAnchor = null, onNoteCreated, request = null }: {
+export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, currentTime, onSeek, onOpenPage, documentAnchor = null, onNoteCreated, request = null, onRequestHandled }: {
   courseId: string;
   lessonId: string;
   lessonTitle: string;
@@ -44,6 +44,8 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
   documentAnchor?: Extract<NoteAnchor, { kind: "pdfPage" }> | null;
   onNoteCreated?: () => void;
   request?: NoteRequest | null;
+  /** Called once a request has started a note, so it is not replayed. */
+  onRequestHandled?: () => void;
 }) {
   const queryClient = useQueryClient();
   const key = ["notes", courseId, lessonId];
@@ -92,7 +94,9 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
   }, [videoResourceId]);
 
   useEffect(() => {
-    if (request && draft === null) start(request.anchor);
+    if (!request) return;
+    if (draft === null) start(request.anchor);
+    onRequestHandled?.();
     // A new request id starts a note; an open draft is never replaced.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request?.id]);
@@ -119,7 +123,7 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+      <div className="relative min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {error ? <p role="alert" className="mb-3 text-xs text-red-300">{error}</p> : null}
         {notes.isPending ? (
           <div aria-hidden className="space-y-3">

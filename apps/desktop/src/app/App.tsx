@@ -92,7 +92,7 @@ export function App() {
 /** A full-height area whose page content scrolls inside it. */
 function Scrolling({ children }: { children: React.ReactNode }) {
   return (
-    <main className="h-full overflow-y-auto">
+    <main className="relative h-full overflow-y-auto">
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">{children}</div>
     </main>
   );

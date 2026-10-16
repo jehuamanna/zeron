@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, NotebookPen, PanelLeft, PanelRight, Play } from "lucide-react";
+import { ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, NotebookPen, PanelLeft, PanelRight } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMediaQuery } from "../../lib/useMediaQuery";
 import { asCommandError, libraryApi, type NoteAnchor, type Region, type SearchResult } from "../../services/library";
 import { useWorkspace, type SideTab } from "../../stores/workspace";
 import { DocumentViewer } from "../documents/DocumentViewer";
-import { useCourseDownloads } from "../downloads/downloads";
+import { percentOf, useCourseDownloads } from "../downloads/downloads";
 import { DrawingPanel } from "../drawings/DrawingPanel";
 import { NotesPanel, type NoteRequest } from "../notes/NotesPanel";
 import { LessonPlayer, type PlayerHandle } from "../player/LessonPlayer";
@@ -183,7 +183,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
 
   const requestNote = (anchor: NoteAnchor) => {
     showSide(true, "notes");
-    setNoteRequest((previous) => ({ id: (previous?.id ?? 0) + 1, anchor }));
+    setNoteRequest({ id: Date.now(), anchor });
   };
 
   const sideTabs: SideTab[] = stage.kind === "video" ? ["notes", "sketch", "transcript"] : ["notes", "sketch"];
@@ -193,8 +193,8 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
   const keys = useRef<(event: KeyboardEvent) => void>(() => {});
   keys.current = (event) => {
     if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
-    const target = event.target as HTMLElement | null;
-    if (target?.closest("input, textarea, select, [contenteditable='true'], .excalidraw")) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("input, textarea, select, [contenteditable='true'], .excalidraw")) return;
     const key = event.key.toLowerCase();
     if (key === "[") showContents(!contentsOpen);
     else if (key === "]") showSide(!sideOpen);
@@ -295,6 +295,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
           documentAnchor={documentAnchor}
           onNoteCreated={() => stage.kind === "pdf" && setStage({ ...stage, region: null })}
           request={noteRequest}
+          onRequestHandled={() => setNoteRequest(null)}
         />
       )}
     </SidePanel>
@@ -421,7 +422,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
                 }}
               />
             ) : stage.kind === "text" ? (
-              <div className="h-full overflow-y-auto rounded-xl border border-line bg-surface">
+              <div className="relative h-full overflow-y-auto rounded-xl border border-line bg-surface">
                 <Suspense fallback={<p className="p-6 text-sm text-muted">Opening {active?.lesson.title}…</p>}>
                   <TextReader key={stage.resourceId} courseId={courseId} resourceId={stage.resourceId} title={active?.lesson.title ?? "Lesson"} />
                 </Suspense>
@@ -455,22 +456,17 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
         {/* Notes, sketch, transcript */}
         {sideOpen ? (
           sideDocked ? (
-            <aside aria-label="Lesson tools" style={{ width: layout.sideWidth }} className="relative shrink-0 border-l border-line">{side}</aside>
+            <aside aria-label="Notes and tools" style={{ width: layout.sideWidth }} className="relative shrink-0 border-l border-line">{side}</aside>
           ) : (
             <>
               <button type="button" aria-label="Close side panel" className="absolute inset-0 z-20 bg-[#000]/30" onClick={() => setSideOverlay(false)} />
-              <aside aria-label="Lesson tools" className="absolute inset-y-0 right-0 z-30 w-[min(420px,92%)] border-l border-line shadow-panel">{side}</aside>
+              <aside aria-label="Notes and tools" className="absolute inset-y-0 right-0 z-30 w-[min(420px,92%)] border-l border-line shadow-panel">{side}</aside>
             </>
           )
         ) : null}
       </div>
     </div>
   );
-}
-
-function percentOf(item: { verifiedBytes: number; byteLength: number } | undefined) {
-  if (!item) return 0;
-  return item.byteLength > 0 ? Math.floor((item.verifiedBytes / item.byteLength) * 100) : 100;
 }
 
 function BackButton({ onLeave }: { onLeave: () => void }) {
@@ -501,5 +497,3 @@ function LessonStep({ placed, direction, onOpen }: { placed: PlacedLesson | null
     </button>
   );
 }
-
-export { BookOpen, Play };

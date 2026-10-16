@@ -117,4 +117,17 @@ describe("lesson notes", () => {
     await waitFor(() => expect(libraryApi.createNote).toHaveBeenCalledWith("course_1", "lesson_1", { kind: "pdfPage", resourceId: "pdf_1", page: 2, region }, doc("Consistent hashing diagram")));
     await waitFor(() => expect(onNoteCreated).toHaveBeenCalled());
   });
+
+  it("starts a note when the player asks, once, and saves it with Ctrl+Enter", async () => {
+    vi.mocked(libraryApi.notes).mockResolvedValue([]);
+    vi.mocked(libraryApi.createNote).mockResolvedValue(note({}));
+    const onRequestHandled = vi.fn();
+    const { view } = renderPanel({ request: { id: 1, anchor: { kind: "videoTime", resourceId: "video_1", seconds: 42 } }, onRequestHandled });
+    await waitFor(() => expect(view.getByLabelText("Note text")).toBeTruthy());
+    expect(view.container.textContent).toContain("New note · 0:42");
+    expect(onRequestHandled).toHaveBeenCalledTimes(1);
+    fireEvent.change(view.getByLabelText("Note text"), { target: { value: "Quorum reads" } });
+    fireEvent.keyDown(view.getByLabelText("Note text"), { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(libraryApi.createNote).toHaveBeenCalledWith("course_1", "lesson_1", { kind: "videoTime", resourceId: "video_1", seconds: 42 }, expect.any(String)));
+  });
 });

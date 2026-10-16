@@ -436,4 +436,40 @@ describe("learner library", () => {
     expect(alert.textContent).toContain("Zeron could not open the local library");
     expect(alert.textContent).not.toContain("Course import failed");
   });
+
+  it("opens a lesson in the workspace, steps to the next one, and toggles panes from the keyboard", async () => {
+    useLibraryUi.getState().selectCourse("course_one");
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "course_one", courseVersion: "1.0.0", title: "Course", description: null,
+      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null }, modules: [{ id: "module", title: "Module", lessons: [
+        { id: "lesson_a", title: "First", resources: [{ id: "video_a", kind: "video", mediaType: "video/mp4", byteLength: 10, durationSeconds: 60 }] },
+        { id: "lesson_b", title: "Second", resources: [{ id: "video_b", kind: "video", mediaType: "video/mp4", byteLength: 10, durationSeconds: 90 }] },
+      ] }],
+    });
+    vi.mocked(libraryApi.progress).mockResolvedValue({ completedLessons: 0, totalLessons: 2, percent: 0, lessons: [] });
+    vi.mocked(libraryApi.registerMedia).mockImplementation(async (_course, resourceId) => ({ url: `http://127.0.0.1:1/v1/media/${resourceId}`, mediaType: "video/mp4", byteLength: 10 }));
+
+    const view = renderApp();
+    fireEvent.click(await waitFor(() => view.getByRole("button", { name: "Start course" })));
+    await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("/v1/media/video_a"));
+    expect(view.getByRole("heading", { level: 1 }).textContent).toBe("First");
+    expect(view.container.textContent).toContain("Lesson 1 of 2");
+    expect(view.getByRole("button", { name: "Previous lesson" }).hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(view.getByRole("button", { name: "Next lesson" }));
+    await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("/v1/media/video_b"));
+    expect(view.container.textContent).toContain("Lesson 2 of 2");
+
+    expect(view.getByRole("complementary", { name: "Course contents" })).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "[" });
+    expect(view.queryByRole("complementary", { name: "Course contents" })).toBeNull();
+    fireEvent.keyDown(document.body, { key: "[" });
+    expect(view.getByRole("complementary", { name: "Course contents" })).toBeTruthy();
+
+    fireEvent.keyDown(document.body, { key: "n" });
+    await waitFor(() => expect(view.getByRole("region", { name: "Notes for Second" }).textContent).toContain("New note · 0:00"));
+    expect(await accessibilityViolations(view.container)).toEqual([]);
+  });
 });

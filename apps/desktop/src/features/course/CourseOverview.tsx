@@ -24,7 +24,7 @@ export function CourseOverview({ course, placed, progress, next, onStart }: {
   const started = (progress.progress?.completedLessons ?? 0) > 0 || (next !== null && progress.statusOf(next.lesson.id) === "in_progress");
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="relative h-full overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-8 sm:py-10">
         <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-accent-text">Course overview</p>
         <h1 className="font-display text-3xl font-semibold leading-tight tracking-tight sm:text-4xl">{course.title}</h1>

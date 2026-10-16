@@ -98,7 +98,7 @@ export function TranscriptPanel({ courseId, mediaResourceId, currentTime, onSeek
         </div>
       </div>
       {query && shown.length === 0 ? <p className="px-3 pt-3 text-sm text-muted">No line mentions “{filter.trim()}”.</p> : null}
-      <ol ref={list} aria-label="Transcript lines" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
+      <ol ref={list} aria-label="Transcript lines" className="relative min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
         {shown.map(({ cue, index }) => (
           <li key={index} data-cue={index}>
             <button

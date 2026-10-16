@@ -63,4 +63,15 @@ describe("Zeron shell", () => {
     fireEvent.click(view.getByRole("button", { name: "Library" }));
     expect(view.container.textContent).toContain("library area");
   });
+
+  it("switches between light and dark themes and remembers the choice", () => {
+    useShell.setState({ theme: "light" });
+    const view = render(<App />);
+    expect(document.documentElement.dataset.theme).toBe("light");
+    fireEvent.click(view.getByRole("button", { name: "Switch to dark theme" }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(window.localStorage.getItem("zeron.theme")).toBe("dark");
+    fireEvent.click(view.getByRole("button", { name: "Switch to light theme" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+  });
 });
