@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { NotebookPen } from "lucide-react";
+import { ChevronLeft, NotebookPen } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { buildGroups, countSketches, LessonGroups, NotebookFilters, type NotebookActions, type Show } from "../notebook/LessonGroups";
@@ -7,7 +7,12 @@ import { asCommandError, libraryApi } from "../../services/library";
 import type { PlacedLesson } from "./lessons";
 
 /** Every note and sketch of the course in one place, in lesson order. */
-export function CourseNotebook({ courseId, placed, ...actions }: NotebookActions & { courseId: string; placed: PlacedLesson[] }) {
+export function CourseNotebook({ courseId, placed, back = null, ...actions }: NotebookActions & {
+  courseId: string;
+  placed: PlacedLesson[];
+  /** The lesson the learner came from, to return to it. */
+  back?: { title: string; onBack: () => void } | null;
+}) {
   const notes = useQuery({ queryKey: ["notes", courseId, null], queryFn: () => libraryApi.notes(courseId, null), staleTime: 0 });
   const drawn = useQuery({ queryKey: ["drawn-lessons", courseId], queryFn: () => libraryApi.drawnLessons(courseId), staleTime: 0 });
   const [show, setShow] = useState<Show>("all");
@@ -22,6 +27,11 @@ export function CourseNotebook({ courseId, placed, ...actions }: NotebookActions
   return (
     <div className="relative h-full overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-8">
+        {back ? (
+          <button type="button" onClick={back.onBack} className="mb-4 inline-flex max-w-full items-center gap-1 rounded-md py-1 pr-2 text-sm text-muted hover:text-fg">
+            <ChevronLeft size={16} className="shrink-0" /> <span className="truncate">Back to {back.title}</span>
+          </button>
+        ) : null}
         <p className="mb-1 text-xs font-bold uppercase tracking-[0.2em] text-accent-text">Notebook</p>
         <h1 className="font-display text-3xl font-bold tracking-tight">Everything you captured</h1>
         <p className="mt-1 text-sm text-muted">

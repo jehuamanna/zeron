@@ -589,4 +589,34 @@ describe("learner library", () => {
     expect(view.queryByRole("button", { name: /Go to 0:12/ })).toBeNull();
     expect(view.queryByRole("button", { name: "Open course" })).toBeNull();
   });
+
+  it("returns from the notebook to the lesson that was open", async () => {
+    useLibraryUi.getState().selectCourse("course_one");
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "course_one", courseVersion: "1.0.0", title: "Course", description: null,
+      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null }, modules: [{ id: "module", title: "Module", lessons: [
+        { id: "lesson_a", title: "First", resources: [{ id: "video_a", kind: "video", mediaType: "video/mp4", byteLength: 10, durationSeconds: 60 }] },
+      ] }],
+    });
+    vi.mocked(libraryApi.progress).mockResolvedValue({ completedLessons: 0, totalLessons: 1, percent: 0, lessons: [] });
+    vi.mocked(libraryApi.registerMedia).mockResolvedValue({ url: "http://127.0.0.1:1/v1/media/video_a", mediaType: "video/mp4", byteLength: 10 });
+
+    const view = renderApp();
+    fireEvent.click(await waitFor(() => view.getByRole("button", { name: "Start course" })));
+    await waitFor(() => expect(view.container.querySelector("video")).toBeTruthy());
+
+    fireEvent.click(view.getByRole("button", { name: "Notebook" }));
+    await waitFor(() => expect(view.container.querySelector("video")).toBeNull());
+    fireEvent.click(await waitFor(() => view.getByRole("button", { name: "Back to First" })));
+    await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("/v1/media/video_a"));
+
+    // The Notebook button itself also toggles back.
+    fireEvent.click(view.getByRole("button", { name: "Notebook" }));
+    await waitFor(() => expect(view.container.querySelector("video")).toBeNull());
+    fireEvent.click(view.getByRole("button", { name: "Notebook" }));
+    await waitFor(() => expect(view.container.querySelector("video")).toBeTruthy());
+    expect(libraryApi.registerMedia).toHaveBeenCalledTimes(1);
+  });
 });

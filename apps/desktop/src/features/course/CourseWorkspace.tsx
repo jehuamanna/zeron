@@ -58,6 +58,8 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
 }) {
   const queryClient = useQueryClient();
   const [stage, setStage] = useState<Stage>({ kind: "overview" });
+  // The lesson left for the overview or the notebook, to come back to.
+  const [lessonStage, setLessonStage] = useState<Stage | null>(null);
   const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
   const [noteRequest, setNoteRequest] = useState<NoteRequest | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -166,6 +168,18 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
     openMedia.mutate(resourceId);
   };
   const currentPlayerTime = useCallback(() => player.current?.currentTime() ?? 0, []);
+  /** Show the overview or notebook, remembering the lesson (and moment) to return to. */
+  const showPage = (kind: "overview" | "notebook") => {
+    if (stage.kind === kind) {
+      if (lessonStage) setStage(lessonStage);
+      return;
+    }
+    if (stage.kind !== "overview" && stage.kind !== "notebook") {
+      setLessonStage(stage.kind === "video" ? { ...stage, startAt: Math.floor(currentPlayerTime()) } : stage);
+    }
+    setStage({ kind });
+  };
+  const backToLesson = lessonStage && active ? () => setStage(lessonStage) : null;
 
   const openLessonWith = (lesson: Lesson, tab: SideTab) => {
     openLesson(lesson);
@@ -370,19 +384,19 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
           className={`${headerButton} ${stage.kind === "overview" ? "text-accent-text" : ""}`}
           aria-label="Course overview"
           title="Course overview"
-          onClick={() => setStage({ kind: "overview" })}
+          onClick={() => showPage("overview")}
         >
           <LayoutDashboard size={17} />
         </button>
         <button
           type="button"
+          aria-label="Notebook"
           aria-pressed={stage.kind === "notebook"}
           title="All notes and sketches of this course"
-          onClick={() => setStage({ kind: "notebook" })}
+          onClick={() => showPage("notebook")}
           className={`flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm ${stage.kind === "notebook" ? "bg-accent/10 text-accent-text" : "text-muted hover:bg-white/10 hover:text-fg"}`}
         >
-          <BookMarked size={16} /> <span className="hidden sm:inline">Notebook</span>
-          <span className="sr-only sm:hidden">Notebook</span>
+          <BookMarked size={16} /> <span aria-hidden className="hidden sm:inline">Notebook</span>
         </button>
         <div className="relative">
           <button type="button" className={headerButton} aria-label="Course actions" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
@@ -493,6 +507,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
               <CourseNotebook
                 courseId={courseId}
                 placed={placed}
+                back={backToLesson ? { title: active?.lesson.title ?? "lesson", onBack: backToLesson } : null}
                 onOpenLesson={openLesson}
                 onSeek={seekTo}
                 onOpenPage={(resourceId, page) => openDocument(resourceId, page)}
