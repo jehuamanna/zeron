@@ -138,6 +138,17 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
 - **Drop-downs:** selects lose the system button for a theme-coloured chevron.
 - **Form controls:** checkboxes, radios, and ranges take the accent colour.
 
+### 12. Monochrome theme (follow-up)
+
+- **Palette:** the user asked for a black-and-white look, after a reference dashboard.
+  - **Light theme:** white surfaces on `#fafafa`, near-black ink and buttons, zinc greys, hairline borders, and soft shadows.
+  - **Dark theme:** the same palette mirrored.
+  - **Other colour:** red, amber, and green remain only for errors, warnings, and success, and the six highlight colours stay the learner's own.
+- **Type:** headings are bold Inter. A new `--font-reading` keeps Source Serif 4 for notes, quotes, and lesson readings.
+- **Covers:** course covers are near-black tiles with diagonal bands at a per-course angle.
+- **Video player:** the seek bar and switches are white on black.
+- **Publish:** its main buttons use the shared accent instead of amber.
+
 ## Acceptance evidence
 
 - **Vitest:** all 176 tests pass, 3 of them new.

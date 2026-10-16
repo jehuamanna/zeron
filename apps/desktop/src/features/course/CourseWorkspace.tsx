@@ -351,7 +351,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
           <PanelLeft size={17} />
         </button>
         <div className="mx-1 min-w-0 flex-1">
-          <p className="truncate font-display text-[15px] font-semibold leading-tight">{course.title}</p>
+          <p className="truncate font-display text-[15px] font-bold leading-tight">{course.title}</p>
           <p className="truncate text-[11px] text-subtle">{course.publisherName}</p>
         </div>
         {progress.progress ? (
@@ -434,7 +434,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
                 <p className="truncate text-[11px] font-medium uppercase tracking-wider text-subtle">
                   {active.moduleTitle} · Lesson {active.index + 1} of {placed.length}
                 </p>
-                <h1 className="truncate font-display text-xl font-semibold leading-tight">{active.lesson.title}</h1>
+                <h1 className="truncate font-display text-xl font-bold leading-tight">{active.lesson.title}</h1>
               </div>
               {active.lesson.resources.length > 1 ? (
                 <div role="group" aria-label="Lesson materials" className="flex items-center gap-0.5 rounded-lg bg-sunken p-0.5">

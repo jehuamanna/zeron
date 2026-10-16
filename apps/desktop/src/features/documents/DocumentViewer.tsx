@@ -399,7 +399,7 @@ export function DocumentViewer({ courseId, lessonId, resourceId, title, page, on
             ))}
             <button type="button" className={`${tool} ml-auto`} aria-label="Close" onClick={() => setOpen(null)}><X size={15} /></button>
           </div>
-          <p className="mt-2 line-clamp-3 border-l-2 pl-2 font-display text-[13px] italic text-fg-soft" style={{ borderColor: HIGHLIGHT_COLORS.find((item) => item.value === openHighlight.color)?.css }}>
+          <p className="mt-2 line-clamp-3 border-l-2 pl-2 font-reading text-[13px] italic text-fg-soft" style={{ borderColor: HIGHLIGHT_COLORS.find((item) => item.value === openHighlight.color)?.css }}>
             {openHighlight.quote}
           </p>
           <div className="mt-2 flex items-center gap-1">

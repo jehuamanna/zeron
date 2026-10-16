@@ -112,7 +112,7 @@ export function PublishPanel({ draftId, revision }: PublishPanelProps) {
             type="button"
             onClick={() => start.mutate()}
             disabled={blocked || start.isPending || validation.isPending}
-            className="flex items-center gap-1.5 rounded-lg bg-amber-300 px-2.5 py-1 text-xs font-semibold text-slate-950 disabled:opacity-40"
+            className="flex items-center gap-1.5 rounded-lg bg-accent hover:bg-accent-hover px-2.5 py-1 text-xs font-semibold text-slate-950 disabled:opacity-40"
           >
             {current?.stage === "FAILED" ? <RotateCcw size={14} /> : <PackageCheck size={14} />} {current?.stage === "FAILED" ? "Retry" : current ? "Prepare again" : "Prepare release"}
           </button>
@@ -170,7 +170,7 @@ function JobView({ job, draftRevision, onPublished }: { job: PublishJob; draftRe
       </ol>
       {percent !== null && !finishedPublishStages.has(job.stage) ? (
         <div role="progressbar" aria-label="Current step progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className="h-1.5 overflow-hidden rounded-full bg-white/10">
-          <div className="h-full bg-amber-300" style={{ width: `${percent}%` }} />
+          <div className="h-full bg-accent hover:bg-accent-hover" style={{ width: `${percent}%` }} />
         </div>
       ) : null}
       {job.stage === "CANCELLED" ? <p className="text-slate-400">Cancelled. Partial files were removed. The draft can be prepared again.</p> : null}
@@ -204,7 +204,7 @@ function JobView({ job, draftRevision, onPublished }: { job: PublishJob; draftRe
               <div role="group" aria-label="Confirm publishing" className="space-y-2 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-xs text-amber-100">
                 <p>Publishing makes version {job.prepared.courseVersion} permanent. Its files and torrent can never be changed, and this version number cannot be reused.</p>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => activate.mutate()} disabled={activate.isPending} className="rounded-lg bg-amber-300 px-2.5 py-1 font-semibold text-slate-950 disabled:opacity-50">
+                  <button type="button" onClick={() => activate.mutate()} disabled={activate.isPending} className="rounded-lg bg-accent hover:bg-accent-hover px-2.5 py-1 font-semibold text-slate-950 disabled:opacity-50">
                     {activate.isPending ? "Publishing…" : "Publish permanently"}
                   </button>
                   <button type="button" autoFocus onClick={() => setConfirming(false)} disabled={activate.isPending} className="rounded-lg bg-white/10 px-2.5 py-1">

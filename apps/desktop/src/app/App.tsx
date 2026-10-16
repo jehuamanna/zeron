@@ -38,7 +38,7 @@ export function App() {
           <div aria-hidden className="grid size-7 place-items-center rounded-lg bg-accent text-on-accent">
             <BookOpen size={15} />
           </div>
-          <p className="font-display text-lg font-semibold tracking-tight">Zeron</p>
+          <p className="font-display text-lg font-bold tracking-tight">Zeron</p>
         </div>
         <nav aria-label="Zeron" className="ml-2 flex items-center gap-0.5 rounded-lg bg-sunken p-0.5">
           {areas.map(({ value, label, icon: Icon }) => (

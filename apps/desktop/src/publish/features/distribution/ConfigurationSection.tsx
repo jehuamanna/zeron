@@ -95,7 +95,7 @@ export function ConfigurationSection() {
             </label>
           ) : null}
           <div className="flex gap-2">
-            <button type="button" onClick={() => apply.mutate(preview)} disabled={apply.isPending} className="rounded-lg bg-amber-300 px-3 py-1.5 font-semibold text-slate-950 disabled:opacity-50">
+            <button type="button" onClick={() => apply.mutate(preview)} disabled={apply.isPending} className="rounded-lg bg-accent hover:bg-accent-hover px-3 py-1.5 font-semibold text-slate-950 disabled:opacity-50">
               {apply.isPending ? "Applying…" : "Apply configuration"}
             </button>
             <button type="button" onClick={dismiss} disabled={apply.isPending} className="rounded-lg bg-white/10 px-3 py-1.5">Cancel</button>

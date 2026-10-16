@@ -122,7 +122,7 @@ export function LessonGroups({ courseId, groups, actions, label = "Lessons with 
           <div className="mb-3 flex items-baseline justify-between gap-3 border-b border-line pb-2">
             <div className="min-w-0">
               <p className="text-[11px] uppercase tracking-wider text-subtle">{item.moduleTitle} · Lesson {item.index + 1}</p>
-              <Heading className="truncate font-display text-lg font-semibold">
+              <Heading className="truncate font-display text-lg font-bold">
                 <button type="button" className="hover:text-accent-text" onClick={() => actions.onOpenLesson(item.lesson)}>{item.lesson.title}</button>
               </Heading>
             </div>

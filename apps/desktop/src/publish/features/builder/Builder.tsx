@@ -38,7 +38,7 @@ export function Builder({ draft, onSaved, onReload, autosaveDelayMs }: BuilderPr
               This draft was changed elsewhere{conflict.currentRevision === undefined ? "" : ` (now r${conflict.currentRevision})`}. Your latest change was not saved and editing is paused.
             </span>
           </p>
-          <button type="button" onClick={onReload} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-amber-300 px-3 py-1.5 font-semibold text-slate-950">
+          <button type="button" onClick={onReload} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-accent hover:bg-accent-hover px-3 py-1.5 font-semibold text-slate-950">
             <RefreshCw size={14} /> Discard my edits and load latest
           </button>
         </div>

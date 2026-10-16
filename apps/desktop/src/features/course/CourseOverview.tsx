@@ -27,7 +27,7 @@ export function CourseOverview({ course, placed, progress, next, onStart }: {
     <div className="relative h-full overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-8 sm:py-10">
         <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-accent-text">Course overview</p>
-        <h1 className="font-display text-3xl font-semibold leading-tight tracking-tight sm:text-4xl">{course.title}</h1>
+        <h1 className="font-display text-3xl font-bold leading-tight tracking-tight sm:text-4xl">{course.title}</h1>
         <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-muted">{course.description ?? `Published by ${course.publisherName}`}</p>
 
         <dl className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-sm text-fg-soft">
@@ -44,7 +44,7 @@ export function CourseOverview({ course, placed, progress, next, onStart }: {
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs text-subtle">{started ? "Up next" : "Start with"} · Lesson {next.index + 1} of {placed.length}</p>
-                <p className="truncate font-display text-lg font-semibold">{next.lesson.title}</p>
+                <p className="truncate font-display text-lg font-bold">{next.lesson.title}</p>
               </div>
               <Button onClick={() => onStart(next)}>
                 <Play size={15} /> {started ? "Continue" : "Start course"}

@@ -335,7 +335,7 @@ export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, s
             Resumed where you left off ({formatClock(resumedAt)}).
             <button
               type="button"
-              className="font-medium text-[#fda4af] underline-offset-2 hover:underline"
+              className="font-medium text-[#fff] underline underline-offset-2 hover:underline"
               onClick={() => {
                 seekTo(0);
                 setResumedAt(null);
@@ -351,7 +351,7 @@ export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, s
           <div role="dialog" aria-label="Up next" className="absolute inset-0 grid place-items-center bg-[#000]/70 p-4 text-center text-[#f5f5f4] backdrop-blur-sm">
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-[#a8a29e]">Up next</p>
-              <p className="mt-1 font-display text-2xl font-semibold">{upNext.title}</p>
+              <p className="mt-1 font-display text-2xl font-bold">{upNext.title}</p>
               {countdown !== null ? <p aria-live="polite" className="mt-2 text-sm text-[#d6d3d1]">Starting in {countdown}…</p> : null}
               <div className="mt-4 flex items-center justify-center gap-2">
                 <button type="button" onClick={() => onNext?.()} className="inline-flex items-center gap-1.5 rounded-lg bg-[#fff] px-4 py-2 text-sm font-semibold text-[#1c1917] hover:bg-[#e7e5e4]">
@@ -551,8 +551,8 @@ export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, s
 
 function Switch({ on }: { on: boolean }) {
   return (
-    <span aria-hidden className={`relative h-4 w-7 shrink-0 rounded-full transition ${on ? "bg-[#fb7185]" : "bg-[#fff]/25"}`}>
-      <span className={`absolute top-0.5 size-3 rounded-full bg-[#fff] transition-all ${on ? "left-3.5" : "left-0.5"}`} />
+    <span aria-hidden className={`relative h-4 w-7 shrink-0 rounded-full transition ${on ? "bg-[#fff]" : "bg-[#fff]/25"}`}>
+      <span className={`absolute top-0.5 size-3 rounded-full transition-all ${on ? "left-3.5 bg-[#0a0a0a]" : "left-0.5 bg-[#fff]"}`} />
     </span>
   );
 }
@@ -613,11 +613,11 @@ function Timeline({ position, duration, ranges, verifiedPercent, markers, onSeek
         }}
       >
         <div className="relative h-1 w-full overflow-hidden rounded-full bg-[#fff]/20 transition-all group-hover/track:h-1.5 group-focus-visible/track:h-1.5">
-          {verifiedPercent !== null ? <div className="absolute inset-y-0 left-0 bg-[#6ee7b7]/25" style={{ width: `${verifiedPercent}%` }} /> : null}
+          {verifiedPercent !== null ? <div className="absolute inset-y-0 left-0 bg-[#fff]/15" style={{ width: `${verifiedPercent}%` }} /> : null}
           {ranges.map(([start, end], index) => (
             <div key={index} className="absolute inset-y-0 bg-[#fff]/35" style={{ left: percent(start), width: known ? `${((end - start) / duration) * 100}%` : 0 }} />
           ))}
-          <div className="absolute inset-y-0 left-0 bg-[#fb7185]" style={{ width: percent(position) }} />
+          <div className="absolute inset-y-0 left-0 bg-[#fff]" style={{ width: percent(position) }} />
         </div>
         {markers.map((marker, index) => (
           <span key={index} aria-hidden className="pointer-events-none absolute top-1/2 h-2.5 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#fde68a] shadow" style={{ left: percent(marker.seconds) }} />

@@ -20,7 +20,7 @@ export function AvailabilityLabel({ item, compact = false }: { item: ResourceAva
   const state = item?.state ?? "online_only";
   if (compact) {
     // A dot only when part of the lesson is on this computer; the words stay for screen readers.
-    const dot = state === "available_offline" ? "bg-emerald-300" : state === "downloading" ? "bg-cyan-300 animate-pulse" : state === "partially_available" ? "bg-amber-300" : "";
+    const dot = state === "available_offline" ? "bg-emerald-300" : state === "downloading" ? "bg-cyan-300 animate-pulse" : state === "partially_available" ? "bg-accent hover:bg-accent-hover" : "";
     return (
       <span data-availability={state} title={labels[state]} className="inline-flex size-3 shrink-0 items-center justify-center">
         {dot ? <span aria-hidden className={`size-1.5 rounded-full ${dot}`} /> : null}

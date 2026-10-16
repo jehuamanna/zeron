@@ -23,7 +23,7 @@ export function CourseNotebook({ courseId, placed, ...actions }: NotebookActions
     <div className="relative h-full overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-8">
         <p className="mb-1 text-xs font-bold uppercase tracking-[0.2em] text-accent-text">Notebook</p>
-        <h1 className="font-display text-3xl font-semibold tracking-tight">Everything you captured</h1>
+        <h1 className="font-display text-3xl font-bold tracking-tight">Everything you captured</h1>
         <p className="mt-1 text-sm text-muted">
           {noteCount} {noteCount === 1 ? "note" : "notes"} · {sketchCount} {sketchCount === 1 ? "sketch" : "sketches"}, in lesson order.
         </p>

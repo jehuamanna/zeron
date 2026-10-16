@@ -72,7 +72,7 @@ export function PublishArea({ onOpenNetwork }: { onOpenNetwork: () => void }) {
             ))}
           </nav>
           {workspace === "courses" && !selectedDraftId ? (
-            <button type="button" onClick={() => createDraft.mutate()} disabled={createDraft.isPending} className="flex items-center gap-2 rounded-xl bg-amber-300 px-4 py-2.5 text-sm font-semibold text-slate-950 disabled:opacity-50">
+            <button type="button" onClick={() => createDraft.mutate()} disabled={createDraft.isPending} className="flex items-center gap-2 rounded-xl bg-accent hover:bg-accent-hover px-4 py-2.5 text-sm font-semibold text-slate-950 disabled:opacity-50">
               <BookPlus size={17} /> {createDraft.isPending ? "Creating…" : "New course"}
             </button>
           ) : null}

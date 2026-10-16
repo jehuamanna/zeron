@@ -49,7 +49,7 @@ export function LibraryNotebook({ courses, onOpen, onBack }: {
         <ChevronLeft size={16} /> Courses
       </button>
       <p className="mb-1 text-xs font-bold uppercase tracking-[0.2em] text-accent-text">Notebook</p>
-      <h1 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">All your notes</h1>
+      <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">All your notes</h1>
       <p className="mt-1 text-sm text-muted">
         {totalNotes} {totalNotes === 1 ? "note" : "notes"} · {totalSketches} {totalSketches === 1 ? "sketch" : "sketches"} across {withSomething.length} {withSomething.length === 1 ? "course" : "courses"}.
       </p>
@@ -84,7 +84,7 @@ export function LibraryNotebook({ courses, onOpen, onBack }: {
               <section key={courseId} aria-label={course.title}>
                 <div className="mb-5 flex items-end justify-between gap-3 border-b-2 border-accent/30 pb-2">
                   <div className="min-w-0">
-                    <h2 className="truncate font-display text-2xl font-semibold">{course.title}</h2>
+                    <h2 className="truncate font-display text-2xl font-bold">{course.title}</h2>
                     <p className="text-xs text-subtle">{course.publisherName}</p>
                   </div>
                   <button type="button" onClick={() => open(null)} className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-accent-text hover:underline">

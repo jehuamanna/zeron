@@ -189,7 +189,7 @@ export function DropImport({ draft, writer, disabled }: { draft: DraftDetail; wr
           {error ? <p role="alert" className="text-xs text-red-200">{error}</p> : null}
 
           <div className="flex gap-2">
-            <button type="button" onClick={() => void apply()} disabled={disabled || applying || !addsSomething} className="rounded-xl bg-amber-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">
+            <button type="button" onClick={() => void apply()} disabled={disabled || applying || !addsSomething} className="rounded-xl bg-accent hover:bg-accent-hover px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">
               {applying ? "Adding…" : "Add to course"}
             </button>
             <button type="button" onClick={dismiss} disabled={applying} className="rounded-xl border border-white/10 px-4 py-2 text-sm">Dismiss</button>

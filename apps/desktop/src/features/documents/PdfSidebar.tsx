@@ -189,7 +189,7 @@ function Highlights({ marks, page, onJump }: { marks: ListedMark[]; page: number
         <li key={mark.id}>
           <button type="button" onClick={() => onJump(mark.page)} className={`w-full rounded-md border-l-[3px] px-2 py-1.5 text-left hover:bg-white/5 ${mark.page === page ? "bg-white/5" : ""}`} style={{ borderLeftColor: mark.color ? colorCss(mark.color) : "#f59e0b" }}>
             <span className="block text-[10px] uppercase tracking-wider text-subtle">Page {mark.page}</span>
-            <span className="line-clamp-3 font-display text-[13px] text-fg-soft">{mark.text}</span>
+            <span className="line-clamp-3 font-reading text-[13px] text-fg-soft">{mark.text}</span>
           </button>
         </li>
       ))}

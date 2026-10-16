@@ -19,7 +19,7 @@ export function CatalogPage({ onOpenIdentity }: { onOpenIdentity: () => void }) 
     return (
       <div className="max-w-2xl rounded-3xl border border-white/10 bg-white/[0.035] p-6 text-sm">
         <p className="text-slate-300">A catalog is signed with your publisher identity, so learners can check it comes from you.</p>
-        <button type="button" onClick={onOpenIdentity} className="mt-4 flex items-center gap-2 rounded-xl bg-amber-300 px-4 py-2 font-semibold text-slate-950">
+        <button type="button" onClick={onOpenIdentity} className="mt-4 flex items-center gap-2 rounded-xl bg-accent hover:bg-accent-hover px-4 py-2 font-semibold text-slate-950">
           <KeyRound size={15} /> Create a signing identity
         </button>
       </div>
@@ -37,7 +37,7 @@ export function CatalogPage({ onOpenIdentity }: { onOpenIdentity: () => void }) 
         </p>
         <TitleField title={data.title} onSaved={update} />
         <div className="mt-5 flex flex-wrap items-center gap-3">
-          <button type="button" onClick={() => exportCatalog.mutate()} disabled={exportCatalog.isPending || identity.data.status !== "ready"} className="flex items-center gap-2 rounded-xl bg-amber-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">
+          <button type="button" onClick={() => exportCatalog.mutate()} disabled={exportCatalog.isPending || identity.data.status !== "ready"} className="flex items-center gap-2 rounded-xl bg-accent hover:bg-accent-hover px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">
             <FileDown size={15} /> {exportCatalog.isPending ? "Signing…" : "Export signed catalog…"}
           </button>
           {identity.data.status !== "ready" ? <p className="text-xs text-amber-200">Your signing key is not available on this computer; see Identity.</p> : null}

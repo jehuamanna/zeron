@@ -29,7 +29,7 @@ export function IdentityPage() {
         </p>
         {data.status === "none" ? (
           <div className="mt-5 space-y-3">
-            <button type="button" onClick={() => create.mutate()} disabled={create.isPending} className="flex items-center gap-2 rounded-xl bg-amber-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">
+            <button type="button" onClick={() => create.mutate()} disabled={create.isPending} className="flex items-center gap-2 rounded-xl bg-accent hover:bg-accent-hover px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">
               <KeyRound size={15} /> {create.isPending ? "Creating…" : "Create signing identity"}
             </button>
             {create.isError ? <p role="alert" className="text-sm text-red-300">{asCommandError(create.error)?.message ?? "The identity could not be created."}</p> : null}

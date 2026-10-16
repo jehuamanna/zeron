@@ -18,11 +18,16 @@ const formatBytes = (bytes: number) =>
     bytes / 1_000_000,
   );
 
-/** A stable cover colour for a course, so each one is recognisable at a glance. */
-function coverHue(courseId: string) {
+/**
+ * A stable monochrome cover for a course: near-black with diagonal bands at
+ * an angle of its own, so each course is recognisable at a glance.
+ */
+function cover(courseId: string) {
   let hash = 0;
   for (const char of courseId) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return Math.abs(hash) % 360;
+  const angle = 100 + (Math.abs(hash) % 70);
+  const tone = 10 + (Math.abs(hash >> 3) % 10);
+  return `repeating-linear-gradient(${angle}deg, rgb(255 255 255 / 0.05) 0 18px, transparent 18px 44px), linear-gradient(135deg, hsl(0 0% ${tone + 8}%), hsl(0 0% ${tone}%))`;
 }
 
 /** Library: the courses you learn from. */
@@ -98,7 +103,7 @@ export function Library() {
         <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="mb-1 text-xs font-bold uppercase tracking-[0.2em] text-accent-text">Library</p>
-            <h1 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">Continue learning</h1>
+            <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">Continue learning</h1>
           </div>
           <div className="flex w-full flex-1 items-center justify-end gap-2 sm:w-auto">
             <LibrarySearch onOpen={openSearchResult} />
@@ -135,7 +140,7 @@ export function Library() {
             <div className="mx-auto mb-5 grid size-14 place-items-center rounded-2xl bg-accent/10 text-accent-text">
               <BookOpen size={26} />
             </div>
-            <h2 className="font-display text-2xl font-semibold">Your library is ready</h2>
+            <h2 className="font-display text-2xl font-bold">Your library is ready</h2>
             <p className="mx-auto mt-2 max-w-md text-muted">Import a verified local course folder, or add a course from a .torrent file or magnet link.</p>
           </div>
         )}
@@ -151,7 +156,6 @@ export function Library() {
 }
 
 function ResumeCard({ course, onOpen }: { course: CourseSummary; onOpen: () => void }) {
-  const hue = coverHue(course.courseId);
   return (
     <button
       type="button"
@@ -161,13 +165,13 @@ function ResumeCard({ course, onOpen }: { course: CourseSummary; onOpen: () => v
       <div
         aria-hidden
         className="grid h-24 w-40 shrink-0 place-items-center rounded-xl text-[#fff]"
-        style={{ background: `linear-gradient(135deg, hsl(${hue} 55% 38%), hsl(${(hue + 40) % 360} 60% 22%))` }}
+        style={{ background: cover(course.courseId) }}
       >
         <BookOpen size={28} className="opacity-80" />
       </div>
       <div className="min-w-0 flex-1">
         <span className="block text-xs font-semibold uppercase tracking-wider text-accent-text">Pick up where you left off</span>
-        <span className="mt-1 block truncate font-display text-2xl font-semibold">{course.title}</span>
+        <span className="mt-1 block truncate font-display text-2xl font-bold">{course.title}</span>
         <span className="block text-sm text-muted">{course.publisherName}</span>
         <div className="mt-3 flex max-w-sm items-center gap-3">
           <span aria-hidden className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
@@ -184,7 +188,6 @@ function ResumeCard({ course, onOpen }: { course: CourseSummary; onOpen: () => v
 }
 
 function CourseCard({ course, onOpen }: { course: CourseSummary; onOpen: () => void }) {
-  const hue = coverHue(course.courseId);
   const done = course.totalLessons > 0 && course.completedLessons >= course.totalLessons;
   return (
     <button
@@ -194,7 +197,7 @@ function CourseCard({ course, onOpen }: { course: CourseSummary; onOpen: () => v
     >
       <div
         className="relative flex h-28 items-start justify-between p-3 text-[#fff]"
-        style={{ background: `linear-gradient(135deg, hsl(${hue} 55% 40%), hsl(${(hue + 40) % 360} 60% 22%))` }}
+        style={{ background: cover(course.courseId) }}
       >
         <span className="grid size-9 place-items-center rounded-lg bg-[#fff]/15 backdrop-blur">
           {course.source === "torrent" ? <Magnet size={17} /> : <HardDrive size={17} />}
@@ -210,7 +213,7 @@ function CourseCard({ course, onOpen }: { course: CourseSummary; onOpen: () => v
         </div>
       </div>
       <div className="flex flex-1 flex-col p-4">
-        <span className="font-display text-lg font-semibold leading-snug">{course.title}</span>
+        <span className="font-display text-lg font-bold leading-snug">{course.title}</span>
         <span className="mt-0.5 text-sm text-muted">{course.publisherName}</span>
         {course.totalLessons > 0 ? (
           <div className="mt-4">
