@@ -50,12 +50,6 @@ Playback states are `IDLE`, `RESOLVING_FILE`, `PREPARING_STREAM`, `BUFFERING`, `
 
 Library and Publish use the same adapter and persisted session model in one app ([ADR 0012](../decisions/0012-single-desktop-app.md)). A private engine downloads and never uploads; a public engine on the one fixed port serves shared courses and seeds releases. A torrent that is one of the user's releases is reserved on the public engine, so a Library copy of it stays private. Starting a seed validates that all release files still match metadata. Dashboard metrics are explicitly local: current upload rate, bytes uploaded by this engine session/history, currently connected peers, ratio derived from local counters, last activity, and errors. No global download count is presented.
 
-## Optional remote seed server
-
-The later `seed-server` is a Linux-first Rust executable composed from the same engine and release libraries. Default deployment has no public management listener. When enabled, management requires TLS, pinned/verified server identity, scoped revocable credentials, replay-resistant requests, audit logs, and rate limits.
-
-Remote activation is staged: create upload → transfer chunks to an attempt directory → verify manifest and torrent pieces → atomically activate → start seed. Disconnects are resumable, and an incomplete transfer is never seedable. Docker volumes and systemd hardening are deployment concerns, not domain dependencies.
-
 ## Catalog and authenticity
 
 The optional catalog stores discovery metadata, not course payload or learner activity. Torrent hashes identify bytes, not publishers. A future signed release envelope will use deterministic/canonical serialization and Ed25519, with a key ID, validity interval, rotation statement, and revocation channel. This is deliberately deferred until its canonicalization and trust model receive a separate ADR.

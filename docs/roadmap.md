@@ -32,9 +32,9 @@ Add progress, Tiptap notes, typed video/PDF anchors, PDF.js annotation workflow,
 
 Add version history, supersession/archive, retry/rollback UX, distribution details/logs, publisher configuration import/export, and annotation migration suggestions.
 
-## Phase 8 — optional headless seeding
+## Phase 8 — removed
 
-Create the Linux-first seed server, session restore, health, bandwidth policies, systemd/Docker deployment, then authenticated staged remote transfer and management.
+The user removed the headless seed server from the roadmap on 2026-10-16. Publishers seed from the desktop app; the later phases keep their numbers.
 
 ## Phase 9 — optional catalog and publisher identity
 

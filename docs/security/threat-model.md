@@ -2,7 +2,7 @@
 
 ## Assets and adversaries
 
-Assets include learner notes/history, publisher source media, immutable releases, signing keys, filesystem contents, network privacy, and process availability. Adversaries include malicious torrent peers/trackers, hostile course publishers, tampered packages, local web origins probing loopback, compromised remote seed servers, and accidental operator actions.
+Assets include learner notes/history, publisher source media, immutable releases, signing keys, filesystem contents, network privacy, and process availability. Adversaries include malicious torrent peers/trackers, hostile course publishers, tampered packages, local web origins probing loopback, and accidental operator actions.
 
 ## Principal threats and controls
 

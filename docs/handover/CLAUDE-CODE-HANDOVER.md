@@ -211,7 +211,7 @@ Read this section first. Slice A is done: the Mission and the architecture docs 
   - **Setup:** the Admin seeded the systems-design fixture under Internet on fixed port 51413 with 70 public trackers. A Learner on a different network never connected.
   - **Admin's router:** answers no UPnP (SSDP), NAT-PMP, or PCP. The address is public IPv4, not carrier-grade NAT, but trackers see a different egress address in the same /16 than `api.ipify.org` does, so the provider may NAT through a pool.
   - **What the trackers show:** they list the seeder on 51413, and a TCP probe to it from outside is dropped. The other machine's Learner ports were dropped too. Neither side accepted connections, so no client could connect.
-  - **Ways out:** a manual TCP 51413 forward on the publisher's router, a learner network that accepts connections (UPnP, NAT-PMP, or PCP), or the Phase 8 seed server.
+  - **Ways out:** a manual TCP 51413 forward on the publisher's router, a learner network that accepts connections (UPnP, NAT-PMP, or PCP). (The Phase 8 seed server was removed from the roadmap.)
   - **Scratch-only state:** the scratch Publisher data (`publisher-run`) and the public magnet live only in that session's scratchpad. The user asked that the magnet be shared only with the Learner and destroyed afterwards. Stop that seeding and archive or delete its release when the test ends.
 
 ### Slice A: merge Publisher and Learner into one app `apps/desktop` — done
@@ -282,10 +282,9 @@ Delivered; see `docs/releases/phase-3-port-mapper.md` and ADR 0013. The user app
 ### Later (record only)
 
 - **Hole punching (BEP 55, `ut_holepunch`) and protocol encryption (MSE/PE):** Deluge has both; librqbit 9.0.1 has neither. Each is a substantial engine change; propose it as an upstream contribution or a fork, and ask the user first.
-- **Phase 8 seed server:** the reliable way for publishers whose router cannot be opened.
 - **Paid or private courses:** parked by the user; needs encryption, key delivery, accounts, and payments. See the conversation summary in `phase-3-trackers.md` limitations.
 
-## Remaining phases (5–10)
+## Remaining phases (7, 9, 10)
 
 Each phase is broken into slices in the same style, ordered by dependency.
 
@@ -321,13 +320,9 @@ Partly pulled forward by the active slice. Remaining:
 - import and export of publisher configuration;
 - suggestions for migrating annotations between course versions.
 
-### Phase 8 — optional headless seeding
+### Phase 8 — removed
 
-- A Linux-first seed server reusing `torrent-port` and `torrent-librqbit`.
-- Session restore and a health endpoint.
-- Bandwidth policies.
-- systemd and Docker deployment.
-- Later: authenticated, staged remote transfer of releases and remote management. Remote management is a security-review trigger.
+The user removed the headless seed server on 2026-10-16 (an earlier attempt, `f18d123`, was reverted in `628352b`). Do not reintroduce it.
 
 ### Phase 9 — optional catalog and publisher identity
 
