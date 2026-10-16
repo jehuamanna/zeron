@@ -6,6 +6,7 @@
     "build": "pnpm --filter './apps/*' build",
     "build:appimage": "pnpm --filter './apps/*' build:appimage",
     "test": "pnpm --filter './apps/*' test",
-    "typecheck": "pnpm --filter './apps/*' typecheck"
+    "typecheck": "pnpm --filter './apps/*' typecheck",
+    "licenses:check": "node tools/licenses/check-js-licenses.mjs"
   }
 }
