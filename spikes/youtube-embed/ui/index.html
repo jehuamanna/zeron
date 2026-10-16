@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>YouTube embed spike (nested)</title>
+<style>body{margin:0;background:#222}iframe{border:0;width:100%;height:100vh}</style></head>
+<body>
+<script>
+// Embeds the loopback-served player page in a frame, as the real app's
+// tauri:// page would.
+const params = new URLSearchParams(location.search);
+const frame = document.createElement("iframe");
+frame.src = params.get("player");
+frame.allow = "autoplay; encrypted-media; fullscreen";
+document.body.appendChild(frame);
+</script>
+</body>
+</html>

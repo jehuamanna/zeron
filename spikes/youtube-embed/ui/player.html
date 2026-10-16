@@ -1,0 +1,78 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>YouTube embed spike</title>
+<style>body{margin:0;background:#111;color:#eee;font:13px monospace}#log{padding:6px;white-space:pre-wrap}</style>
+</head>
+<body>
+<div id="player"></div>
+<div id="log"></div>
+<script>
+// Drives one YT.Player through ready -> play -> seek -> playlist and posts
+// each step to the spike's loopback server, which prints it.
+const params = new URLSearchParams(location.search);
+const label = params.get("label") || "?";
+const reportUrl = params.get("report");
+const host = params.get("host") === "nocookie" ? "https://www.youtube-nocookie.com" : "https://www.youtube.com";
+const VIDEO = "M7lc1UVf-VE";
+const PLAYLIST = "UU_x5XG1OV2P6uZZ5FSM9Ttw";
+
+function report(event, detail) {
+  const line = `${label} ${event} ${detail === undefined ? "" : JSON.stringify(detail)}`;
+  document.getElementById("log").textContent += line + "\n";
+  if (reportUrl) fetch(reportUrl, { method: "POST", mode: "no-cors", body: line }).catch(() => {});
+}
+
+report("page", { origin: location.origin, secure: window.isSecureContext, ua: navigator.userAgent,
+  mse: typeof MediaSource !== "undefined",
+  h264: typeof MediaSource !== "undefined" && MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"'),
+  vp9: typeof MediaSource !== "undefined" && MediaSource.isTypeSupported('video/webm; codecs="vp9"'),
+  av1: typeof MediaSource !== "undefined" && MediaSource.isTypeSupported('video/mp4; codecs="av01.0.05M.08"') });
+setTimeout(() => report("timeout"), 45000);
+
+const tag = document.createElement("script");
+tag.src = "https://www.youtube.com/iframe_api";
+tag.onerror = () => report("iframe_api_load_failed");
+document.head.appendChild(tag);
+
+let phase = "start";
+let player;
+window.onYouTubeIframeAPIReady = () => {
+  report("api_ready");
+  const vars = { playsinline: 1, rel: 0 };
+  if (location.origin.startsWith("http")) vars.origin = location.origin;
+  player = new YT.Player("player", {
+    host, videoId: VIDEO, width: 640, height: 360, playerVars: vars,
+    events: {
+      onReady: () => { report("player_ready", { title: player.getVideoData().title, duration: player.getDuration() }); player.mute(); player.playVideo(); },
+      onError: (e) => report("player_error", { code: e.data, phase }),
+      onStateChange: (e) => onState(e.data),
+    },
+  });
+};
+
+function onState(state) {
+  report("state", { state, phase, t: player.getCurrentTime() });
+  if (state === YT.PlayerState.PLAYING && phase === "start") {
+    phase = "playing";
+    setTimeout(() => {
+      report("time_before_seek", player.getCurrentTime());
+      phase = "seek";
+      player.seekTo(120, true);
+      setTimeout(() => {
+        report("time_after_seek", player.getCurrentTime());
+        phase = "playlist";
+        player.cuePlaylist({ listType: "playlist", list: PLAYLIST });
+      }, 3000);
+    }, 3000);
+  }
+  if (state === YT.PlayerState.CUED && phase === "playlist") {
+    const list = player.getPlaylist() || [];
+    report("playlist", { count: list.length, first: list.slice(0, 3) });
+    report("done");
+  }
+}
+</script>
+</body>
+</html>
