@@ -16,8 +16,18 @@ export function percentOf(item: ResourceAvailability | undefined): number {
 }
 
 /** Availability of one lesson resource. */
-export function AvailabilityLabel({ item }: { item: ResourceAvailability | undefined }) {
+export function AvailabilityLabel({ item, compact = false }: { item: ResourceAvailability | undefined; compact?: boolean }) {
   const state = item?.state ?? "online_only";
+  if (compact) {
+    // A dot only when part of the lesson is on this computer; the words stay for screen readers.
+    const dot = state === "available_offline" ? "bg-emerald-300" : state === "downloading" ? "bg-cyan-300 animate-pulse" : state === "partially_available" ? "bg-amber-300" : "";
+    return (
+      <span data-availability={state} title={labels[state]} className="inline-flex size-3 shrink-0 items-center justify-center">
+        {dot ? <span aria-hidden className={`size-1.5 rounded-full ${dot}`} /> : null}
+        <span className="sr-only">{labels[state]}</span>
+      </span>
+    );
+  }
   return (
     <span data-availability={state} className={`inline-flex items-center gap-1 text-[11px] ${state === "available_offline" ? "text-emerald-300" : state === "downloading" ? "text-cyan-200" : "text-slate-400"}`}>
       {state === "available_offline" ? <CheckCircle2 size={12} /> : null}
@@ -87,17 +97,30 @@ export function KeepOfflineToggle({ label, kept, inherited = false, disabled, on
 }
 
 /** Pause or resume all downloading and sharing for one course. */
-export function PauseTransfersButton({ paused, disabled, onToggle }: { paused: boolean; disabled: boolean; onToggle: (paused: boolean) => void }) {
+export function PauseTransfersButton({ paused, disabled, onToggle, compact = false }: {
+  paused: boolean;
+  disabled: boolean;
+  onToggle: (paused: boolean) => void;
+  /** Icon only, for toolbars. */
+  compact?: boolean;
+}) {
+  const label = paused ? "Resume downloads" : "Pause downloads";
   return (
     <button
       type="button"
       aria-pressed={paused}
+      aria-label={compact ? label : undefined}
+      title={compact ? label : undefined}
       disabled={disabled}
       onClick={() => onToggle(!paused)}
-      className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-300 hover:bg-white/10 disabled:opacity-60"
+      className={
+        compact
+          ? `grid size-7 place-items-center rounded-md disabled:opacity-60 ${paused ? "text-amber-200" : "text-muted hover:bg-white/10 hover:text-fg"}`
+          : "inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-slate-300 hover:bg-white/10 disabled:opacity-60"
+      }
     >
-      {paused ? <Play size={12} /> : <Pause size={12} />}
-      {paused ? "Resume downloads" : "Pause downloads"}
+      {paused ? <Play size={compact ? 14 : 12} /> : <Pause size={compact ? 14 : 12} />}
+      {compact ? null : label}
     </button>
   );
 }

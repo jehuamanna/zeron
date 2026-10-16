@@ -47,7 +47,7 @@ export function LessonStatusIcon({ status }: { status: LessonStatus }) {
   const icon =
     status === "completed" ? <CheckCircle2 size={15} className="text-emerald-300" /> : status === "in_progress" ? <CircleDot size={15} className="text-accent" /> : <Circle size={15} className="text-faint" />;
   return (
-    <span data-lesson-status={status} title={statusText[status]} className="mt-0.5 shrink-0">
+    <span data-lesson-status={status} title={statusText[status]} className="shrink-0">
       {icon}
       <span className="sr-only">{statusText[status]}</span>
     </span>

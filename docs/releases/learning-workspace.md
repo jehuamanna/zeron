@@ -70,6 +70,16 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
 - Skeleton loading.
 - An "Add courses" section for torrent import and catalogs.
 
+### 7. Simpler contents list (follow-up)
+
+- **Controls were rendering too large:** the `font: inherit` reset on buttons and fields sat outside Tailwind's layers, so it overrode every text-size utility. It now lives in `@layer base`, which makes buttons app-wide the size they were written to be.
+- **One 32 px line per lesson:**
+  - Each row shows its status, number, and title, small icons for its materials (video, PDF, reading), and the duration.
+  - For torrent courses, a coloured dot shows availability.
+  - Notes, mark complete, keep offline, and remove download replace the duration on hover or keyboard focus.
+  - Download controls are icons in the Contents header.
+  - Accessible names are unchanged.
+
 ## Acceptance evidence
 
 - **Vitest:** all 176 tests pass, 3 of them new.
