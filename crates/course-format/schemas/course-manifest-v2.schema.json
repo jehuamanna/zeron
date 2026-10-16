@@ -1,0 +1,487 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CourseManifest",
+  "description": "The root `course.json` document.",
+  "type": "object",
+  "properties": {
+    "access": {
+      "description": "How paid content is unlocked. Present exactly when a resource is\nencrypted; schema version 2 only.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CourseAccess"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "category": {
+      "description": "Optional publisher-defined category.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "courseId": {
+      "description": "Stable logical identity, independent of title, path, and release.",
+      "type": "string"
+    },
+    "description": {
+      "description": "Optional course description.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "estimatedDurationSeconds": {
+      "description": "Publisher-provided total duration estimate.",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "language": {
+      "description": "BCP-47-style language tag. Version one performs conservative syntax checks.",
+      "type": "string"
+    },
+    "license": {
+      "description": "Optional license metadata.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/License"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "modules": {
+      "description": "Ordered modules.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Module"
+      }
+    },
+    "prerequisites": {
+      "description": "Suggested prior knowledge.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "publisher": {
+      "description": "Publisher attribution.",
+      "$ref": "#/$defs/Publisher"
+    },
+    "references": {
+      "description": "External HTTPS references.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ExternalReference"
+      }
+    },
+    "schemaVersion": {
+      "description": "Wire-format version: `1` without paid content, `2` with it.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "tags": {
+      "description": "Search and discovery tags.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "thumbnailResourceId": {
+      "description": "Resource ID used as the course thumbnail.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title": {
+      "description": "Human-readable course title.",
+      "type": "string"
+    },
+    "version": {
+      "description": "Publisher-selected semantic version.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "courseId",
+    "version",
+    "title",
+    "publisher",
+    "language",
+    "modules"
+  ],
+  "$defs": {
+    "AccessModel": {
+      "description": "Supported access models.",
+      "oneOf": [
+        {
+          "description": "Some lessons are encrypted and unlock with a license; the rest are\nfree previews.",
+          "type": "string",
+          "const": "paid"
+        }
+      ]
+    },
+    "CourseAccess": {
+      "description": "How a course's paid content is unlocked.",
+      "type": "object",
+      "properties": {
+        "model": {
+          "description": "Access model.",
+          "$ref": "#/$defs/AccessModel"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "model"
+      ]
+    },
+    "ExternalReference": {
+      "description": "A labelled external HTTPS link.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "Link label.",
+          "type": "string"
+        },
+        "url": {
+          "description": "HTTPS URL.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "url"
+      ]
+    },
+    "Lesson": {
+      "description": "An ordered lesson.",
+      "type": "object",
+      "properties": {
+        "estimatedDurationSeconds": {
+          "description": "Publisher-provided duration estimate.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "id": {
+          "description": "Stable lesson ID.",
+          "type": "string"
+        },
+        "position": {
+          "description": "Zero-based position within the module.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "resources": {
+          "description": "Resources associated with the lesson.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Resource"
+          }
+        },
+        "title": {
+          "description": "Display title.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "position",
+        "resources"
+      ]
+    },
+    "License": {
+      "description": "Human-readable license metadata.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "License name or SPDX identifier.",
+          "type": "string"
+        },
+        "url": {
+          "description": "Optional canonical HTTPS reference.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "Module": {
+      "description": "An ordered course module.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Stable module ID.",
+          "type": "string"
+        },
+        "lessons": {
+          "description": "Ordered lessons.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Lesson"
+          }
+        },
+        "position": {
+          "description": "Zero-based position within the course.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "title": {
+          "description": "Display title.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "position",
+        "lessons"
+      ]
+    },
+    "Publisher": {
+      "description": "Publisher attribution embedded in the manifest.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Display name.",
+          "type": "string"
+        },
+        "publisherId": {
+          "description": "Optional stable publisher identity.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "Resource": {
+      "description": "A package resource.",
+      "type": "object",
+      "properties": {
+        "byteLength": {
+          "description": "Exact byte length in the published package (sealed, if encrypted).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "durationSeconds": {
+          "description": "Media duration when meaningful.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "encryption": {
+          "description": "Present when the package bytes are sealed; schema version 2 only.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceEncryption"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "description": "Stable resource ID.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Logical resource kind.",
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "language": {
+          "description": "Language tag for language-specific resources.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mediaType": {
+          "description": "Declared MIME media type.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Safe, normalized package-relative path using `/` separators.",
+          "type": "string"
+        },
+        "relations": {
+          "description": "Typed relationships to other resources.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceRelation"
+          }
+        },
+        "sha256": {
+          "description": "Lowercase hexadecimal SHA-256 digest of the package bytes (sealed,\nif encrypted).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "path",
+        "mediaType",
+        "byteLength",
+        "sha256"
+      ]
+    },
+    "ResourceEncryption": {
+      "description": "How a resource's package bytes are sealed.",
+      "type": "object",
+      "properties": {
+        "chunkSize": {
+          "description": "Plaintext bytes per chunk; must be [`ENCRYPTION_CHUNK_SIZE`].",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "plaintextLength": {
+          "description": "Length of the decrypted resource. `byteLength` is the sealed length.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "scheme": {
+          "description": "Must be [`ENCRYPTION_SCHEME`].",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scheme",
+        "chunkSize",
+        "plaintextLength"
+      ]
+    },
+    "ResourceKind": {
+      "description": "Supported resource kinds in schema version one.",
+      "oneOf": [
+        {
+          "description": "Video media.",
+          "type": "string",
+          "const": "video"
+        },
+        {
+          "description": "Audio media.",
+          "type": "string",
+          "const": "audio"
+        },
+        {
+          "description": "PDF document.",
+          "type": "string",
+          "const": "pdf"
+        },
+        {
+          "description": "Markdown document.",
+          "type": "string",
+          "const": "markdown"
+        },
+        {
+          "description": "Plain text document.",
+          "type": "string",
+          "const": "text"
+        },
+        {
+          "description": "Subtitle track.",
+          "type": "string",
+          "const": "subtitle"
+        },
+        {
+          "description": "Navigable transcript.",
+          "type": "string",
+          "const": "transcript"
+        },
+        {
+          "description": "Image asset.",
+          "type": "string",
+          "const": "image"
+        },
+        {
+          "description": "Source-code archive.",
+          "type": "string",
+          "const": "source_archive"
+        },
+        {
+          "description": "A valid but otherwise unclassified resource.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
+    "ResourceRelation": {
+      "description": "A typed relationship between two resources.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "Relationship meaning.",
+          "$ref": "#/$defs/ResourceRelationKind"
+        },
+        "resourceId": {
+          "description": "Referenced stable resource ID.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "resourceId"
+      ]
+    },
+    "ResourceRelationKind": {
+      "description": "Supported resource relationships in schema version one.",
+      "oneOf": [
+        {
+          "description": "A transcript for media.",
+          "type": "string",
+          "const": "transcript"
+        },
+        {
+          "description": "A subtitle track for media.",
+          "type": "string",
+          "const": "subtitle"
+        },
+        {
+          "description": "A thumbnail or poster image.",
+          "type": "string",
+          "const": "thumbnail"
+        },
+        {
+          "description": "Supplemental material.",
+          "type": "string",
+          "const": "supplement"
+        }
+      ]
+    }
+  }
+}

@@ -5,8 +5,8 @@ use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
     ActivityKind, DraftServiceError, DraftSummary, FindingSeverity, MAX_TRACKER_LISTS,
     MAX_TRACKERS, MetadataEdit, PublishJobSnapshot, PublishJobs, PublishStage, PublisherDrafts,
-    ReleaseRecord, ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit,
-    TrackerListStatus, TransferState, inspect_draft_media, source_info,
+    ReleaseRecord, ReleaseSecrets, ReleaseSeedingStatus, ReleaseTorrent, StoredDraft,
+    StructureEdit, TrackerListStatus, TransferState, inspect_draft_media, source_info,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -57,6 +57,8 @@ struct ModuleDto {
 struct LessonDto {
     id: String,
     title: String,
+    /// Sealed at publishing (ADR 0017); otherwise a free preview.
+    paid: bool,
     resources: Vec<ResourceDto>,
 }
 
@@ -128,6 +130,10 @@ pub(crate) enum StructureEditInput {
     },
     RemoveLesson {
         lesson_id: String,
+    },
+    SetLessonPaid {
+        lesson_id: String,
+        paid: bool,
     },
     MoveLesson {
         module_id: String,
@@ -445,7 +451,7 @@ pub(crate) async fn start_publish_preparation(
     let drafts = Arc::clone(&state.drafts);
     let jobs = Arc::clone(&state.publish_jobs);
     let credentials = Arc::clone(&state.credentials);
-    let (draft, distribution, signer, started) = run_blocking(move || {
+    let (draft, distribution, signer, content_key, started) = run_blocking(move || {
         let drafts = lock_drafts(&drafts)?;
         let draft = drafts
             .draft(&draft_id)
@@ -460,20 +466,24 @@ pub(crate) async fn start_publish_preparation(
             &credentials,
             super::tracker_lists::now_unix_seconds(),
         )?;
+        let content_key = super::identity::release_content_key(&credentials, &draft)?;
         let started = jobs
             .begin(&draft)
             .map_err(|error| service_error("publish_start_failed", error))?;
-        Ok((draft, distribution, signer, started))
+        Ok((draft, distribution, signer, content_key, started))
     })
     .await?;
     let jobs = Arc::clone(&state.publish_jobs);
     let job_id = started.job_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        jobs.run_signed(
+        jobs.run_with(
             &job_id,
             &draft,
             &distribution,
-            signer.as_ref(),
+            ReleaseSecrets {
+                signer: signer.as_ref(),
+                content_key: content_key.as_ref(),
+            },
             &mut |snapshot| {
                 let _ = app.emit(PUBLISH_JOB_EVENT, PublishJobDto::from(snapshot));
             },
@@ -1525,6 +1535,9 @@ impl From<StructureEditInput> for StructureEdit {
                 Self::RenameLesson { lesson_id, title }
             }
             StructureEditInput::RemoveLesson { lesson_id } => Self::RemoveLesson { lesson_id },
+            StructureEditInput::SetLessonPaid { lesson_id, paid } => {
+                Self::SetLessonPaid { lesson_id, paid }
+            }
             StructureEditInput::MoveLesson {
                 module_id,
                 lesson_id,
@@ -1602,6 +1615,7 @@ impl From<StoredDraft> for DraftDetailDto {
                         .map(|lesson| LessonDto {
                             id: lesson.id,
                             title: lesson.title,
+                            paid: lesson.paid,
                             resources: lesson.resources.iter().map(ResourceDto::from).collect(),
                         })
                         .collect(),
@@ -1883,6 +1897,7 @@ mod tests {
             id: "module_one".to_owned(),
             title: "Module".to_owned(),
             lessons: vec![DraftLesson {
+                paid: false,
                 id: "lesson_one".to_owned(),
                 title: "Lesson".to_owned(),
                 estimated_duration_seconds: None,
@@ -2397,6 +2412,7 @@ mod tests {
             id: "module_one".to_owned(),
             title: "Module".to_owned(),
             lessons: vec![DraftLesson {
+                paid: false,
                 id: "lesson_one".to_owned(),
                 title: "Lesson".to_owned(),
                 estimated_duration_seconds: None,

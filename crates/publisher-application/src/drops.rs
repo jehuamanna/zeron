@@ -490,6 +490,7 @@ impl PublisherDrafts {
                     title: file.title.clone(),
                     estimated_duration_seconds: None,
                     resources: vec![resource],
+                    paid: false,
                 });
             }
             if lessons.is_empty() {
@@ -519,6 +520,7 @@ impl PublisherDrafts {
                         title: file.title.clone(),
                         estimated_duration_seconds: None,
                         resources: vec![resource],
+                        paid: false,
                     });
                 }
             }

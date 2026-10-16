@@ -5,7 +5,10 @@ use thiserror::Error;
 use unicode_normalization::UnicodeNormalization;
 use url::Url;
 
-use crate::{COURSE_SCHEMA_VERSION, CourseManifest, ResourceKind};
+use crate::{
+    COURSE_SCHEMA_VERSION, CourseManifest, ENCRYPTION_CHUNK_SIZE, ENCRYPTION_SCHEME,
+    PAID_COURSE_SCHEMA_VERSION, Resource, ResourceKind, sealed_byte_length,
+};
 
 const MAX_ID_BYTES: usize = 128;
 const MAX_PATH_BYTES: usize = 4_096;
@@ -86,6 +89,7 @@ impl CourseManifest {
                     validator
                         .media_type(&format!("{resource_path}.mediaType"), &resource.media_type);
                     validator.sha256(&format!("{resource_path}.sha256"), &resource.sha256);
+                    validator.encryption(&resource_path, resource);
                     validator.duration(
                         &format!("{resource_path}.durationSeconds"),
                         resource.duration_seconds,
@@ -149,15 +153,57 @@ impl Validator {
         }
     }
 
+    fn encryption(&mut self, resource_path: &str, resource: &Resource) {
+        let Some(encryption) = &resource.encryption else {
+            return;
+        };
+        if encryption.scheme != ENCRYPTION_SCHEME {
+            self.issue(
+                format!("{resource_path}.encryption.scheme"),
+                format!("must be {ENCRYPTION_SCHEME}"),
+            );
+        }
+        if encryption.chunk_size != ENCRYPTION_CHUNK_SIZE {
+            self.issue(
+                format!("{resource_path}.encryption.chunkSize"),
+                format!("must be {ENCRYPTION_CHUNK_SIZE}"),
+            );
+        }
+        if resource.byte_length != sealed_byte_length(encryption.plaintext_length) {
+            self.issue(
+                format!("{resource_path}.byteLength"),
+                "must be the sealed length of encryption.plaintextLength",
+            );
+        }
+    }
+
     fn manifest_metadata(&mut self, manifest: &CourseManifest) {
-        if manifest.schema_version != COURSE_SCHEMA_VERSION {
+        let required = manifest.required_schema_version();
+        if ![COURSE_SCHEMA_VERSION, PAID_COURSE_SCHEMA_VERSION].contains(&manifest.schema_version) {
             self.issue(
                 "schemaVersion",
                 format!(
-                    "unsupported schema version {}; expected {COURSE_SCHEMA_VERSION}",
+                    "unsupported schema version {}; expected {COURSE_SCHEMA_VERSION} or {PAID_COURSE_SCHEMA_VERSION}",
                     manifest.schema_version
                 ),
             );
+        } else if manifest.schema_version != required {
+            self.issue(
+                "schemaVersion",
+                format!("must be {required} for this course's content"),
+            );
+        }
+        let encrypted = manifest
+            .resources()
+            .any(|resource| resource.encryption.is_some());
+        if manifest.access.is_some() && !encrypted {
+            self.issue(
+                "access",
+                "a paid course must have at least one encrypted resource",
+            );
+        }
+        if encrypted && manifest.access.is_none() {
+            self.issue("access", "required when a resource is encrypted");
         }
         self.id("courseId", &manifest.course_id);
         if Version::parse(&manifest.version).is_err() {

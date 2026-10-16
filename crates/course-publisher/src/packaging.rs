@@ -10,9 +10,11 @@ use std::{
     time::SystemTime,
 };
 
+use course_access::{AccessError, ContentKey, ResourceCipher};
 use course_format::{
-    COURSE_SCHEMA_VERSION, CourseManifest, Lesson, License, ManifestError, Module, Publisher,
-    Resource, ValidationIssue,
+    AccessModel, COURSE_SCHEMA_VERSION, CourseAccess, CourseManifest, Lesson, License,
+    ManifestError, Module, Publisher, Resource, ResourceEncryption, ValidationIssue,
+    sealed_byte_length,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -87,10 +89,12 @@ pub struct StagedFile {
     pub resource_id: String,
     /// Package-relative path.
     pub package_path: String,
-    /// Copied byte length.
+    /// Byte length in the package (sealed, if encrypted).
     pub byte_length: u64,
-    /// Lowercase SHA-256 of the copied bytes.
+    /// Lowercase SHA-256 of the package bytes (sealed, if encrypted).
     pub sha256: String,
+    /// Source length, when the resource was sealed.
+    pub plaintext_length: Option<u64>,
 }
 
 /// A complete staged package and its canonical manifest.
@@ -102,7 +106,7 @@ pub struct StagedPackage {
     pub manifest_sha256: String,
     /// Every staged resource in manifest order.
     pub files: Vec<StagedFile>,
-    /// Sum of resource sizes.
+    /// Sum of resource sizes in the package.
     pub total_resource_bytes: u64,
     /// The signature file written beside `course.json`, if the package is signed.
     pub signature_file: Option<String>,
@@ -141,6 +145,9 @@ pub enum PackagingError {
         /// Stable resource ID.
         resource_id: String,
     },
+    /// The draft has paid lessons but no content key was supplied.
+    #[error("a content key is required to package paid lessons")]
+    ContentKeyRequired,
     /// The staging destination already exists.
     #[error("the staging destination already exists")]
     DestinationExists,
@@ -157,6 +164,9 @@ pub enum PackagingError {
 
 /// Build the canonical manifest for a draft and per-resource digests.
 ///
+/// `digest` returns a resource's source length and the SHA-256 of its package
+/// bytes. Resources of paid lessons get the sealed `byteLength` and an
+/// `encryption` record, and the course gets `access` and schema version 2.
 /// Ordering follows the draft exactly; positions are derived from that order.
 #[must_use]
 pub fn manifest_for(
@@ -164,7 +174,7 @@ pub fn manifest_for(
     mut digest: impl FnMut(&DraftResource) -> (u64, String),
 ) -> CourseManifest {
     let metadata = &draft.metadata;
-    CourseManifest {
+    let mut manifest = CourseManifest {
         schema_version: COURSE_SCHEMA_VERSION,
         course_id: metadata.course_id.clone(),
         version: metadata.version.clone(),
@@ -206,17 +216,25 @@ pub fn manifest_for(
                             .resources
                             .iter()
                             .map(|resource| {
-                                let (byte_length, sha256) = digest(resource);
+                                let (source_length, sha256) = digest(resource);
+                                let encryption = lesson
+                                    .paid
+                                    .then(|| ResourceEncryption::chunked(source_length));
                                 Resource {
                                     id: resource.id.clone(),
                                     kind: resource.kind,
                                     path: resource.package_path.clone(),
                                     media_type: resource.media_type.clone(),
-                                    byte_length,
+                                    byte_length: if lesson.paid {
+                                        sealed_byte_length(source_length)
+                                    } else {
+                                        source_length
+                                    },
                                     sha256,
                                     duration_seconds: resource.duration_seconds.map(seconds),
                                     language: resource.language.clone(),
                                     relations: Vec::new(),
+                                    encryption,
                                 }
                             })
                             .collect(),
@@ -224,7 +242,18 @@ pub fn manifest_for(
                     .collect(),
             })
             .collect(),
+        access: None,
+    };
+    if manifest
+        .resources()
+        .any(|resource| resource.encryption.is_some())
+    {
+        manifest.access = Some(CourseAccess {
+            model: AccessModel::Paid,
+        });
     }
+    manifest.schema_version = manifest.required_schema_version();
+    manifest
 }
 
 /// Serialize a manifest to its canonical bytes: pretty JSON in struct field
@@ -281,10 +310,50 @@ pub fn stage_signed_package(
     progress: &mut dyn FnMut(StagingProgress),
     signing: Option<&PackageSigning<'_>>,
 ) -> Result<StagedPackage, PackagingError> {
+    stage_package_with(
+        draft,
+        destination,
+        limits,
+        cancellation,
+        progress,
+        PackageOptions {
+            signing,
+            content_key: None,
+        },
+    )
+}
+
+/// Optional signing and encryption for [`stage_package_with`].
+#[derive(Default, Clone, Copy)]
+pub struct PackageOptions<'a> {
+    /// Name the publisher and write the signature file.
+    pub signing: Option<&'a PackageSigning<'a>>,
+    /// The release's content key. Required when the draft has paid lessons;
+    /// their resources are sealed under it (ADR 0017).
+    pub content_key: Option<&'a ContentKey>,
+}
+
+/// [`stage_signed_package`], sealing every resource of a paid lesson under
+/// `options.content_key`.
+///
+/// # Errors
+/// Returns a classified [`PackagingError`], including
+/// [`PackagingError::ContentKeyRequired`] for paid lessons without a key.
+pub fn stage_package_with(
+    draft: &DraftCourse,
+    destination: &Path,
+    limits: PackagingLimits,
+    cancellation: &PackagingCancellation,
+    progress: &mut dyn FnMut(StagingProgress),
+    options: PackageOptions<'_>,
+) -> Result<StagedPackage, PackagingError> {
     cancellation.check()?;
     let issues = draft.validate();
     if !issues.is_empty() {
         return Err(PackagingError::DraftInvalid(issues));
+    }
+    if draft.has_paid_content() && options.content_key.is_none() {
+        return Err(PackagingError::ContentKeyRequired);
     }
     let plan = plan(draft, limits)?;
     validate_manifest(&manifest_for(draft, |resource| {
@@ -301,7 +370,7 @@ pub fn stage_signed_package(
             }
         }
     })?;
-    let result = write_package(draft, destination, &plan, cancellation, progress, signing);
+    let result = write_package(draft, destination, &plan, cancellation, progress, options);
     if result.is_err() {
         let _ = fs::remove_dir_all(destination);
     }
@@ -312,6 +381,7 @@ struct PlannedSource<'a> {
     resource: &'a DraftResource,
     byte_length: u64,
     modified: Option<SystemTime>,
+    paid: bool,
 }
 
 struct Plan<'a> {
@@ -329,11 +399,16 @@ impl Plan<'_> {
 }
 
 fn plan(draft: &DraftCourse, limits: PackagingLimits) -> Result<Plan<'_>, PackagingError> {
-    let resources: Vec<&DraftResource> = draft
+    let resources: Vec<(&DraftResource, bool)> = draft
         .modules
         .iter()
         .flat_map(|module| &module.lessons)
-        .flat_map(|lesson| &lesson.resources)
+        .flat_map(|lesson| {
+            lesson
+                .resources
+                .iter()
+                .map(|resource| (resource, lesson.paid))
+        })
         .collect();
     if resources.len() > limits.max_resource_count {
         return Err(PackagingError::LimitExceeded(format!(
@@ -344,15 +419,20 @@ fn plan(draft: &DraftCourse, limits: PackagingLimits) -> Result<Plan<'_>, Packag
     }
     let mut total_bytes = 0_u64;
     let mut sources = Vec::with_capacity(resources.len());
-    for resource in resources {
+    for (resource, paid) in resources {
         let metadata = fs::metadata(&resource.source_path)
             .ok()
             .filter(fs::Metadata::is_file)
             .ok_or_else(|| PackagingError::SourceUnavailable {
                 resource_id: resource.id.clone(),
             })?;
+        let package_length = if paid {
+            sealed_byte_length(metadata.len())
+        } else {
+            metadata.len()
+        };
         total_bytes = total_bytes
-            .checked_add(metadata.len())
+            .checked_add(package_length)
             .filter(|total| *total <= limits.max_total_bytes)
             .ok_or_else(|| {
                 PackagingError::LimitExceeded(format!(
@@ -364,6 +444,7 @@ fn plan(draft: &DraftCourse, limits: PackagingLimits) -> Result<Plan<'_>, Packag
             resource,
             byte_length: metadata.len(),
             modified: metadata.modified().ok(),
+            paid,
         });
     }
     Ok(Plan {
@@ -378,8 +459,9 @@ fn write_package(
     plan: &Plan<'_>,
     cancellation: &PackagingCancellation,
     progress: &mut dyn FnMut(StagingProgress),
-    signing: Option<&PackageSigning<'_>>,
+    options: PackageOptions<'_>,
 ) -> Result<StagedPackage, PackagingError> {
+    let signing = options.signing;
     let mut state = StagingProgress {
         completed_files: 0,
         total_files: plan.sources.len(),
@@ -398,10 +480,17 @@ fn write_package(
                 source,
             })?;
         }
-        let (byte_length, sha256) =
-            copy_and_hash(source, &target, cancellation, &mut state, progress)?;
+        let (byte_length, sha256) = match options.content_key.filter(|_| source.paid) {
+            Some(key) => seal_and_hash(source, key, &target, cancellation, &mut state, progress)?,
+            None => copy_and_hash(source, &target, cancellation, &mut state, progress)?,
+        };
+        let expected_length = if source.paid {
+            sealed_byte_length(source.byte_length)
+        } else {
+            source.byte_length
+        };
         let after = fs::metadata(&resource.source_path).ok();
-        let unchanged = byte_length == source.byte_length
+        let unchanged = byte_length == expected_length
             && after.is_some_and(|metadata| {
                 metadata.len() == source.byte_length && metadata.modified().ok() == source.modified
             });
@@ -417,6 +506,7 @@ fn write_package(
             package_path: resource.package_path.clone(),
             byte_length,
             sha256,
+            plaintext_length: source.paid.then_some(source.byte_length),
         });
     }
 
@@ -424,7 +514,12 @@ fn write_package(
         files
             .iter()
             .find(|file| file.resource_id == resource.id)
-            .map(|file| (file.byte_length, file.sha256.clone()))
+            .map(|file| {
+                (
+                    file.plaintext_length.unwrap_or(file.byte_length),
+                    file.sha256.clone(),
+                )
+            })
             .unwrap_or_default()
     });
     if let Some(signing) = signing {
@@ -536,6 +631,93 @@ fn copy_and_hash(
         source,
     })?;
     Ok((copied, hex(&hasher.finalize())))
+}
+
+/// Seal a paid resource into the package, hashing the sealed bytes. Reads
+/// exactly the planned length; a source that shrank or grew is reported as
+/// changed.
+fn seal_and_hash(
+    source: &PlannedSource<'_>,
+    key: &ContentKey,
+    target: &Path,
+    cancellation: &PackagingCancellation,
+    state: &mut StagingProgress,
+    progress: &mut dyn FnMut(StagingProgress),
+) -> Result<(u64, String), PackagingError> {
+    let resource_id = &source.resource.id;
+    let input = File::open(&source.resource.source_path).map_err(|_| {
+        PackagingError::SourceUnavailable {
+            resource_id: resource_id.clone(),
+        }
+    })?;
+    let mut output = HashingWriter {
+        file: create_new(target)?,
+        hasher: Sha256::new(),
+        state,
+        progress,
+    };
+    let mut reader = CancellableReader {
+        inner: io::BufReader::with_capacity(COPY_BUFFER_BYTES, input),
+        cancellation,
+    };
+    let cipher = ResourceCipher::new(key, resource_id, source.byte_length);
+    let sealed = cipher.seal(&mut reader, &mut output).map_err(|error| {
+        if cancellation.is_cancelled() {
+            return PackagingError::Cancelled;
+        }
+        match error {
+            AccessError::Io(source) => PackagingError::Io {
+                operation: "sealing a staged file",
+                source,
+            },
+            AccessError::Length | AccessError::Authentication => PackagingError::SourceChanged {
+                resource_id: resource_id.clone(),
+            },
+        }
+    })?;
+    output
+        .file
+        .sync_all()
+        .map_err(|source| PackagingError::Io {
+            operation: "flushing a staged file",
+            source,
+        })?;
+    Ok((sealed, hex(&output.hasher.finalize())))
+}
+
+struct CancellableReader<'a, R> {
+    inner: R,
+    cancellation: &'a PackagingCancellation,
+}
+
+impl<R: Read> Read for CancellableReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if self.cancellation.is_cancelled() {
+            return Err(io::Error::other("packaging was cancelled"));
+        }
+        self.inner.read(buffer)
+    }
+}
+
+struct HashingWriter<'a, 'p> {
+    file: File,
+    hasher: Sha256,
+    state: &'a mut StagingProgress,
+    progress: &'a mut (dyn FnMut(StagingProgress) + 'p),
+}
+
+impl Write for HashingWriter<'_, '_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let written = self.file.write(bytes)?;
+        self.hasher.update(&bytes[..written]);
+        self.state.completed_bytes = self.state.completed_bytes.saturating_add(written as u64);
+        (self.progress)(*self.state);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
 }
 
 fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), PackagingError> {

@@ -1,8 +1,9 @@
 use std::{fs, io, path::Path};
 
+use course_access::ContentKey;
 use course_publisher::{
-    DraftCourse, PackageSigning, PackagingCancellation, PackagingError, PackagingLimits,
-    StagingProgress, stage_signed_package,
+    DraftCourse, PackageOptions, PackageSigning, PackagingCancellation, PackagingError,
+    PackagingLimits, StagingProgress, stage_package_with,
 };
 
 use crate::{DraftServiceError, ReleaseSigner, opaque_id, signing::SIGNATURE_FILE};
@@ -29,6 +30,17 @@ pub struct StagingReceipt {
     pub manifest_sha256: String,
     /// Whether the package carries the publisher's signature.
     pub signed: bool,
+    /// Whether paid lessons were sealed under a content key.
+    pub paid: bool,
+}
+
+/// Secrets a staging attempt may use. Both stay behind the Rust boundary.
+#[derive(Default, Clone, Copy)]
+pub struct ReleaseSecrets<'a> {
+    /// Signs `course.json` with the publisher's key.
+    pub signer: Option<&'a ReleaseSigner>,
+    /// Seals paid lessons (ADR 0017); required when the draft has any.
+    pub content_key: Option<&'a ContentKey>,
 }
 
 /// Stage a frozen draft snapshot into a new attempt under `staging_root`.
@@ -63,6 +75,32 @@ pub fn stage_signed_draft(
     progress: &mut dyn FnMut(StagingProgress),
     signer: Option<&ReleaseSigner>,
 ) -> Result<StagingReceipt, DraftServiceError> {
+    stage_draft_with(
+        draft,
+        staging_root,
+        limits,
+        cancellation,
+        progress,
+        ReleaseSecrets {
+            signer,
+            content_key: None,
+        },
+    )
+}
+
+/// [`stage_signed_draft`], sealing paid lessons under `secrets.content_key`.
+///
+/// # Errors
+/// As [`stage_draft`].
+pub fn stage_draft_with(
+    draft: &DraftCourse,
+    staging_root: &Path,
+    limits: PackagingLimits,
+    cancellation: &PackagingCancellation,
+    progress: &mut dyn FnMut(StagingProgress),
+    secrets: ReleaseSecrets<'_>,
+) -> Result<StagingReceipt, DraftServiceError> {
+    let signer = secrets.signer;
     fs::create_dir_all(staging_root)
         .map_err(|source| io_error("creating the staging root", source))?;
     let attempt_id = opaque_id("stage")?;
@@ -77,13 +115,16 @@ pub fn stage_signed_draft(
         file_name: SIGNATURE_FILE,
         sign: &sign,
     });
-    let staged = stage_signed_package(
+    let staged = stage_package_with(
         draft,
         &partial,
         limits,
         cancellation,
         progress,
-        signing.as_ref(),
+        PackageOptions {
+            signing: signing.as_ref(),
+            content_key: secrets.content_key,
+        },
     )
     .map_err(DraftServiceError::Packaging)?;
     if let Err(source) = fs::rename(&partial, staging_root.join(&attempt_id)) {
@@ -92,6 +133,7 @@ pub fn stage_signed_draft(
     }
     Ok(StagingReceipt {
         signed: staged.signature_file.is_some(),
+        paid: staged.manifest.access.is_some(),
         attempt_id,
         draft_revision: draft.revision,
         course_id: staged.manifest.course_id,

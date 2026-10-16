@@ -77,6 +77,9 @@ Slices, in dependency order:
    - Publish marks lessons as paid or free preview, and encrypts paid resources at packaging.
    - The gateway, PDF/transcript readers, and indexer decrypt with a locally supplied key.
    - Golden fixtures and range or seek tests over encrypted media.
+
+   Done 2026-10-16: see [phase-11-encrypted-packages.md](releases/phase-11-encrypted-packages.md). Until licenses exist, the Library uses the publishing computer's own content keys; everyone else sees paid lessons as locked.
+
 3. **Learner identity.**
    - A learner key in the OS credential store on all three platforms.
    - An optional passphrase backup and restore, matching the ADR 0014 format.

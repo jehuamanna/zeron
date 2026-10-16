@@ -35,7 +35,7 @@ sha2.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
 tauri-plugin-updater.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs"] }
 torrent-librqbit = { path = "../../../crates/torrent-librqbit" }
 
 [dev-dependencies]

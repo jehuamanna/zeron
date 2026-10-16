@@ -323,10 +323,12 @@ fn youtube_manifest(
                         duration_seconds: None,
                         language: None,
                         relations: Vec::new(),
+                        encryption: None,
                     }],
                 })
                 .collect(),
         }],
+        access: None,
     }
 }
 

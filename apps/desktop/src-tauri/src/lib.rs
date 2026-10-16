@@ -37,6 +37,8 @@ pub(crate) struct AppState {
     pub(crate) torrents: Torrents,
     /// Where torrent courses download, `app_data/courses`. Never sent over IPC.
     pub(crate) courses_root: PathBuf,
+    /// Opens paid lessons this computer holds keys for (ADR 0017).
+    pub(crate) content_keys: Arc<dyn learning_application::ContentKeys>,
 }
 
 pub(crate) type Router = TransferRouter<LibrqbitEngine>;
@@ -74,7 +76,11 @@ const DISK_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(
 
 /// Work that runs after startup: restore torrent courses, honor the cache
 /// cap, watch free space, and index local courses' text for search.
-fn spawn_background_work(torrents: &Torrents, library: &Arc<Mutex<CourseLibrary>>) {
+fn spawn_background_work(
+    torrents: &Torrents,
+    library: &Arc<Mutex<CourseLibrary>>,
+    content_keys: &Arc<dyn learning_application::ContentKeys>,
+) {
     if let Some(imports) = torrents.imports.clone() {
         let cache = torrents.cache.clone();
         let disk = torrents.disk.clone();
@@ -94,7 +100,8 @@ fn spawn_background_work(torrents: &Torrents, library: &Arc<Mutex<CourseLibrary>
         });
     }
     let library = Arc::clone(library);
-    tauri::async_runtime::spawn_blocking(move || commands::index_local_texts(&library));
+    let keys = Arc::clone(content_keys);
+    tauri::async_runtime::spawn_blocking(move || commands::index_local_texts(&library, &*keys));
 }
 
 /// Open the library and publisher data, start the gateway and both engines,
@@ -150,7 +157,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(sharing) = &torrents.sharing {
         sharing.load()?;
     }
-    spawn_background_work(&torrents, &library);
+    let content_keys: Arc<dyn learning_application::ContentKeys> = Arc::new(
+        publish::identity::PublishedContentKeys(Arc::clone(&publish.credentials)),
+    );
+    spawn_background_work(&torrents, &library, &content_keys);
     publish.spawn_background_work(profile);
     app.manage(publish);
     app.manage(AppState {
@@ -160,6 +170,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         youtube: youtube::YouTubeState::default(),
         torrents,
         courses_root,
+        content_keys,
     });
     Ok(())
 }

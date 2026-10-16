@@ -1,14 +1,37 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// The only manifest schema version understood by this crate.
+/// Manifest schema version of courses without paid content. Writers emit it
+/// for every free course, so older readers keep importing them.
 pub const COURSE_SCHEMA_VERSION: u32 = 1;
+
+/// Manifest schema version of courses with paid content (ADR 0017). It adds
+/// the course `access` object and per-resource `encryption`.
+pub const PAID_COURSE_SCHEMA_VERSION: u32 = 2;
+
+/// `encryption.scheme` of sealed resources (ADR 0017 decision 2).
+pub const ENCRYPTION_SCHEME: &str = "zeron.chunked-xchacha20poly1305.v1";
+
+/// `encryption.chunkSize`: plaintext bytes per sealed chunk.
+pub const ENCRYPTION_CHUNK_SIZE: u32 = 65_520;
+
+/// Authentication tag bytes added to every sealed chunk.
+pub const ENCRYPTION_TAG_SIZE: u32 = 16;
+
+/// Package byte length of a resource sealed from `plaintext_length` bytes.
+#[must_use]
+pub fn sealed_byte_length(plaintext_length: u64) -> u64 {
+    let chunks = plaintext_length
+        .div_ceil(u64::from(ENCRYPTION_CHUNK_SIZE))
+        .max(1);
+    plaintext_length + chunks * u64::from(ENCRYPTION_TAG_SIZE)
+}
 
 /// The root `course.json` document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CourseManifest {
-    /// Wire-format version, currently `1`.
+    /// Wire-format version: `1` without paid content, `2` with it.
     pub schema_version: u32,
     /// Stable logical identity, independent of title, path, and release.
     pub course_id: String,
@@ -44,8 +67,76 @@ pub struct CourseManifest {
     /// Publisher-provided total duration estimate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimated_duration_seconds: Option<f64>,
+    /// How paid content is unlocked. Present exactly when a resource is
+    /// encrypted; schema version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<CourseAccess>,
     /// Ordered modules.
     pub modules: Vec<Module>,
+}
+
+impl CourseManifest {
+    /// The schema version this manifest's content requires.
+    #[must_use]
+    pub fn required_schema_version(&self) -> u32 {
+        let encrypted = self
+            .resources()
+            .any(|resource| resource.encryption.is_some());
+        if self.access.is_some() || encrypted {
+            PAID_COURSE_SCHEMA_VERSION
+        } else {
+            COURSE_SCHEMA_VERSION
+        }
+    }
+
+    /// Every resource in course order.
+    pub fn resources(&self) -> impl Iterator<Item = &Resource> {
+        self.modules
+            .iter()
+            .flat_map(|module| &module.lessons)
+            .flat_map(|lesson| &lesson.resources)
+    }
+}
+
+/// How a course's paid content is unlocked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CourseAccess {
+    /// Access model.
+    pub model: AccessModel,
+}
+
+/// Supported access models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessModel {
+    /// Some lessons are encrypted and unlock with a license; the rest are
+    /// free previews.
+    Paid,
+}
+
+/// How a resource's package bytes are sealed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResourceEncryption {
+    /// Must be [`ENCRYPTION_SCHEME`].
+    pub scheme: String,
+    /// Plaintext bytes per chunk; must be [`ENCRYPTION_CHUNK_SIZE`].
+    pub chunk_size: u32,
+    /// Length of the decrypted resource. `byteLength` is the sealed length.
+    pub plaintext_length: u64,
+}
+
+impl ResourceEncryption {
+    /// The encryption record for a resource of `plaintext_length` bytes.
+    #[must_use]
+    pub fn chunked(plaintext_length: u64) -> Self {
+        Self {
+            scheme: ENCRYPTION_SCHEME.to_owned(),
+            chunk_size: ENCRYPTION_CHUNK_SIZE,
+            plaintext_length,
+        }
+    }
 }
 
 /// Publisher attribution embedded in the manifest.
@@ -123,9 +214,10 @@ pub struct Resource {
     pub path: String,
     /// Declared MIME media type.
     pub media_type: String,
-    /// Exact byte length in the published package.
+    /// Exact byte length in the published package (sealed, if encrypted).
     pub byte_length: u64,
-    /// Lowercase hexadecimal SHA-256 digest.
+    /// Lowercase hexadecimal SHA-256 digest of the package bytes (sealed,
+    /// if encrypted).
     pub sha256: String,
     /// Media duration when meaningful.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -136,6 +228,19 @@ pub struct Resource {
     /// Typed relationships to other resources.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relations: Vec<ResourceRelation>,
+    /// Present when the package bytes are sealed; schema version 2 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encryption: Option<ResourceEncryption>,
+}
+
+impl Resource {
+    /// Length of the bytes a reader sees: the plaintext length when sealed.
+    #[must_use]
+    pub fn content_length(&self) -> u64 {
+        self.encryption
+            .as_ref()
+            .map_or(self.byte_length, |encryption| encryption.plaintext_length)
+    }
 }
 
 /// Supported resource kinds in schema version one.

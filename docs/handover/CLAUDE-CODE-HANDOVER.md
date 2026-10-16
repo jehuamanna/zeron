@@ -348,7 +348,8 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 
 ## Module boundaries
 
-- `course-format`: manifest wire contract and semantic validation.
+- `course-format`: manifest wire contract and semantic validation (schema 1 for free courses, 2 for paid ones).
+- `course-access`: paid-lesson encryption (ADR 0017): content keys, chunk sealing, and the decrypting reader. No I/O of its own.
 - `course-publisher`: draft and publishing policy, staging, and media inspection, with no SQLite or Tauri.
 - `publisher-storage`: Admin SQLite persistence (schema v6: drafts, releases, seeding intents, settings, distribution events, catalog confirmations) with compare-and-swap draft saves.
 - `publisher-application`: Admin use cases: drafts, sources, staging, torrents, publish jobs, releases, seeding, and settings.

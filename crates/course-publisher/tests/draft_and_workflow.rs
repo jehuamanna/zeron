@@ -34,6 +34,7 @@ fn draft(source_path: PathBuf) -> DraftCourse {
                 id: "module_b".to_owned(),
                 title: "B".to_owned(),
                 lessons: vec![DraftLesson {
+                    paid: false,
                     id: "lesson_b".to_owned(),
                     title: "Lesson".to_owned(),
                     estimated_duration_seconds: None,

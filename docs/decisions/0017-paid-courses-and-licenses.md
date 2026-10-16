@@ -21,7 +21,7 @@ The user does not want Zeron accounts, meaning no Zeron passwords, profiles, or 
 
 1. **What a paid course is.**
    - A release may mark lessons as *paid*. Each paid resource is encrypted; free preview lessons, the thumbnail, and `course.json` stay in plaintext. Learners can always see the title, the outline, and the previews.
-   - The manifest gains a course-level `access` object:
+   - The manifest gains a course-level `access` object. Slice 2 (2026-10-16) shipped it with `model` only; the issuer URL and delegation are added with the issuer slices:
      - `model: "paid"`;
      - the issuer URL;
      - the issuer delegation (decision 5).

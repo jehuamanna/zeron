@@ -5,7 +5,8 @@
 
 use std::sync::{Arc, OnceLock};
 
-use publisher_application::{PublisherDrafts, ReleaseSigner};
+use learning_application::{ContentKey, ContentKeys};
+use publisher_application::{PublisherDrafts, ReleaseSigner, stored_content_key};
 use publisher_identity::{
     CredentialStore, Identity, IdentityError, MAX_BACKUP_BYTES, OsStore, create, export_backup,
     forget_key, restore_backup, rotate_key, signing_key,
@@ -18,6 +19,21 @@ use super::{
     PublishState,
     commands::{CommandError, lock_drafts, run_blocking, service_error},
 };
+
+/// The Library's content keys before licenses exist (ADR 0017, Phase 11
+/// slice 2): the keys this computer's Publish area sealed releases with, so a
+/// publisher can preview their own paid course. A keychain that is missing or
+/// fails reads as "no key", and paid lessons stay locked.
+pub(crate) struct PublishedContentKeys(pub(crate) Arc<Credentials>);
+
+impl ContentKeys for PublishedContentKeys {
+    fn content_key(&self, course_id: &str, version: &str) -> Option<ContentKey> {
+        let store = self.0.store().ok()?;
+        stored_content_key(store.as_ref(), course_id, version)
+            .ok()
+            .flatten()
+    }
+}
 
 /// The credential store, opened on first use so a missing keychain never
 /// delays or blocks startup.
@@ -200,6 +216,29 @@ pub(crate) async fn restore_identity_backup(
 /// The signer for a new preparation: `None` when there is no identity or the
 /// publisher turned signing off. A failure to reach the key stops the
 /// preparation rather than publishing an unsigned release by surprise.
+/// The content key to seal a draft's paid lessons with, created and saved to
+/// the keychain on first use; `None` for a draft without paid lessons.
+///
+/// # Errors
+/// Returns the keychain failure (for example `keychain_unavailable`); paid lessons
+/// are never published unsealed.
+pub(crate) fn release_content_key(
+    credentials: &Credentials,
+    draft: &course_publisher::DraftCourse,
+) -> Result<Option<ContentKey>, CommandError> {
+    if !draft.has_paid_content() {
+        return Ok(None);
+    }
+    let store = credentials.get()?;
+    publisher_application::release_content_key(
+        store.as_ref(),
+        &draft.metadata.course_id,
+        &draft.metadata.version,
+    )
+    .map(Some)
+    .map_err(identity_error)
+}
+
 pub(crate) fn release_signer(
     drafts: &PublisherDrafts,
     credentials: &Credentials,

@@ -68,6 +68,10 @@ pub struct DraftLesson {
     pub estimated_duration_seconds: Option<u64>,
     /// Ordered lesson resources.
     pub resources: Vec<DraftResource>,
+    /// Paid lessons are encrypted at packaging (ADR 0017); the rest are free
+    /// previews. Absent in drafts saved before paid courses existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paid: bool,
 }
 
 /// A publisher source reference before packaging and hashing.
@@ -288,6 +292,31 @@ impl DraftCourse {
         self.require_revision(expected_revision)?;
         self.lesson_mut(lesson_id)?.title = title;
         Ok(self.advance_revision())
+    }
+
+    /// Mark a lesson as paid, or as a free preview.
+    ///
+    /// # Errors
+    /// Rejects stale revisions and missing IDs.
+    pub fn set_lesson_paid(
+        &mut self,
+        expected_revision: u64,
+        lesson_id: &str,
+        paid: bool,
+    ) -> Result<u64, EditError> {
+        self.require_revision(expected_revision)?;
+        self.lesson_mut(lesson_id)?.paid = paid;
+        Ok(self.advance_revision())
+    }
+
+    /// Whether packaging this draft encrypts anything: a paid lesson with at
+    /// least one resource.
+    #[must_use]
+    pub fn has_paid_content(&self) -> bool {
+        self.modules
+            .iter()
+            .flat_map(|module| &module.lessons)
+            .any(|lesson| lesson.paid && !lesson.resources.is_empty())
     }
 
     /// Remove a lesson and its resource references from whichever module holds it.

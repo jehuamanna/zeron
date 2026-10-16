@@ -312,18 +312,28 @@ export interface CourseDetail {
   torrentInfoHash: string | null;
   /** Who published the course, as far as the Library can verify. */
   publisher: CoursePublisher;
+  /** The course has paid lessons. Absent means false. */
+  paid?: boolean;
+  /** Its paid lessons open on this computer. Absent means false. */
+  paidUnlocked?: boolean;
   modules: Array<{
     id: string;
     title: string;
     lessons: Array<{
       id: string;
       title: string;
+      /** Some resource of the lesson is encrypted. Absent means false. */
+      paid?: boolean;
+      /** Some resource of the lesson cannot be opened here. Absent means false. */
+      locked?: boolean;
       resources: Array<{
         id: string;
         kind: string;
         mediaType: string;
         byteLength: number;
         durationSeconds: number | null;
+        /** Encrypted and not openable here. Absent means false. */
+        locked?: boolean;
       }>;
     }>;
   }>;

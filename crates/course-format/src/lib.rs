@@ -8,14 +8,16 @@ mod manifest;
 mod validation;
 
 pub use manifest::{
-    COURSE_SCHEMA_VERSION, CourseManifest, ExternalReference, Lesson, License, Module, Publisher,
-    Resource, ResourceKind, ResourceRelation, ResourceRelationKind,
+    AccessModel, COURSE_SCHEMA_VERSION, CourseAccess, CourseManifest, ENCRYPTION_CHUNK_SIZE,
+    ENCRYPTION_SCHEME, ENCRYPTION_TAG_SIZE, ExternalReference, Lesson, License, Module,
+    PAID_COURSE_SCHEMA_VERSION, Publisher, Resource, ResourceEncryption, ResourceKind,
+    ResourceRelation, ResourceRelationKind, sealed_byte_length,
 };
 pub use validation::{ManifestError, ValidationIssue};
 
 use schemars::Schema;
 
-/// Parse untrusted JSON and enforce all version-one manifest invariants.
+/// Parse untrusted JSON and enforce all manifest invariants (versions 1 and 2).
 ///
 /// # Errors
 ///

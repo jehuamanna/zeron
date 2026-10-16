@@ -43,7 +43,7 @@ export interface MediaFinding {
 }
 
 export interface DraftDetail extends DraftSummary, DraftMetadata {
-  modules: Array<{ id: string; title: string; lessons: Array<{ id: string; title: string; resources: ResourceSummary[] }> }>;
+  modules: Array<{ id: string; title: string; lessons: Array<{ id: string; title: string; /** Encrypted when published; absent means a free preview. */ paid?: boolean; resources: ResourceSummary[] }> }>;
 }
 
 export interface ValidationIssue {
@@ -60,6 +60,7 @@ export type StructureEdit =
   | { type: "addLesson"; moduleId: string; title: string }
   | { type: "renameLesson"; lessonId: string; title: string }
   | { type: "removeLesson"; lessonId: string }
+  | { type: "setLessonPaid"; lessonId: string; paid: boolean }
   | { type: "moveLesson"; moduleId: string; lessonId: string; position: number }
   | { type: "removeResource"; resourceId: string }
   | { type: "moveResource"; lessonId: string; resourceId: string; position: number };

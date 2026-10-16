@@ -38,6 +38,7 @@ apps/
   desktop/               React UI (Library, Publish) + thin Tauri composition root
 crates/
   course-format/         shared manifest/release types, schema validation
+  course-access/         paid-lesson encryption: content keys, chunk sealing, decrypting reader
   learning-domain/       annotations, progress, stable identity rules
   torrent-engine/        engine-neutral port plus librqbit adapter
   course-publisher/      draft validation, packaging, torrent creation

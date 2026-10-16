@@ -9,8 +9,8 @@ use std::{
 use course_format::{ResourceKind, parse_and_validate};
 use course_publisher::{
     DraftCourse, DraftLesson, DraftMetadata, DraftModule, DraftResource, MANIFEST_FILE_NAME,
-    PackageSigning, PackagingCancellation, PackagingError, PackagingLimits, StagedPackage,
-    stage_package, stage_signed_package,
+    PackageOptions, PackageSigning, PackagingCancellation, PackagingError, PackagingLimits,
+    StagedPackage, stage_package, stage_package_with, stage_signed_package,
 };
 use learning_application::{CancellationFlag, ImportLimits, import_local_course};
 
@@ -76,6 +76,7 @@ fn draft(scratch: &Scratch) -> DraftCourse {
                 id: "module_basics".to_owned(),
                 title: "Basics".to_owned(),
                 lessons: vec![DraftLesson {
+                    paid: false,
                     id: "lesson_intro".to_owned(),
                     title: "Intro".to_owned(),
                     estimated_duration_seconds: Some(600),
@@ -99,6 +100,7 @@ fn draft(scratch: &Scratch) -> DraftCourse {
                 id: "module_more".to_owned(),
                 title: "More".to_owned(),
                 lessons: vec![DraftLesson {
+                    paid: false,
                     id: "lesson_notes".to_owned(),
                     title: "Notes".to_owned(),
                     estimated_duration_seconds: None,
@@ -381,4 +383,137 @@ fn a_signed_package_names_its_publisher_and_carries_the_signature_file() {
     );
     assert!(matches!(reserved, Err(PackagingError::LimitExceeded(_))));
     assert!(!scratch.out("reserved").exists());
+}
+
+fn paid_draft(scratch: &Scratch, video: &[u8]) -> DraftCourse {
+    let mut course = draft(scratch);
+    let intro = &mut course.modules[0].lessons[0];
+    intro.paid = true;
+    intro.resources[0].source_path = scratch.source("paid.mp4", video);
+    course
+}
+
+fn stage_paid(
+    course: &DraftCourse,
+    destination: &Path,
+    key: Option<&course_access::ContentKey>,
+) -> Result<StagedPackage, PackagingError> {
+    stage_package_with(
+        course,
+        destination,
+        PackagingLimits::default(),
+        &PackagingCancellation::default(),
+        &mut |_| {},
+        PackageOptions {
+            signing: None,
+            content_key: key,
+        },
+    )
+}
+
+#[test]
+fn paid_lessons_are_sealed_and_free_previews_stay_plain() {
+    let scratch = Scratch::new("paid");
+    let video: Vec<u8> = (0..200_000_u32).map(|i| (i % 251) as u8).collect();
+    let course = paid_draft(&scratch, &video);
+    let key = course_access::ContentKey::from_bytes([3; 32]);
+    let destination = scratch.out("staged");
+    let mut events = Vec::new();
+    let staged = stage_package_with(
+        &course,
+        &destination,
+        PackagingLimits::default(),
+        &PackagingCancellation::default(),
+        &mut |progress| events.push(progress),
+        PackageOptions {
+            signing: None,
+            content_key: Some(&key),
+        },
+    )
+    .unwrap();
+
+    let manifest =
+        parse_and_validate(&fs::read(destination.join(MANIFEST_FILE_NAME)).unwrap()).unwrap();
+    assert_eq!(manifest, staged.manifest);
+    assert_eq!(
+        manifest.schema_version,
+        course_format::PAID_COURSE_SCHEMA_VERSION
+    );
+    assert!(manifest.access.is_some());
+
+    let lesson = &manifest.modules[0].lessons[0];
+    let sealed_video = &lesson.resources[0];
+    let encryption = sealed_video.encryption.as_ref().unwrap();
+    assert_eq!(encryption.plaintext_length, 200_000);
+    assert_eq!(
+        sealed_video.byte_length,
+        course_format::sealed_byte_length(200_000)
+    );
+    assert!(
+        lesson.resources[1].encryption.is_some(),
+        "every resource of a paid lesson"
+    );
+    let preview = &manifest.modules[1].lessons[0].resources[0];
+    assert!(preview.encryption.is_none());
+    assert_eq!(
+        fs::read(destination.join(&preview.path)).unwrap(),
+        b"%PDF-1.7"
+    );
+
+    // The package holds ciphertext that opens to the source under the key.
+    let on_disk = fs::read(destination.join(&sealed_video.path)).unwrap();
+    assert_eq!(on_disk.len() as u64, sealed_video.byte_length);
+    assert!(
+        !on_disk
+            .windows(64)
+            .any(|window| window == &video[1000..1064])
+    );
+    let cipher = course_access::ResourceCipher::new(&key, &sealed_video.id, 200_000);
+    assert_eq!(cipher.open_all(&on_disk).unwrap(), video);
+
+    // Progress counts package bytes and ends complete.
+    let last = events.last().unwrap();
+    assert_eq!(last.completed_bytes, last.total_bytes);
+    assert_eq!(last.total_bytes, staged.total_resource_bytes);
+
+    // Hashes are of the sealed bytes, so the importer verifies the package.
+    import_local_course(
+        &destination,
+        ImportLimits::default(),
+        &CancellationFlag::default(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn paid_lessons_need_a_content_key() {
+    let scratch = Scratch::new("paid-no-key");
+    let course = paid_draft(&scratch, &[1; 10]);
+    let destination = scratch.out("staged");
+    assert!(matches!(
+        stage_paid(&course, &destination, None),
+        Err(PackagingError::ContentKeyRequired)
+    ));
+    assert!(!destination.exists());
+
+    // A paid lesson with no resources encrypts nothing and needs no key.
+    let mut empty = draft(&scratch);
+    empty.modules[0].lessons[0].resources.clear();
+    empty.modules[0].lessons[0].paid = true;
+    let staged = stage_paid(&empty, &scratch.out("empty"), None).unwrap();
+    assert_eq!(
+        staged.manifest.schema_version,
+        course_format::COURSE_SCHEMA_VERSION
+    );
+    assert!(staged.manifest.access.is_none());
+}
+
+#[test]
+fn sealing_is_deterministic_for_a_key() {
+    let scratch = Scratch::new("paid-deterministic");
+    let course = paid_draft(&scratch, &vec![9; 70_000]);
+    let key = course_access::ContentKey::from_bytes([4; 32]);
+    let first = stage_paid(&course, &scratch.out("a"), Some(&key)).unwrap();
+    let second = stage_paid(&course, &scratch.out("b"), Some(&key)).unwrap();
+    assert_eq!(first.manifest_sha256, second.manifest_sha256);
 }

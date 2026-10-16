@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/desktop/src-tauri",
+    "crates/course-access",
     "crates/course-format",
     "crates/course-publisher",
     "crates/course-signing",
@@ -41,6 +42,7 @@ dbus-secret-service-keyring-store = { version = "=1.0.1", features = ["crypto-ru
 ed25519-dalek = "=3.0.0"
 futures-util = "=0.3.34"
 getrandom = "=0.4.3"
+hkdf = "=0.13.0"
 keyring-core = "=1.0.1"
 hyper = { version = "=1.12.0", features = ["server", "http1"] }
 hyper-util = { version = "=0.1.21", features = ["tokio", "service"] }

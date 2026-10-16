@@ -13,7 +13,7 @@ use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use torrent_port::{InfoHash, TorrentEngine};
 
-use crate::{CourseLibrary, LibraryError, StreamWait, open_lesson_stream};
+use crate::{CourseLibrary, LibraryError, ResourceAccess, StreamWait, open_lesson_stream};
 
 /// Largest document read into memory for viewing.
 pub const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
@@ -60,6 +60,9 @@ pub enum DocumentError {
     /// The bytes could not be read or did not arrive in time.
     #[error("the document could not be read")]
     Unavailable,
+    /// The resource is in a paid lesson this computer cannot unlock.
+    #[error("this lesson is locked")]
+    Locked,
     /// The library could not be read.
     #[error(transparent)]
     Library(#[from] LibraryError),
@@ -233,6 +236,23 @@ impl DocumentSource {
         match self {
             Self::Local { byte_length, .. } | Self::Torrent { byte_length, .. } => *byte_length,
         }
+    }
+}
+
+/// The readable bytes of a verified document: as read for a free resource,
+/// opened with the cipher for an unlocked one.
+///
+/// # Errors
+///
+/// Returns [`DocumentError::Locked`] without a key, and
+/// [`DocumentError::Changed`] when the sealed bytes fail authentication.
+pub fn open_document(bytes: Vec<u8>, access: &ResourceAccess) -> Result<Vec<u8>, DocumentError> {
+    match access {
+        ResourceAccess::Free => Ok(bytes),
+        ResourceAccess::Unlocked(cipher) => {
+            cipher.open_all(&bytes).map_err(|_| DocumentError::Changed)
+        }
+        ResourceAccess::Locked => Err(DocumentError::Locked),
     }
 }
 

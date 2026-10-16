@@ -1,5 +1,6 @@
 //! Application use cases shared by Zeron desktop composition roots.
 
+mod access;
 mod annotation_migration;
 mod cache;
 mod catalogs;
@@ -19,16 +20,20 @@ mod torrent_import;
 mod trust;
 mod youtube;
 
+pub use access::{
+    ContentKeys, NoContentKeys, ResourceAccess, locked_resources, paid_content_unlocked,
+};
 pub use annotation_migration::{AnnotationMove, AnnotationMoveReport};
 pub use cache::{CacheError, CourseCache, RemovalReport};
 pub use catalogs::{CatalogEntryView, CatalogView, EntryStatus, MAX_CATALOG_URL_BYTES};
+pub use course_access::{ContentKey, DecryptingReader, ResourceCipher};
 pub use course_removal::{
     DELETING_SUFFIX, SetAsideFiles, finish_interrupted_removals, set_aside_course_files,
 };
 pub use disk::{DISK_RESERVE_BYTES, DiskGuard, DiskState, available_bytes, fits};
 pub use documents::{
-    DocumentError, DocumentSource, MAX_DOCUMENT_BYTES, MAX_TEXT_BYTES, read_local_document,
-    read_torrent_document,
+    DocumentError, DocumentSource, MAX_DOCUMENT_BYTES, MAX_TEXT_BYTES, open_document,
+    read_local_document, read_torrent_document,
 };
 pub use downloads::{Availability, DownloadScope};
 pub use drawings::{Drawing, DrawingSave};

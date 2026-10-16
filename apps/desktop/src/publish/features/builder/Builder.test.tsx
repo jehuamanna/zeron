@@ -54,6 +54,8 @@ function apply(draft: DraftDetail, edit: StructureEdit): DraftDetail {
       return { ...draft, modules: modules.map((m) => ({ ...m, lessons: m.lessons.map((l) => (l.id === edit.lessonId ? { ...l, title: edit.title } : l)) })) };
     case "removeLesson":
       return { ...draft, modules: modules.map((m) => ({ ...m, lessons: m.lessons.filter((l) => l.id !== edit.lessonId) })) };
+    case "setLessonPaid":
+      return { ...draft, modules: modules.map((m) => ({ ...m, lessons: m.lessons.map((l) => (l.id === edit.lessonId ? { ...l, paid: edit.paid } : l)) })) };
     case "moveLesson":
       return { ...draft, modules: modules.map((m) => (m.id === edit.moduleId ? { ...m, lessons: move(m.lessons, m.lessons.findIndex((l) => l.id === edit.lessonId), edit.position) } : m)) };
     case "removeResource":
@@ -133,6 +135,25 @@ describe("course structure builder", () => {
     expect(view.container.textContent).toContain("Moved “Hello” to position 2 of 2.");
     expect(server.modules[1]!.lessons.map((l) => l.title)).toEqual(["Untitled lesson", "Hello"]);
     expect(view.queryByRole("alert")).toBeNull();
+  });
+
+  it("marks a lesson paid and back to a free preview", async () => {
+    const view = render(<Harness onReload={vi.fn()} />);
+    fireEvent.click(view.getByRole("button", { name: "Add module" }));
+    await waitFor(() => expect(view.getAllByLabelText(/^Title of module/)).toHaveLength(1));
+    fireEvent.click(view.getByRole("button", { name: "Add lesson to module 1" }));
+    const toggle = await view.findByRole("button", { name: "Paid: lesson 1 in module 1" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.textContent).toContain("Free");
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(server.modules[0]!.lessons[0]!.paid).toBe(true));
+    await waitFor(() => expect(view.getByRole("button", { name: "Paid: lesson 1 in module 1" }).getAttribute("aria-pressed")).toBe("true"));
+    expect(view.container.textContent).toContain("Made lesson 1 in module 1 paid.");
+
+    fireEvent.click(view.getByRole("button", { name: "Paid: lesson 1 in module 1" }));
+    await waitFor(() => expect(server.modules[0]!.lessons[0]!.paid).toBe(false));
+    expect(view.container.textContent).toContain("Made lesson 1 in module 1 a free preview.");
   });
 
   it("asks before removing a module that still has lessons", async () => {

@@ -9,16 +9,21 @@ use learning_application::{
     CourseSharingStatus, DISK_RESERVE_BYTES, DocumentError, DocumentSource, DownloadScope,
     DrawingFile, DrawingSave, EngineError, ImportError, InfoHash, LibraryError, LocalResource,
     MAX_TEXT_BYTES, MAX_TRANSCRIPT_BYTES, NetworkProfile, Note, NoteChange, PeerReachability,
-    RateLimits, SearchKind, SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage,
-    TorrentResource, TorrentSource, TransferState, VideoId, YOUTUBE_MEDIA_TYPE, fits,
-    parse_transcript, read_local_document, read_torrent_document, set_aside_course_files,
+    RateLimits, ResourceAccess, SearchKind, SharingError, TorrentEngine, TorrentImportSnapshot,
+    TorrentImportStage, TorrentResource, TorrentSource, TransferState, VideoId, YOUTUBE_MEDIA_TYPE,
+    fits, open_document, parse_transcript, read_local_document, read_torrent_document,
+    set_aside_course_files,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::{AppState, Router, media::TorrentMedia, youtube};
+use crate::{
+    AppState, Router,
+    media::{SealedFileMedia, TorrentMedia},
+    youtube,
+};
 
 const TORRENT_IMPORT_EVENT: &str = "torrent-import";
 /// Course torrents list a handful of files; anything larger is not a Zeron release.
@@ -174,6 +179,10 @@ pub(crate) struct CourseDetailDto {
     torrent_info_hash: Option<String>,
     /// Who published the course, as far as the Library can verify.
     publisher: CoursePublisherDto,
+    /// The course has paid lessons (ADR 0017).
+    paid: bool,
+    /// Its paid lessons open on this computer.
+    paid_unlocked: bool,
     modules: Vec<ModuleDto>,
 }
 
@@ -245,6 +254,10 @@ struct ModuleDto {
 struct LessonDto {
     id: String,
     title: String,
+    /// Some resource of the lesson is encrypted.
+    paid: bool,
+    /// Some resource of the lesson cannot be opened here.
+    locked: bool,
     resources: Vec<ResourceDto>,
 }
 
@@ -254,8 +267,11 @@ struct ResourceDto {
     id: String,
     kind: &'static str,
     media_type: String,
+    /// Readable length: the decrypted length of an encrypted resource.
     byte_length: u64,
     duration_seconds: Option<f64>,
+    /// Encrypted, and no content key opens it here.
+    locked: bool,
 }
 
 #[derive(Serialize)]
@@ -546,6 +562,7 @@ pub(crate) async fn get_course_detail(
     state: State<'_, AppState>,
 ) -> Result<Option<CourseDetailDto>, CommandError> {
     let library = Arc::clone(&state.library);
+    let keys = Arc::clone(&state.content_keys);
     run_blocking(move || {
         let library = lock_library(&library)?;
         let failed = |error| command_error("course_detail_failed", error);
@@ -556,11 +573,13 @@ pub(crate) async fn get_course_detail(
         let info_hash = library.torrent_info_hash(&course_id).map_err(failed)?;
         let publisher = library.course_publisher(&course_id).map_err(failed)?;
         let youtube = library.is_youtube_course(&course_id).map_err(failed)?;
+        let locked = learning_application::locked_resources(&manifest, &*keys);
         Ok(Some(CourseDetailDto::new(
             manifest,
             info_hash,
             youtube,
             publisher.into(),
+            &locked,
         )))
     })
     .await
@@ -590,14 +609,18 @@ pub(crate) async fn choose_and_import_course(
     })
     .await?;
     let library = Arc::clone(&state.library);
-    tauri::async_runtime::spawn_blocking(move || index_local_texts(&library));
+    let keys = Arc::clone(&state.content_keys);
+    tauri::async_runtime::spawn_blocking(move || index_local_texts(&library, &*keys));
     Ok(receipt)
 }
 
 /// Index the text of local courses' transcripts and documents that are not
 /// indexed yet. Each file is re-verified against its course while read, with
-/// the library unlocked.
-pub(crate) fn index_local_texts(library: &Mutex<CourseLibrary>) {
+/// the library unlocked. Locked paid lessons are skipped until they open.
+pub(crate) fn index_local_texts(
+    library: &Mutex<CourseLibrary>,
+    keys: &dyn learning_application::ContentKeys,
+) {
     let Ok(pending) = library
         .lock()
         .map_err(drop)
@@ -617,7 +640,16 @@ pub(crate) fn index_local_texts(library: &Mutex<CourseLibrary>) {
         if byte_length > MAX_TEXT_BYTES.max(MAX_TRANSCRIPT_BYTES as u64) {
             continue;
         }
-        let Ok(bytes) = read_local_document(&path, &sha256, byte_length) else {
+        let Ok(Some(access)) = library.lock().map_err(drop).and_then(|library| {
+            library
+                .resource_access(&course_id, &resource_id, keys)
+                .map_err(drop)
+        }) else {
+            continue;
+        };
+        let Ok(bytes) = read_local_document(&path, &sha256, byte_length)
+            .and_then(|bytes| open_document(bytes, &access))
+        else {
             continue;
         };
         if let Ok(mut library) = library.lock() {
@@ -1026,8 +1058,8 @@ fn parse_reachability(
 }
 
 enum Media {
-    Local(LocalResource),
-    Torrent(TorrentResource),
+    Local(LocalResource, ResourceAccess),
+    Torrent(TorrentResource, ResourceAccess),
     YouTube(VideoId),
 }
 
@@ -1038,6 +1070,7 @@ pub(crate) async fn register_media(
     state: State<'_, AppState>,
 ) -> Result<MediaRegistrationDto, CommandError> {
     let library = Arc::clone(&state.library);
+    let keys = Arc::clone(&state.content_keys);
     let playing = course_id.clone();
     let playing_course = course_id.clone();
     let media = run_blocking(move || {
@@ -1055,6 +1088,16 @@ pub(crate) async fn register_media(
         {
             return Ok(Media::YouTube(video));
         }
+        let access = library
+            .resource_access(&course_id, &resource_id, &*keys)
+            .map_err(failed)?
+            .ok_or_else(not_found)?;
+        if access.is_locked() {
+            return Err(CommandError {
+                code: "resource_locked",
+                message: "this lesson is locked".to_owned(),
+            });
+        }
         if library
             .torrent_info_hash(&course_id)
             .map_err(failed)?
@@ -1065,58 +1108,17 @@ pub(crate) async fn register_media(
                 .map_err(failed)?
                 .into_iter()
                 .find(|resource| resource.resource_id == resource_id)
-                .map(Media::Torrent)
+                .map(|resource| Media::Torrent(resource, access))
                 .ok_or_else(not_found);
         }
         library
             .local_resource(&course_id, &resource_id)
             .map_err(failed)?
-            .map(Media::Local)
+            .map(|resource| Media::Local(resource, access))
             .ok_or_else(not_found)
     })
     .await?;
-    let registration = match media {
-        // YouTube's player runs in a gateway page, framed by the app (ADR 0018).
-        Media::YouTube(video) => state
-            .media_gateway
-            .register_page(youtube::player_page())
-            .map(|mut page| {
-                page.url = youtube::player_url(&page.url, &video);
-                YOUTUBE_MEDIA_TYPE.clone_into(&mut page.media_type);
-                page.byte_length = 0;
-                page
-            }),
-        Media::Local(resource) => {
-            state
-                .media_gateway
-                .register(FileResource {
-                    path: resource.path,
-                    media_type: resource.media_type,
-                    byte_length: resource.byte_length,
-                })
-                .await
-        }
-        Media::Torrent(resource) => {
-            let router = state.torrents.router.clone().ok_or_else(|| CommandError {
-                code: "torrent_engine_unavailable",
-                message:
-                    "torrent lessons are unavailable because the torrent engine could not start"
-                        .to_owned(),
-            })?;
-            let info_hash = InfoHash::parse(&resource.info_hash)
-                .map_err(|error| command_error("media_lookup_failed", error))?;
-            state.media_gateway.register_stream(StreamResource {
-                source: Arc::new(TorrentMedia {
-                    router,
-                    info_hash,
-                    file_index: resource.file_index,
-                }),
-                media_type: resource.media_type,
-                byte_length: resource.byte_length,
-            })
-        }
-    }
-    .map_err(|error| command_error("media_registration_failed", error))?;
+    let registration = register_resource(&state, media).await?;
     // Keep the streamed-lesson cache within its cap, sparing the course being
     // played so its transfer is not restarted under the player.
     if let Some(cache) = state.torrents.cache.clone() {
@@ -1135,6 +1137,75 @@ pub(crate) async fn register_media(
         media_type: registration.media_type,
         byte_length: registration.byte_length,
     })
+}
+
+/// Register a resolved lesson resource with the media gateway: a YouTube
+/// player page, a local file, or a torrent stream, decrypting a paid lesson
+/// that opens here.
+async fn register_resource(
+    state: &State<'_, AppState>,
+    media: Media,
+) -> Result<media_gateway::MediaRegistration, CommandError> {
+    match media {
+        // YouTube's player runs in a gateway page, framed by the app (ADR 0018).
+        Media::YouTube(video) => state
+            .media_gateway
+            .register_page(youtube::player_page())
+            .map(|mut page| {
+                page.url = youtube::player_url(&page.url, &video);
+                YOUTUBE_MEDIA_TYPE.clone_into(&mut page.media_type);
+                page.byte_length = 0;
+                page
+            }),
+        Media::Local(resource, ResourceAccess::Unlocked(cipher)) => {
+            state.media_gateway.register_stream(StreamResource {
+                byte_length: cipher.plaintext_length(),
+                source: Arc::new(SealedFileMedia {
+                    path: resource.path,
+                    cipher,
+                }),
+                media_type: resource.media_type,
+            })
+        }
+        Media::Local(resource, _) => {
+            state
+                .media_gateway
+                .register(FileResource {
+                    path: resource.path,
+                    media_type: resource.media_type,
+                    byte_length: resource.byte_length,
+                })
+                .await
+        }
+        Media::Torrent(resource, access) => {
+            let router = state.torrents.router.clone().ok_or_else(|| CommandError {
+                code: "torrent_engine_unavailable",
+                message:
+                    "torrent lessons are unavailable because the torrent engine could not start"
+                        .to_owned(),
+            })?;
+            let info_hash = InfoHash::parse(&resource.info_hash)
+                .map_err(|error| command_error("media_lookup_failed", error))?;
+            let (cipher, byte_length) = match access {
+                ResourceAccess::Unlocked(cipher) => {
+                    let length = cipher.plaintext_length();
+                    (Some(cipher), length)
+                }
+                _ => (None, resource.byte_length),
+            };
+            state.media_gateway.register_stream(StreamResource {
+                source: Arc::new(TorrentMedia {
+                    router,
+                    info_hash,
+                    file_index: resource.file_index,
+                    cipher,
+                }),
+                media_type: resource.media_type,
+                byte_length,
+            })
+        }
+    }
+    .map_err(|error| command_error("media_registration_failed", error))
 }
 
 /// Remember where the learner stopped in a lesson. Returns `false` for an
@@ -1388,15 +1459,40 @@ pub(crate) async fn read_document(
     state: State<'_, AppState>,
 ) -> Result<tauri::ipc::Response, CommandError> {
     let library = Arc::clone(&state.library);
+    let (lookup_course, lookup_resource) = (course_id.clone(), resource_id.clone());
     let source = run_blocking(move || {
         lock_library(&library)?
-            .document_source(&course_id, &resource_id)
+            .document_source(&lookup_course, &lookup_resource)
             .map_err(|error| document_error(DocumentError::Library(error)))
     })
     .await?
     .ok_or_else(|| document_error(DocumentError::NotADocument))?;
-    let bytes = read_source(&state, source).await?;
+    let bytes = read_resource(&state, course_id, resource_id, source).await?;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Readable bytes of a verified document: refused when its paid lesson is
+/// locked here, decrypted when it is unlocked.
+async fn read_resource(
+    state: &State<'_, AppState>,
+    course_id: String,
+    resource_id: String,
+    source: DocumentSource,
+) -> Result<Vec<u8>, CommandError> {
+    let library = Arc::clone(&state.library);
+    let keys = Arc::clone(&state.content_keys);
+    let access = run_blocking(move || {
+        lock_library(&library)?
+            .resource_access(&course_id, &resource_id, &*keys)
+            .map_err(|error| document_error(DocumentError::Library(error)))
+    })
+    .await?
+    .ok_or_else(|| document_error(DocumentError::NotADocument))?;
+    if access.is_locked() {
+        return Err(document_error(DocumentError::Locked));
+    }
+    let bytes = read_source(state, source).await?;
+    run_blocking(move || open_document(bytes, &access).map_err(document_error)).await
 }
 
 /// Verified bytes of a document, local or from the torrent stream.
@@ -1449,10 +1545,11 @@ pub(crate) async fn read_text_resource(
     state: State<'_, AppState>,
 ) -> Result<TextResourceDto, CommandError> {
     let (course_id_for_index, resource_id_for_index) = (course_id.clone(), resource_id.clone());
+    let (lookup_course, lookup_resource) = (course_id.clone(), resource_id.clone());
     let library = Arc::clone(&state.library);
     let (markdown, source) = run_blocking(move || {
         lock_library(&library)?
-            .text_source(&course_id, &resource_id)
+            .text_source(&lookup_course, &lookup_resource)
             .map_err(|error| document_error(DocumentError::Library(error)))
     })
     .await?
@@ -1460,7 +1557,7 @@ pub(crate) async fn read_text_resource(
     if source.byte_length() > MAX_TEXT_BYTES {
         return Err(document_error(DocumentError::TooLarge));
     }
-    let bytes = read_source(&state, source).await?;
+    let bytes = read_resource(&state, course_id, resource_id, source).await?;
     index_read_text(
         &state,
         course_id_for_index,
@@ -1501,10 +1598,11 @@ pub(crate) async fn read_transcript(
     state: State<'_, AppState>,
 ) -> Result<Option<TranscriptDto>, CommandError> {
     let course_id_for_index = course_id.clone();
+    let lookup_course = course_id.clone();
     let library = Arc::clone(&state.library);
     let Some((resource_id, language, source)) = run_blocking(move || {
         lock_library(&library)?
-            .transcript_source(&course_id, &media_resource_id)
+            .transcript_source(&lookup_course, &media_resource_id)
             .map_err(|error| document_error(DocumentError::Library(error)))
     })
     .await?
@@ -1514,7 +1612,7 @@ pub(crate) async fn read_transcript(
     if source.byte_length() > MAX_TRANSCRIPT_BYTES as u64 {
         return Err(document_error(DocumentError::TooLarge));
     }
-    let bytes = read_source(&state, source).await?;
+    let bytes = read_resource(&state, course_id, resource_id.clone(), source).await?;
     index_read_text(
         &state,
         course_id_for_index,
@@ -1543,6 +1641,7 @@ fn document_error(error: DocumentError) -> CommandError {
         DocumentError::TooLarge => "document_too_large",
         DocumentError::Changed => "document_changed",
         DocumentError::Unavailable => "document_unavailable",
+        DocumentError::Locked => "resource_locked",
         // Library errors can name the database location; keep them in Rust.
         DocumentError::Library(_) => {
             return CommandError {
@@ -2174,8 +2273,11 @@ impl CourseDetailDto {
         torrent_info_hash: Option<String>,
         youtube: bool,
         publisher: CoursePublisherDto,
+        locked: &std::collections::HashSet<String>,
     ) -> Self {
         Self {
+            paid: manifest.access.is_some(),
+            paid_unlocked: manifest.access.is_some() && locked.is_empty(),
             course_id: manifest.course_id,
             course_version: manifest.version,
             title: manifest.title,
@@ -2196,14 +2298,23 @@ impl CourseDetailDto {
                         .map(|lesson| LessonDto {
                             id: lesson.id,
                             title: lesson.title,
+                            paid: lesson
+                                .resources
+                                .iter()
+                                .any(|resource| resource.encryption.is_some()),
+                            locked: lesson
+                                .resources
+                                .iter()
+                                .any(|resource| locked.contains(&resource.id)),
                             resources: lesson
                                 .resources
                                 .into_iter()
                                 .map(|resource| ResourceDto {
+                                    locked: locked.contains(&resource.id),
+                                    byte_length: resource.content_length(),
                                     id: resource.id,
                                     kind: resource_kind(resource.kind),
                                     media_type: resource.media_type,
-                                    byte_length: resource.byte_length,
                                     duration_seconds: resource.duration_seconds,
                                 })
                                 .collect(),

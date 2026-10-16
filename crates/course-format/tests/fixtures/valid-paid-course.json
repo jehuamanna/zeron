@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 2,
+  "courseId": "course_distributed_systems",
+  "version": "1.0.0",
+  "title": "Distributed Systems",
+  "description": "A practical course.",
+  "publisher": {
+    "name": "Example Publisher",
+    "publisherId": "publisher_example"
+  },
+  "language": "en",
+  "category": "software-engineering",
+  "tags": [
+    "distributed-systems"
+  ],
+  "license": {
+    "name": "CC-BY-4.0",
+    "url": "https://creativecommons.org/licenses/by/4.0/"
+  },
+  "prerequisites": [
+    "Networking fundamentals"
+  ],
+  "references": [
+    {
+      "label": "Course site",
+      "url": "https://example.invalid/course"
+    }
+  ],
+  "thumbnailResourceId": "res_cover",
+  "estimatedDurationSeconds": 600,
+  "access": {
+    "model": "paid"
+  },
+  "modules": [
+    {
+      "id": "mod_intro",
+      "title": "Introduction",
+      "position": 0,
+      "lessons": [
+        {
+          "id": "lesson_welcome",
+          "title": "Welcome",
+          "position": 0,
+          "estimatedDurationSeconds": 600,
+          "resources": [
+            {
+              "id": "res_video",
+              "kind": "video",
+              "path": "modules/introduction/welcome.mp4",
+              "mediaType": "video/mp4",
+              "byteLength": 123488,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "durationSeconds": 600,
+              "relations": [
+                {
+                  "kind": "transcript",
+                  "resourceId": "res_vtt"
+                }
+              ],
+              "encryption": {
+                "scheme": "zeron.chunked-xchacha20poly1305.v1",
+                "chunkSize": 65520,
+                "plaintextLength": 123456
+              }
+            },
+            {
+              "id": "res_vtt",
+              "kind": "transcript",
+              "path": "modules/introduction/welcome.en.vtt",
+              "mediaType": "text/vtt",
+              "byteLength": 1234,
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "language": "en"
+            },
+            {
+              "id": "res_cover",
+              "kind": "image",
+              "path": "assets/cover.png",
+              "mediaType": "image/png",
+              "byteLength": 4321,
+              "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

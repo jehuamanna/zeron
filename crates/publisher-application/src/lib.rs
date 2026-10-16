@@ -3,6 +3,7 @@
 mod activity;
 mod catalog;
 mod configuration;
+mod content_keys;
 mod course_deletion;
 mod disk;
 mod drops;
@@ -23,6 +24,8 @@ pub use configuration::{
     CONFIGURATION_FORMAT, CONFIGURATION_VERSION, MAX_CONFIGURATION_BYTES, NetworkConfiguration,
     PublisherConfiguration,
 };
+pub use content_keys::{content_key_account, release_content_key, stored_content_key};
+pub use course_access::ContentKey;
 pub use course_deletion::{CourseDeletion, UNTITLED_COURSE};
 pub use course_publisher::PublishStage;
 use course_publisher::{
@@ -53,8 +56,8 @@ pub use seeding::{
 pub use signing::ReleaseSigner;
 pub use sources::{ResourceMediaFindings, SourceInfo, inspect_draft_media, source_info};
 pub use staging::{
-    StagingReceipt, discard_abandoned_staging, discard_all_attempts, stage_draft,
-    stage_signed_draft,
+    ReleaseSecrets, StagingReceipt, discard_abandoned_staging, discard_all_attempts, stage_draft,
+    stage_draft_with, stage_signed_draft,
 };
 use thiserror::Error;
 pub use torrent_metainfo::{HashProgress, PackageFile, TorrentError};
@@ -147,6 +150,13 @@ pub enum StructureEdit {
     RemoveLesson {
         /// Stable lesson ID.
         lesson_id: String,
+    },
+    /// Mark a lesson as paid (encrypted at packaging) or as a free preview.
+    SetLessonPaid {
+        /// Stable lesson ID.
+        lesson_id: String,
+        /// Whether the lesson is paid.
+        paid: bool,
     },
     /// Move a lesson to a zero-based position within its module.
     MoveLesson {
@@ -434,6 +444,7 @@ impl PublisherDrafts {
                     title: line("lesson.title", title, MAX_TITLE_CHARS)?,
                     estimated_duration_seconds: None,
                     resources: Vec::new(),
+                    paid: false,
                 },
             ),
             StructureEdit::RenameLesson { lesson_id, title } => draft.rename_lesson(
@@ -443,6 +454,9 @@ impl PublisherDrafts {
             ),
             StructureEdit::RemoveLesson { lesson_id } => {
                 draft.remove_lesson(expected_revision, &lesson_id)
+            }
+            StructureEdit::SetLessonPaid { lesson_id, paid } => {
+                draft.set_lesson_paid(expected_revision, &lesson_id, paid)
             }
             StructureEdit::MoveLesson {
                 module_id,

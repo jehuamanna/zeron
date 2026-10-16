@@ -11,8 +11,8 @@ pub use draft::{
 };
 pub use media::{FindingSeverity, MediaFinding, MediaReport, inspect_media};
 pub use packaging::{
-    MANIFEST_FILE_NAME, PackageSigning, PackagingCancellation, PackagingError, PackagingLimits,
-    StagedFile, StagedPackage, StagingProgress, canonical_manifest_bytes, manifest_for,
-    stage_package, stage_signed_package,
+    MANIFEST_FILE_NAME, PackageOptions, PackageSigning, PackagingCancellation, PackagingError,
+    PackagingLimits, StagedFile, StagedPackage, StagingProgress, canonical_manifest_bytes,
+    manifest_for, stage_package, stage_package_with, stage_signed_package,
 };
 pub use workflow::{PublishStage, PublishTransitionError, PublishingWorkflow};

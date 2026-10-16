@@ -55,6 +55,12 @@ Mark a lesson, module, or course to keep. Lessons you only streamed are removed 
 
 **Fixing a published course:** "New draft from this version" starts the next version with the same lessons, so learners' notes stay attached. "Make current…" rolls back to an older version.
 
+### Paid lessons
+
+Each lesson in the Builder has a **Free/Paid** toggle. When you prepare a release, every file of a paid lesson is encrypted with a key for that course version, kept in your computer's keychain. Free lessons stay open as previews. Anyone can still download and share the whole course, but paid lessons are unreadable without the key.
+
+For now, only the computer that published a course can open its paid lessons; learners see them locked. Licenses, which unlock them for buyers, come in a later version. A paid release cannot yet be reopened as a new draft.
+
 ### Signing
 
 **Publish → Identity → "Create signing identity"** creates a key in your computer's keychain:

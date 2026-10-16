@@ -16,7 +16,7 @@ use publisher_storage::ReleaseRecord;
 use crate::{
     DistributionOptions, DraftServiceError, PublisherDrafts, ReleaseSigner, StagingReceipt,
     TorrentPhase, TorrentReceipt, discard_all_attempts, discard_attempt, generate_torrent,
-    opaque_id, stage_signed_draft,
+    opaque_id, stage_draft_with, staging::ReleaseSecrets,
 };
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
@@ -331,6 +331,28 @@ impl PublishJobs {
         signer: Option<&ReleaseSigner>,
         notify: &mut dyn FnMut(&PublishJobSnapshot),
     ) -> Option<PublishJobSnapshot> {
+        self.run_with(
+            job_id,
+            draft,
+            distribution,
+            ReleaseSecrets {
+                signer,
+                content_key: None,
+            },
+            notify,
+        )
+    }
+
+    /// [`Self::run_signed`], also sealing paid lessons under
+    /// `secrets.content_key`.
+    pub fn run_with(
+        &self,
+        job_id: &str,
+        draft: &DraftCourse,
+        distribution: &DistributionOptions,
+        secrets: ReleaseSecrets<'_>,
+        notify: &mut dyn FnMut(&PublishJobSnapshot),
+    ) -> Option<PublishJobSnapshot> {
         let cancellation = self.lock().jobs.get(job_id)?.cancellation.clone();
         let mut runner = Runner {
             jobs: self,
@@ -339,7 +361,7 @@ impl PublishJobs {
             notify,
             last_progress: None,
         };
-        let outcome = runner.prepare(draft, distribution, signer, &cancellation);
+        let outcome = runner.prepare(draft, distribution, secrets, &cancellation);
         let final_snapshot = match outcome {
             Ok(prepared) => runner.advance(PublishStage::ReadyToPublish, |snapshot| {
                 snapshot.prepared = Some(prepared);
@@ -419,7 +441,7 @@ impl Runner<'_, '_> {
         &mut self,
         draft: &DraftCourse,
         distribution: &DistributionOptions,
-        signer: Option<&ReleaseSigner>,
+        secrets: ReleaseSecrets<'_>,
         cancellation: &PackagingCancellation,
     ) -> Result<PreparedRelease, StageError> {
         self.advance(PublishStage::Validating, |_| {});
@@ -432,7 +454,7 @@ impl Runner<'_, '_> {
         }
         self.advance(PublishStage::Packaging, |_| {});
         let jobs = self.jobs;
-        let staging = stage_signed_draft(
+        let staging = stage_draft_with(
             draft,
             &jobs.staging_root,
             PackagingLimits::default(),
@@ -440,7 +462,7 @@ impl Runner<'_, '_> {
             &mut |progress| {
                 self.progress(progress.completed_bytes, progress.total_bytes);
             },
-            signer,
+            secrets,
         )
         .map_err(|error| (error, None))?;
         let attempt_id = staging.attempt_id.clone();
@@ -519,6 +541,7 @@ fn failure_for(error: &DraftServiceError) -> Option<JobFailure> {
             PackagingError::SourceUnavailable { .. } | PackagingError::SourceChanged { .. },
         ) => "source_changed",
         DraftServiceError::Packaging(PackagingError::LimitExceeded(_)) => "limit_exceeded",
+        DraftServiceError::Packaging(PackagingError::ContentKeyRequired) => "content_key_required",
         DraftServiceError::Torrent(TorrentError::Verification(_)) => "verification_failed",
         _ => "preparation_failed",
     };

@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+course-access = { path = "../course-access" }
 course-format = { path = "../course-format" }
 course-signing = { path = "../course-signing" }
 learning-domain = { path = "../learning-domain" }

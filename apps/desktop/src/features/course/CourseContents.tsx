@@ -1,4 +1,4 @@
-import { BookOpen, Eraser, File, NotebookPen, Play } from "lucide-react";
+import { BookOpen, Eraser, File, Lock, NotebookPen, Play } from "lucide-react";
 
 import { AvailabilityLabel, formatSize, KeepOfflineToggle, PauseTransfersButton, percentOf, useCourseDownloads } from "../downloads/downloads";
 import { LessonStatusIcon, MarkCompleteButton, useCourseProgress } from "../progress/progress";
@@ -133,7 +133,13 @@ export function CourseContents({ course, placed, activeLessonId, showing, openin
 
                     {/* Materials: small icons; the open one is filled. */}
                     <span className="flex shrink-0 items-center">
-                      {lesson.resources.map((resource) => {
+                      {lesson.locked ? (
+                        <span title="Paid lesson, locked" className="flex h-6 w-6 items-center justify-center text-amber-300">
+                          <Lock size={12} aria-hidden />
+                          <span className="sr-only">Paid lesson, locked</span>
+                        </span>
+                      ) : null}
+                      {lesson.locked ? null : lesson.resources.map((resource) => {
                         const current = showing?.resourceId === resource.id;
                         const style = `${iconButton} ${current ? "bg-accent text-on-accent" : "text-faint hover:bg-white/10 hover:text-fg"}`;
                         if (resource.kind === "video") {

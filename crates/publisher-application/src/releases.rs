@@ -277,6 +277,13 @@ impl PublisherDrafts {
         let package_root = fs::canonicalize(&package_root)
             .map_err(|source| io_error("resolving the release package", source))?;
         let manifest = package.manifest;
+        if manifest.access.is_some() {
+            // Its paid resources are sealed in the package; reusing them as
+            // sources would seal them twice. Planned for a later slice.
+            return Err(DraftServiceError::InvalidAttempt(
+                "a paid release cannot be reopened as a draft yet",
+            ));
+        }
         let draft = DraftCourse {
             draft_id: opaque_id("draft")?,
             revision: 0,
@@ -320,6 +327,7 @@ impl PublisherDrafts {
                                     language: resource.language,
                                 })
                                 .collect(),
+                            paid: false,
                         })
                         .collect(),
                 })

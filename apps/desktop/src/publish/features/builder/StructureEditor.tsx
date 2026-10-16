@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, FilePlus2, FolderPlus, Paperclip, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, FilePlus2, FolderPlus, Lock, LockOpen, Paperclip, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { asCommandError, publisherApi, type DraftDetail, type ResourceSummary, type StructureEdit } from "../../services/publisher";
@@ -130,6 +130,22 @@ export function StructureEditor({ draft, writer, disabled }: StructureEditorProp
                             onCommit={(title) => void apply({ type: "renameLesson", lessonId: lesson.id, title }, `Renamed ${lessonLabel}.`)}
                             onMove={moveLesson}
                           />
+                          <button
+                            type="button"
+                            aria-label={`Paid: ${lessonLabel}`}
+                            aria-pressed={lesson.paid ?? false}
+                            title={lesson.paid ? "Paid: encrypted when published. Click to make it a free preview." : "Free preview. Click to make it paid."}
+                            disabled={disabled}
+                            onClick={() =>
+                              void apply(
+                                { type: "setLessonPaid", lessonId: lesson.id, paid: !lesson.paid },
+                                lesson.paid ? `Made ${lessonLabel} a free preview.` : `Made ${lessonLabel} paid.`,
+                              )
+                            }
+                            className={`flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs disabled:opacity-40 ${lesson.paid ? "bg-amber-400/15 text-amber-200 hover:bg-amber-400/25" : "text-slate-400 hover:bg-white/10 hover:text-white"}`}
+                          >
+                            {lesson.paid ? <Lock size={14} /> : <LockOpen size={14} />} {lesson.paid ? "Paid" : "Free"}
+                          </button>
                           <button
                             type="button"
                             aria-label={`Attach file to ${lessonLabel}`}

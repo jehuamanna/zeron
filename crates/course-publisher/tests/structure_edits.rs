@@ -32,6 +32,7 @@ fn module(id: &str) -> DraftModule {
 
 fn lesson(id: &str) -> DraftLesson {
     DraftLesson {
+        paid: false,
         id: id.to_owned(),
         title: id.to_owned(),
         estimated_duration_seconds: None,
@@ -266,4 +267,42 @@ fn an_import_adds_modules_and_resources_in_one_revision_or_not_at_all() {
         .map(|resource| resource.id.as_str())
         .collect();
     assert_eq!(attached, ["res_a1", "res_a2"]);
+}
+
+#[test]
+fn lessons_can_be_marked_paid_and_back() {
+    let mut course = empty();
+    course.add_module(0, module("module_a")).unwrap();
+    course
+        .add_lesson(1, "module_a", lesson("lesson_a"))
+        .unwrap();
+    assert_eq!(course.set_lesson_paid(2, "lesson_a", true), Ok(3));
+    assert!(course.modules[0].lessons[0].paid);
+    assert!(
+        !course.has_paid_content(),
+        "no resources yet, nothing to seal"
+    );
+    assert_eq!(course.set_lesson_paid(3, "lesson_a", false), Ok(4));
+    assert!(!course.modules[0].lessons[0].paid);
+    assert!(matches!(
+        course.set_lesson_paid(4, "missing", true),
+        Err(EditError::NotFound { .. })
+    ));
+}
+
+#[test]
+fn drafts_saved_before_paid_lessons_still_load_and_free_lessons_serialize_unchanged() {
+    let old = r#"{"id":"lesson_a","title":"A","estimatedDurationSeconds":null,"resources":[]}"#;
+    let lesson: DraftLesson = serde_json::from_str(old).unwrap();
+    assert!(!lesson.paid);
+    assert_eq!(serde_json::to_string(&lesson).unwrap(), old);
+    let paid = DraftLesson {
+        paid: true,
+        ..lesson
+    };
+    assert!(
+        serde_json::to_string(&paid)
+            .unwrap()
+            .contains(r#""paid":true"#)
+    );
 }

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookMarked, ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, Maximize, Minimize, MoreHorizontal, NotebookPen, PanelLeft, PanelRight, Trash2 } from "lucide-react";
+import { BookMarked, ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, Lock, Maximize, Minimize, MoreHorizontal, NotebookPen, PanelLeft, PanelRight, Trash2 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMediaQuery } from "../../lib/useMediaQuery";
@@ -143,15 +143,23 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
     setActiveLessonId(lesson.id);
     setStage({ kind: "text", resourceId });
   };
+  /** A locked paid lesson shows why it cannot open instead of failing to load. */
+  const showLocked = (lesson: Lesson) => {
+    setActiveLessonId(lesson.id);
+    setStage({ kind: "overview" });
+    if (!contentsDocked) setContentsOverlay(false);
+  };
   const openResource = (lesson: Lesson, resourceId: string) => {
     const resource = lesson.resources.find((candidate) => candidate.id === resourceId);
     if (!resource) return;
+    if (resource.locked) return showLocked(lesson);
     if (!contentsDocked) setContentsOverlay(false);
     if (resource.kind === "video") openMedia.mutate(resourceId);
     else if (resource.kind === "pdf") openDocument(resourceId);
     else if (isReadable(resource)) openText(resourceId);
   };
   const openLesson = (lesson: Lesson) => {
+    if (lesson.locked) return showLocked(lesson);
     const resource = primaryResource(lesson);
     if (resource) openResource(lesson, resource.id);
     else {
@@ -577,6 +585,8 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
                 previous={previous ? { title: previous.lesson.title } : null}
                 onPrevious={() => previous && openLesson(previous.lesson)}
               />
+            ) : active?.lesson.locked ? (
+              <LockedLesson title={active.lesson.title} />
             ) : (
               <CourseOverview course={course} placed={placed} progress={progress} next={upNext} onStart={(item) => openLesson(item.lesson)} onOpenLesson={openLesson} />
             )}
@@ -646,5 +656,20 @@ function LessonStep({ placed, direction, onOpen }: { placed: PlacedLesson | null
     >
       {direction === "previous" ? <ChevronLeft size={17} /> : <ChevronRight size={17} />}
     </button>
+  );
+}
+
+/** A paid lesson this computer holds no key for. */
+function LockedLesson({ title }: { title: string }) {
+  return (
+    <section aria-labelledby="locked-lesson-title" className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+      <Lock size={28} aria-hidden className="text-amber-300" />
+      <h2 id="locked-lesson-title" className="text-lg font-semibold text-fg">
+        {title} is a paid lesson
+      </h2>
+      <p className="max-w-md text-sm text-muted">
+        Its files are encrypted, and this computer has no license for them yet. The course&apos;s free preview lessons stay open.
+      </p>
+    </section>
   );
 }

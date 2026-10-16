@@ -117,7 +117,7 @@ fn generated_schema_matches_checked_in_contract() {
     let expected: Value = serde_json::from_slice(
         &fs::read(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("schemas/course-manifest-v1.schema.json"),
+                .join("schemas/course-manifest-v2.schema.json"),
         )
         .unwrap(),
     )
@@ -127,4 +127,103 @@ fn generated_schema_matches_checked_in_contract() {
         expected, actual,
         "run `cargo run -p course-format --bin export-course-schema`"
     );
+}
+
+#[test]
+fn paid_fixture_round_trips_as_schema_version_two() {
+    let manifest = parse_and_validate(&fixture("valid-paid-course.json")).unwrap();
+    assert_eq!(
+        manifest.schema_version,
+        course_format::PAID_COURSE_SCHEMA_VERSION
+    );
+    assert_eq!(manifest.required_schema_version(), 2);
+    let video = manifest.resources().next().unwrap();
+    assert_eq!(video.content_length(), 123_456);
+    assert_eq!(
+        video.byte_length,
+        course_format::sealed_byte_length(123_456)
+    );
+    let reparsed = parse_and_validate(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert_eq!(manifest, reparsed);
+}
+
+#[test]
+fn free_courses_stay_schema_version_one() {
+    let mut value: Value = serde_json::from_slice(&fixture("valid-course.json")).unwrap();
+    value["schemaVersion"] = json!(2);
+    assert!(matches!(
+        parse_and_validate(&serde_json::to_vec(&value).unwrap()),
+        Err(ManifestError::Validation(issues)) if issues.iter().any(|issue| issue.path == "schemaVersion")
+    ));
+    value["schemaVersion"] = json!(3);
+    assert!(parse_and_validate(&serde_json::to_vec(&value).unwrap()).is_err());
+}
+
+type Mutation = Box<dyn Fn(&mut Value)>;
+
+#[test]
+fn paid_manifests_enforce_their_invariants() {
+    let paid: Value = serde_json::from_slice(&fixture("valid-paid-course.json")).unwrap();
+    let encryption = "/modules/0/lessons/0/resources/0/encryption";
+    let cases: Vec<(&str, Mutation)> = vec![
+        ("schemaVersion", Box::new(|v| v["schemaVersion"] = json!(1))),
+        (
+            "access",
+            Box::new(|v| {
+                v.as_object_mut().unwrap().remove("access");
+            }),
+        ),
+        (
+            "access",
+            Box::new(move |v| {
+                v.pointer_mut("/modules/0/lessons/0/resources/0")
+                    .unwrap()
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("encryption");
+                v["modules"][0]["lessons"][0]["resources"][0]["byteLength"] = json!(123_456);
+            }),
+        ),
+        (
+            "encryption.scheme",
+            Box::new(move |v| {
+                *v.pointer_mut(&format!("{encryption}/scheme")).unwrap() = json!("aes");
+            }),
+        ),
+        (
+            "encryption.chunkSize",
+            Box::new(move |v| {
+                *v.pointer_mut(&format!("{encryption}/chunkSize")).unwrap() = json!(65_536);
+            }),
+        ),
+        (
+            "byteLength",
+            Box::new(|v| {
+                v["modules"][0]["lessons"][0]["resources"][0]["byteLength"] = json!(123_456);
+            }),
+        ),
+    ];
+    for (expected, mutate) in cases {
+        let mut value = paid.clone();
+        mutate(&mut value);
+        let result = parse_and_validate(&serde_json::to_vec(&value).unwrap());
+        assert!(
+            matches!(&result, Err(ManifestError::Validation(issues)) if issues.iter().any(|issue| issue.path.ends_with(expected))),
+            "expected an issue at {expected}, got {result:?}"
+        );
+    }
+}
+
+#[test]
+fn version_one_schema_contract_is_kept() {
+    // Older builds validate against this file; it must never change.
+    let v1: Value = serde_json::from_slice(
+        &fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("schemas/course-manifest-v1.schema.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(v1["properties"].get("access").is_none());
 }
