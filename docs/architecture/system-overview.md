@@ -7,7 +7,7 @@ Zeron is a local-first course publishing and learning system: one Tauri 2 deskto
 - **Library** imports local folders, `.torrent` files, and magnet links; streams verified media; persists learning progress and annotations; and optionally shares courses.
 - **Publish** builds course drafts, validates and packages immutable releases, creates torrents, and manages seeding.
 
-One Network setting covers both. A private torrent engine downloads and never uploads, and a public engine on the one fixed port serves shared courses and seeds releases. Neither area requires a cloud service. An optional publisher catalog is a later component. There is no headless seed server; the user removed it from the roadmap. The most important quality attributes are offline operation, integrity, recoverability, bounded resource use, explicit network behavior, and preservation of learner-owned data.
+One Network setting covers both. A private torrent engine downloads and never uploads, and a public engine on the one fixed port serves shared courses and seeds releases. Neither area requires a cloud service. An optional publisher catalog is a later component. Paid courses ([ADR 0017](../decisions/0017-paid-courses-and-licenses.md), roadmap Phase 11) add an optional license issuer that only paid courses contact; free courses never do. There is no headless seed server; the user removed it from the roadmap. The most important quality attributes are offline operation, integrity, recoverability, bounded resource use, explicit network behavior, and preservation of learner-owned data.
 
 ## Context and trust boundaries
 

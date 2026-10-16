@@ -50,6 +50,67 @@ Complete fuzzing, threat-model review, dependency/license audit, cross-platform 
 
 Status: complete (2026-10-16), apart from the steps that need the maintainer's credentials or hardware; see `docs/releases/phase-10-complete.md`.
 
+## Phase 11 — paid courses and learner licenses
+
+Let a publisher sell a course without Zeron accounts, following [ADR 0017](decisions/0017-paid-courses-and-licenses.md):
+
+- paid lessons are encrypted in the package;
+- a license issuer signs licenses bound to the learner's key after payment;
+- learners get their purchases back on a new machine by signing in with Google or GitHub;
+- publishers can prove their GitHub identity.
+
+Free courses and magnet/`.torrent` import do not change and never contact an issuer.
+
+Slices, in dependency order:
+
+1. **Spike.** Disposable experiments under `spikes/`:
+   - the system-browser OAuth loopback flow on Windows, macOS, and Linux;
+   - seek latency through a chunked-decrypting gateway reader;
+   - choosing the HPKE crate.
+
+   Exit with results in `docs/research/`.
+2. **Encrypted packages.**
+   - Manifest schema bump with `access` and per-resource `encryption`.
+   - Chunked XChaCha20-Poly1305 in `course-access`.
+   - Publish marks lessons as paid or free preview, and encrypts paid resources at packaging.
+   - The gateway, PDF/transcript readers, and indexer decrypt with a locally supplied key.
+   - Golden fixtures and range or seek tests over encrypted media.
+3. **Learner identity.**
+   - A learner key in the OS credential store on all three platforms.
+   - An optional passphrase backup and restore, matching the ADR 0014 format.
+4. **Offline licenses.**
+   - License, issuer-delegation, and revocation verification against the pinned publisher chain.
+   - HPKE unwrapping.
+   - Licenses stored as learner data and imported from a file.
+   - A paid course unlocks with no network.
+5. **Reference license issuer** (`services/license-issuer`):
+   - release registration with sealed content keys;
+   - license issuance for requests signed by a learner key;
+   - later-version keys;
+   - controlled local tests with no public network.
+6. **Payment.** One provider's checkout and webhook, idempotent purchase recording, and refunds that stop re-issue.
+7. **Sign-in with Google or GitHub.**
+   - Issuer-side OIDC/OAuth.
+   - The desktop loopback and PKCE flow through the system browser.
+   - Re-issue on a new machine.
+   - Device list and device limit in the Library.
+8. **Publish integration.**
+   - Paid toggle and preview lessons.
+   - Issuer configuration and delegation signing.
+   - Release registration, with recoverable retries when the issuer is unreachable.
+9. **Creator verification.** Signing and posting the GitHub gist proof, the catalog field, and the Library's online check with the "verified via GitHub" label.
+
+Exit:
+
+- A publisher sells a three-lesson course with one free preview.
+- A learner previews it, buys it, streams and seeks a paid lesson, and restarts offline with the course still unlocked.
+- The learner signs in on a second machine and gets the course back.
+- A refunded purchase stops being re-issued.
+- The threat model covers the issuer, licenses, and the decrypting gateway.
+- Every slice has its release note.
+
+Blocked on ADR 0017 open questions 1–4 where the slices name them.
+
 ## First milestone
 
 The first meaningful milestone spans Phases 0–4: Admin publishes and seeds a four-lesson course; Learner imports its magnet, retrieves the manifest first, selects lesson four, starts before completion, seeks into absent data, resumes after buffering, and restarts without losing verified bytes or a timestamp note. It is complete only with controlled-swarm automated evidence and all gateway security checks.
@@ -61,4 +122,5 @@ The first meaningful milestone spans Phases 0–4: Admin publishes and seeds a f
 3. ~~May Phase 0 adopt a narrow maintained metainfo writer?~~ Settled by ADR 0002: Zeron writes v1 metainfo itself (`torrent-metainfo`).
 4. ~~Should publisher signing wait for Phase 9?~~ Answered 2026-10-16: the user wants signing now (ADR 0014).
 5. What license and maximum package/manifest/file-count policies should the default validator enforce?
+6. Phase 11: who hosts license issuers, which payment provider comes first, the default device limit, and whether purchases include future versions (ADR 0017 open questions).
 
