@@ -16,7 +16,8 @@ permissions:
 
 concurrency:
   group: fuzz-${{ github.ref }}
-  cancel-in-progress: true
+  # Every run on main finishes, so each commit gets a result.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   fuzz:
@@ -25,6 +26,10 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
