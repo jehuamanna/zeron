@@ -1,5 +1,6 @@
 //! Admin publisher use cases shared by Zeron composition roots.
 
+mod activity;
 mod disk;
 mod drops;
 mod publish_jobs;
@@ -12,6 +13,7 @@ mod trackers;
 
 use std::path::Path;
 
+pub use activity::{ActivityKind, MAX_ACTIVITY_DETAIL_CHARS, redact};
 pub use course_publisher::PublishStage;
 use course_publisher::{
     DraftCourse, DraftLesson, DraftMetadata, DraftModule, DraftResource, DraftValidationIssue,
@@ -29,8 +31,8 @@ pub use drops::{
 pub use publish_jobs::{JobFailure, JobProgress, PreparedRelease, PublishJobSnapshot, PublishJobs};
 use publisher_storage::PublisherStorage;
 pub use publisher_storage::{
-    DraftSummary, NewRelease, PublisherStorageError, ReleaseFiles, ReleaseRecord, ReleaseStatus,
-    StoredDraft,
+    DistributionEvent, DraftSummary, MAX_DISTRIBUTION_EVENTS, NewRelease, PublisherStorageError,
+    ReleaseFiles, ReleaseRecord, ReleaseStatus, StoredDraft,
 };
 pub use releases::{
     RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE, ReleaseTorrent, release_directory,

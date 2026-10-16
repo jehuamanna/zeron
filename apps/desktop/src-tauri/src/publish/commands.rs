@@ -3,10 +3,10 @@ use std::sync::{Arc, Mutex};
 use course_format::ResourceKind;
 use course_publisher::{DraftResource, DraftValidationIssue};
 use publisher_application::{
-    DraftServiceError, DraftSummary, FindingSeverity, MAX_TRACKER_LISTS, MAX_TRACKERS,
-    MetadataEdit, PublishJobSnapshot, PublishJobs, PublishStage, PublisherDrafts, ReleaseRecord,
-    ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit, TrackerListStatus,
-    TransferState, inspect_draft_media, source_info,
+    ActivityKind, DraftServiceError, DraftSummary, FindingSeverity, MAX_TRACKER_LISTS,
+    MAX_TRACKERS, MetadataEdit, PublishJobSnapshot, PublishJobs, PublishStage, PublisherDrafts,
+    ReleaseRecord, ReleaseSeedingStatus, ReleaseTorrent, StoredDraft, StructureEdit,
+    TrackerListStatus, TransferState, inspect_draft_media, source_info,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -267,6 +267,18 @@ impl From<TrackerListStatus> for TrackerListDto {
 }
 
 /// Outcome of downloading one tracker list.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivityEventDto {
+    event_id: u64,
+    at_unix_seconds: u64,
+    release_id: Option<String>,
+    /// Version of the release the event concerns, when it is still recorded.
+    course_version: Option<String>,
+    kind: String,
+    detail: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TrackerListRefreshDto {
@@ -937,7 +949,7 @@ pub(crate) async fn refresh_lists(
     let fetched = super::tracker_lists::fetch_all(urls).await;
     run_blocking(move || {
         let mut drafts = lock_drafts(&drafts)?;
-        fetched
+        let refreshed = fetched
             .into_iter()
             .map(|(url, body)| {
                 Ok(match body {
@@ -957,9 +969,189 @@ pub(crate) async fn refresh_lists(
                     },
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, CommandError>>()?;
+        record_tracker_list_activity(&mut drafts, &refreshed);
+        Ok(refreshed)
     })
     .await
+}
+
+/// Most recent events shown in the app; the export holds every kept event.
+const ACTIVITY_PAGE: u64 = 200;
+
+/// Recent distribution activity, newest first, for one release or all.
+/// Details were redacted when they were recorded.
+#[tauri::command]
+pub(crate) async fn get_distribution_activity(
+    release_id: Option<String>,
+    state: State<'_, PublishState>,
+) -> Result<Vec<ActivityEventDto>, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || {
+        activity(
+            &*lock_drafts(&drafts)?,
+            release_id.as_deref(),
+            ACTIVITY_PAGE,
+        )
+    })
+    .await
+}
+
+/// Save every kept distribution event as redacted text where the publisher
+/// chooses. Returns `false` when the dialog is cancelled.
+#[tauri::command]
+pub(crate) async fn export_distribution_activity(
+    app: AppHandle,
+    state: State<'_, PublishState>,
+) -> Result<bool, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    let events = run_blocking(move || {
+        activity(
+            &*lock_drafts(&drafts)?,
+            None,
+            publisher_application::MAX_DISTRIBUTION_EVENTS,
+        )
+    })
+    .await?;
+    let selected = run_blocking(move || {
+        Ok(app
+            .dialog()
+            .file()
+            .set_file_name("zeron-distribution-activity.txt")
+            .add_filter("Text file", &["txt"])
+            .blocking_save_file())
+    })
+    .await?;
+    let Some(selected) = selected else {
+        return Ok(false);
+    };
+    let destination = selected.into_path().map_err(|_| {
+        CommandError::new(
+            "unsupported_file_location",
+            "the selected file location is not supported",
+        )
+    })?;
+    let text = activity_text(&events);
+    run_blocking(move || {
+        std::fs::write(&destination, text).map_err(|_| {
+            CommandError::new(
+                "export_failed",
+                "the activity log could not be written to the chosen location",
+            )
+        })
+    })
+    .await?;
+    Ok(true)
+}
+
+fn activity(
+    drafts: &PublisherDrafts,
+    release_id: Option<&str>,
+    limit: u64,
+) -> Result<Vec<ActivityEventDto>, CommandError> {
+    let failed = |error| service_error("activity_unavailable", error);
+    let versions: std::collections::HashMap<String, String> = drafts
+        .releases()
+        .map_err(failed)?
+        .into_iter()
+        .map(|record| (record.release.release_id, record.release.course_version))
+        .collect();
+    Ok(drafts
+        .activity(release_id, limit)
+        .map_err(failed)?
+        .into_iter()
+        .map(|event| ActivityEventDto {
+            course_version: event
+                .release_id
+                .as_ref()
+                .and_then(|id| versions.get(id).cloned()),
+            event_id: event.event_id,
+            at_unix_seconds: event.at_unix_seconds,
+            release_id: event.release_id,
+            kind: event.kind,
+            detail: event.detail,
+        })
+        .collect())
+}
+
+/// One line per event, oldest first, with UTC times.
+fn activity_text(events: &[ActivityEventDto]) -> String {
+    let mut text = String::from("Zeron distribution activity (paths and addresses removed)\n");
+    for event in events.iter().rev() {
+        use std::fmt::Write as _;
+        let _ = writeln!(
+            text,
+            "{}\t{}\t{}\t{}",
+            utc_timestamp(event.at_unix_seconds),
+            event
+                .course_version
+                .as_deref()
+                .map_or_else(|| "-".to_owned(), |version| format!("v{version}")),
+            event.kind,
+            event.detail
+        );
+    }
+    text
+}
+
+/// `YYYY-MM-DD HH:MM:SS UTC`, from the proleptic Gregorian calendar.
+fn utc_timestamp(unix_seconds: u64) -> String {
+    let days = unix_seconds / 86_400;
+    let seconds = unix_seconds % 86_400;
+    // Howard Hinnant's civil-from-days, shifted so eras start on 0000-03-01.
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let day_of_era = z % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = year_of_era + era * 400 + u64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02} UTC",
+        seconds / 3_600,
+        seconds % 3_600 / 60,
+        seconds % 60
+    )
+}
+
+fn record_tracker_list_activity(drafts: &mut PublisherDrafts, refreshed: &[TrackerListRefreshDto]) {
+    let downloaded: Vec<u64> = refreshed
+        .iter()
+        .filter_map(|list| list.tracker_count)
+        .map(|count| count as u64)
+        .collect();
+    if !downloaded.is_empty() {
+        drafts.record_activity(
+            None,
+            ActivityKind::TrackerListsRefreshed,
+            &format!(
+                "Downloaded {} tracker {} with {} trackers",
+                downloaded.len(),
+                if downloaded.len() == 1 {
+                    "list"
+                } else {
+                    "lists"
+                },
+                downloaded.iter().sum::<u64>()
+            ),
+        );
+    }
+    for list in refreshed {
+        if let Some(error) = &list.error {
+            drafts.record_activity(
+                None,
+                ActivityKind::TrackerListFailed,
+                &format!("{} could not be downloaded: {error}", list.url),
+            );
+        }
+    }
 }
 
 fn seeding_service(
@@ -1774,6 +1966,74 @@ mod tests {
         let missing = delete(&mut drafts, &jobs, &draft.draft_id, draft.revision).unwrap_err();
         assert_eq!(missing.code, "draft_not_found");
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn activity_is_listed_with_versions_and_exported_as_redacted_text() {
+        let (directory, mut drafts, draft) = publishable_draft("activity");
+        let jobs = publisher_application::PublishJobs::new(&directory.join("staging"));
+        let job = jobs.begin(&draft).unwrap();
+        jobs.run(
+            &job.job_id,
+            &draft,
+            &DistributionOptions::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+        let (record, _) = jobs
+            .activate(&job.job_id, &mut drafts, &directory.join("releases"))
+            .unwrap();
+        record_tracker_list_activity(
+            &mut drafts,
+            &[
+                TrackerListRefreshDto {
+                    url: "https://lists.example/best.txt".to_owned(),
+                    tracker_count: Some(20),
+                    error: None,
+                },
+                TrackerListRefreshDto {
+                    url: "https://user:secret@lists.example/private/list.txt?key=x".to_owned(),
+                    tracker_count: None,
+                    error: Some("the server could not be reached".to_owned()),
+                },
+            ],
+        );
+        let events = activity(&drafts, None, 50).unwrap();
+        let json = serde_json::to_value(&events).unwrap();
+        assert_eq!(json[0]["kind"], "tracker_list_failed");
+        assert_eq!(
+            json[0]["detail"],
+            "https://lists.example/…?… could not be downloaded: the server could not be reached"
+        );
+        assert_eq!(json[1]["kind"], "tracker_lists_refreshed");
+        assert_eq!(
+            json[1]["detail"],
+            "Downloaded 1 tracker list with 20 trackers"
+        );
+        assert_eq!(json[2]["kind"], "release_published");
+        assert_eq!(json[2]["courseVersion"], "1.0.0");
+        assert_eq!(json[2]["releaseId"], record.release.release_id.as_str());
+        assert!(json[1]["releaseId"].is_null());
+        let one = activity(&drafts, Some(&record.release.release_id), 50).unwrap();
+        assert_eq!(one.len(), 1);
+
+        let text = activity_text(&events);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 4);
+        assert!(lines[1].contains("\tv1.0.0\trelease_published\tVersion 1.0.0 published"));
+        assert!(lines[3].contains("\t-\ttracker_list_failed\t"));
+        assert!(!text.contains("secret"));
+        assert!(!text.contains(&*directory.to_string_lossy()));
+        make_writable(&directory);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn utc_timestamps_match_the_calendar() {
+        assert_eq!(utc_timestamp(0), "1970-01-01 00:00:00 UTC");
+        assert_eq!(utc_timestamp(951_782_400), "2000-02-29 00:00:00 UTC");
+        assert_eq!(utc_timestamp(1_791_000_000), "2026-10-03 04:00:00 UTC");
+        assert_eq!(utc_timestamp(4_107_542_399), "2100-02-28 23:59:59 UTC");
     }
 
     #[test]

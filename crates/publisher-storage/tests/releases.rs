@@ -143,7 +143,7 @@ fn version_one_databases_migrate_without_losing_drafts() {
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     let reopened = PublisherStorage::open(&database).unwrap();
     assert_eq!(reopened.releases().unwrap().len(), 1);
     fs::remove_file(database).unwrap();
@@ -242,6 +242,7 @@ fn version_three_releases_migrate_with_their_files_present() {
     connection
         .execute_batch(
             "ALTER TABLE releases DROP COLUMN files_state;
+             DROP TABLE distribution_events;
              PRAGMA user_version = 3;",
         )
         .unwrap();
@@ -257,6 +258,9 @@ fn version_three_releases_migrate_with_their_files_present() {
             .unwrap()
             .is_none()
     );
+    storage
+        .record_distribution_event(None, "seeding_started", "after migration")
+        .unwrap();
     drop(storage);
     fs::remove_file(database).unwrap();
 }
@@ -353,4 +357,55 @@ fn a_superseded_release_can_become_current_again() {
         .filter(|record| record.status == ReleaseStatus::Published)
         .count();
     assert_eq!(published, 1);
+}
+
+#[test]
+fn distribution_events_are_listed_newest_first_and_pruned() {
+    use publisher_storage::MAX_DISTRIBUTION_EVENTS;
+    let mut storage = PublisherStorage::open_in_memory().unwrap();
+    storage
+        .record_distribution_event(Some("release_1"), "seeding_started", "seeding")
+        .unwrap();
+    storage
+        .record_distribution_event(None, "tracker_lists_refreshed", "2 lists")
+        .unwrap();
+    storage
+        .record_distribution_event(Some("release_2"), "release_published", "1.1.0")
+        .unwrap();
+
+    let all = storage.distribution_events(None, 10).unwrap();
+    let kinds: Vec<_> = all.iter().map(|event| event.kind.as_str()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "release_published",
+            "tracker_lists_refreshed",
+            "seeding_started"
+        ]
+    );
+    assert!(
+        all.windows(2)
+            .all(|pair| pair[0].event_id > pair[1].event_id)
+    );
+    let one = storage.distribution_events(Some("release_1"), 10).unwrap();
+    assert_eq!(one.len(), 1);
+    assert_eq!(one[0].release_id.as_deref(), Some("release_1"));
+    assert_eq!(one[0].detail, "seeding");
+    assert_eq!(storage.distribution_events(None, 2).unwrap().len(), 2);
+
+    for index in 0..MAX_DISTRIBUTION_EVENTS + 5 {
+        storage
+            .record_distribution_event(None, "seeding_stopped", &index.to_string())
+            .unwrap();
+    }
+    let kept = storage.distribution_events(None, u64::MAX).unwrap();
+    assert_eq!(kept.len() as u64, MAX_DISTRIBUTION_EVENTS);
+    assert_eq!(kept[0].detail, (MAX_DISTRIBUTION_EVENTS + 4).to_string());
+    assert_eq!(
+        storage
+            .distribution_events(Some("release_1"), 10)
+            .unwrap()
+            .len(),
+        0
+    );
 }

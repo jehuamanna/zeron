@@ -208,6 +208,8 @@ pub fn run() {
             publish::commands::list_releases,
             publish::commands::archive_release,
             publish::commands::make_release_current,
+            publish::commands::get_distribution_activity,
+            publish::commands::export_distribution_activity,
             publish::commands::create_draft_from_release,
             publish::commands::delete_release_files,
             publish::drops::apply_drop,

@@ -12,8 +12,8 @@ use torrent_port::{
 };
 
 use crate::{
-    DraftServiceError, PublisherDrafts, RELEASE_PACKAGE_DIRECTORY, RELEASE_TORRENT_FILE,
-    release_directory,
+    ActivityKind, DraftServiceError, PublisherDrafts, RELEASE_PACKAGE_DIRECTORY,
+    RELEASE_TORRENT_FILE, release_directory,
     torrents::{StagedAttempt, read_torrent},
 };
 
@@ -202,15 +202,21 @@ impl<E: TorrentEngine> SeedingService<E> {
     /// Returns structural or engine failures; the intent is then left unchanged.
     pub async fn start(&self, release_id: &str) -> Result<(), DraftServiceError> {
         let request = self.drafts().seed_request(&self.releases_root, release_id);
-        let request = match request {
-            Ok((_, request)) => request,
+        let (record, request) = match request {
+            Ok(request) => request,
             Err(error) => {
                 self.remember_error(release_id, &error);
                 return Err(error);
             }
         };
+        let version = record.release.course_version;
         match self.engine.seed(request).await {
-            Ok(_) | Err(EngineError::AlreadyActive) => {}
+            Ok(_) => self.drafts().record_activity(
+                Some(release_id),
+                ActivityKind::SeedingStarted,
+                &format!("Seeding version {version}"),
+            ),
+            Err(EngineError::AlreadyActive) => {}
             Err(error) => {
                 let error = DraftServiceError::Seeding(error);
                 self.remember_error(release_id, &error);
@@ -234,7 +240,12 @@ impl<E: TorrentEngine> SeedingService<E> {
         let info_hash =
             InfoHash::parse(&record.release.info_hash).map_err(DraftServiceError::Seeding)?;
         match self.engine.stop(&info_hash).await {
-            Ok(()) | Err(EngineError::NotActive) => {}
+            Ok(()) => self.drafts().record_activity(
+                Some(release_id),
+                ActivityKind::SeedingStopped,
+                &format!("Stopped seeding version {}", record.release.course_version),
+            ),
+            Err(EngineError::NotActive) => {}
             Err(error) => return Err(DraftServiceError::Seeding(error)),
         }
         self.errors().remove(release_id);
@@ -311,7 +322,15 @@ impl<E: TorrentEngine> SeedingService<E> {
     }
 
     fn remember_error(&self, release_id: &str, error: &DraftServiceError) {
-        self.errors()
-            .insert(release_id.to_owned(), error.to_string());
+        let message = error.to_string();
+        let repeated = self.errors().get(release_id) == Some(&message);
+        if !repeated {
+            self.drafts().record_activity(
+                Some(release_id),
+                ActivityKind::SeedingFailed,
+                &format!("Seeding could not start: {message}"),
+            );
+        }
+        self.errors().insert(release_id.to_owned(), message);
     }
 }

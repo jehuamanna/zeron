@@ -316,7 +316,7 @@ Partly pulled forward by the active slice. Remaining:
 
 - ~~version history per course, and supersession/archive UX~~ done (`phase-7-version-history.md`: make current, new draft from a release);
 - ~~retry and rollback of failed preparations~~ done (`phase-7-preparation-retry-and-rollback.md`);
-- distribution details and logs, with redaction;
+- ~~distribution details and logs, with redaction~~ done (`phase-7-distribution-activity.md`, publisher schema v5);
 - import and export of publisher configuration;
 - suggestions for migrating annotations between course versions.
 
@@ -342,7 +342,7 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 
 - `course-format`: manifest wire contract and semantic validation.
 - `course-publisher`: draft and publishing policy, staging, and media inspection, with no SQLite or Tauri.
-- `publisher-storage`: Admin SQLite persistence (schema v4) with compare-and-swap draft saves.
+- `publisher-storage`: Admin SQLite persistence (schema v5: drafts, releases, seeding intents, settings, distribution events) with compare-and-swap draft saves.
 - `publisher-application`: Admin use cases: drafts, sources, staging, torrents, publish jobs, releases, seeding, and settings.
 - `torrent-metainfo`: deterministic v1 metainfo writing and inspection.
 - `torrent-port`: engine-neutral contract, including `NetworkProfile` and `PeerReachability`.

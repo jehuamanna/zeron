@@ -7,7 +7,7 @@ import { CourseList, groupCourses } from "./CourseList";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn(), deleteDraft: vi.fn(), archiveRelease: vi.fn(), deleteReleaseFiles: vi.fn(), makeReleaseCurrent: vi.fn(), createDraftFromRelease: vi.fn() },
+  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn(), deleteDraft: vi.fn(), archiveRelease: vi.fn(), deleteReleaseFiles: vi.fn(), makeReleaseCurrent: vi.fn(), createDraftFromRelease: vi.fn(), getDistributionActivity: vi.fn(), exportDistributionActivity: vi.fn() },
 }));
 
 const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=rust-systems";
@@ -40,6 +40,7 @@ function renderList(onOpenDraft = vi.fn()) {
 }
 
 beforeEach(() => {
+  vi.mocked(publisherApi.getDistributionActivity).mockResolvedValue([]);
   vi.mocked(publisherApi.listDrafts).mockResolvedValue([draft({}), draft({ draftId: "draft_new", courseId: "course_new", title: "Fresh Course", courseVersion: "0.1.0", revision: 0, updatedAtUnixSeconds: 1_780_000_000 })]);
   vi.mocked(publisherApi.listReleases).mockResolvedValue(releases);
   vi.mocked(publisherApi.getDistribution).mockResolvedValue(distribution([seeding({}), seeding({ releaseId: "release_1", enabled: false, state: null })]));

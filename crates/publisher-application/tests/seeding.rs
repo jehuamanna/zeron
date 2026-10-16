@@ -674,3 +674,79 @@ fn the_upload_limit_defaults_to_unlimited_and_persists() {
         publisher_application::RateLimits::default()
     );
 }
+
+#[tokio::test]
+async fn distribution_activity_is_recorded_once_per_change_and_redacted() {
+    let fixture = fixture("activity", &["1.0.0", "1.1.0"]);
+    let first = fixture.release_ids[0].clone();
+    let second = fixture.release_ids[1].clone();
+    let kinds = |release_id: Option<&str>| -> Vec<String> {
+        fixture
+            .drafts
+            .lock()
+            .unwrap()
+            .activity(release_id, 100)
+            .unwrap()
+            .into_iter()
+            .map(|event| event.kind)
+            .collect()
+    };
+    assert_eq!(kinds(Some(&first)), ["release_published"]);
+
+    *fixture.engine.refuse.lock().unwrap() = Some(EngineError::Engine(
+        "cannot bind 192.168.1.4:51413 for /home/ana/.local/share/zeron".to_owned(),
+    ));
+    let _ = fixture.service.start(&first).await;
+    let _ = fixture.service.start(&first).await;
+    *fixture.engine.refuse.lock().unwrap() = None;
+    fixture.service.start(&first).await.unwrap();
+    fixture.service.start(&first).await.unwrap();
+    fixture.service.stop(&first).await.unwrap();
+    fixture.service.stop(&first).await.unwrap();
+    assert_eq!(
+        kinds(Some(&first)),
+        [
+            "seeding_stopped",
+            "seeding_started",
+            "seeding_failed",
+            "release_published"
+        ]
+    );
+    let failure = fixture
+        .drafts
+        .lock()
+        .unwrap()
+        .activity(Some(&first), 100)
+        .unwrap()
+        .into_iter()
+        .find(|event| event.kind == "seeding_failed")
+        .unwrap();
+    assert!(failure.detail.contains("<address>"));
+    assert!(failure.detail.contains("<path>"));
+    assert!(!failure.detail.contains("192.168"));
+    assert!(!failure.detail.contains("/home/ana"));
+
+    fixture.service.start(&second).await.unwrap();
+    fixture.service.archive(&second).await.unwrap();
+    fixture.service.archive(&second).await.unwrap();
+    assert_eq!(
+        kinds(Some(&second)),
+        [
+            "release_archived",
+            "seeding_stopped",
+            "seeding_started",
+            "release_published"
+        ]
+    );
+    {
+        let mut drafts = fixture.drafts.lock().unwrap();
+        drafts.make_release_current(&first).unwrap();
+        drafts.make_release_current(&first).unwrap();
+        drafts
+            .delete_release_files(&fixture.root.join("releases"), &second, "1.1.0")
+            .unwrap();
+    }
+    assert_eq!(kinds(Some(&first))[0], "release_made_current");
+    assert_eq!(kinds(Some(&second))[0], "release_files_deleted");
+    assert_eq!(kinds(None).len(), 10);
+}

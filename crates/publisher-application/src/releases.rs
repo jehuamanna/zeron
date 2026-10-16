@@ -12,7 +12,7 @@ use torrent_metainfo::{
 };
 
 use crate::{
-    DraftServiceError, PreparedRelease, PublisherDrafts, opaque_id,
+    ActivityKind, DraftServiceError, PreparedRelease, PublisherDrafts, opaque_id,
     torrents::{StagedAttempt, read_torrent},
 };
 
@@ -119,6 +119,11 @@ impl PublisherDrafts {
             }
         };
         finalize(&partial, &releases_root.join(&release_id))?;
+        self.record_activity(
+            Some(&release_id),
+            ActivityKind::ReleasePublished,
+            &format!("Version {} published", record.release.course_version),
+        );
         Ok(record)
     }
 
@@ -175,9 +180,25 @@ impl PublisherDrafts {
         &mut self,
         release_id: &str,
     ) -> Result<ReleaseRecord, DraftServiceError> {
-        self.storage
+        let before = self
+            .storage
+            .release(release_id)?
+            .map(|record| record.status);
+        let record = self
+            .storage
             .archive_release(release_id)?
-            .ok_or(DraftServiceError::InvalidAttempt("unknown release"))
+            .ok_or(DraftServiceError::InvalidAttempt("unknown release"))?;
+        if before != Some(ReleaseStatus::Archived) {
+            self.record_activity(
+                Some(release_id),
+                ActivityKind::ReleaseArchived,
+                &format!(
+                    "Version {} archived; it is no longer seeded",
+                    record.release.course_version
+                ),
+            );
+        }
+        Ok(record)
     }
 
     /// Make a superseded release the course's current release again, for
@@ -199,9 +220,21 @@ impl PublisherDrafts {
         if record.status == ReleaseStatus::Archived {
             return Err(DraftServiceError::ReleaseArchived);
         }
-        self.storage
+        let current = self
+            .storage
             .make_release_current(release_id)?
-            .ok_or(DraftServiceError::ReleaseArchived)
+            .ok_or(DraftServiceError::ReleaseArchived)?;
+        if record.status == ReleaseStatus::Superseded {
+            self.record_activity(
+                Some(release_id),
+                ActivityKind::ReleaseMadeCurrent,
+                &format!(
+                    "Version {} is the current release again",
+                    current.release.course_version
+                ),
+            );
+        }
+        Ok(current)
     }
 
     /// Start a new draft from a recorded release, for the course's next
@@ -340,6 +373,14 @@ impl PublisherDrafts {
             .ok_or(DraftServiceError::ReleaseNotArchived)?;
         remove_release_tree(releases_root, release_id)?;
         self.storage.finish_release_file_deletion(release_id)?;
+        self.record_activity(
+            Some(release_id),
+            ActivityKind::ReleaseFilesDeleted,
+            &format!(
+                "Files of version {} deleted from this computer",
+                record.release.course_version
+            ),
+        );
         self.storage.release(release_id)?.ok_or_else(unknown)
     }
 

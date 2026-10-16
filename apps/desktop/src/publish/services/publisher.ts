@@ -216,6 +216,27 @@ export interface Distribution {
   releases: SeedingStatus[];
 }
 
+export type ActivityKind =
+  | "release_published"
+  | "release_made_current"
+  | "release_archived"
+  | "release_files_deleted"
+  | "seeding_started"
+  | "seeding_stopped"
+  | "seeding_failed"
+  | "tracker_lists_refreshed"
+  | "tracker_list_failed";
+
+/** One distribution event. `detail` had paths, addresses, and link secrets removed when it was recorded. */
+export interface ActivityEvent {
+  eventId: number;
+  atUnixSeconds: number;
+  releaseId: string | null;
+  courseVersion: string | null;
+  kind: ActivityKind;
+  detail: string;
+}
+
 export interface CommandError {
   code: string;
   message: string;
@@ -264,6 +285,10 @@ export const publisherApi = {
   /** Opens a native save dialog; resolves `false` when the publisher cancels. */
   exportReleaseTorrent: (releaseId: string) => invoke<boolean>("export_release_torrent", { releaseId }),
   getDistribution: () => invoke<Distribution>("get_distribution"),
+  /** Newest first; all releases when `releaseId` is null. */
+  getDistributionActivity: (releaseId: string | null) => invoke<ActivityEvent[]>("get_distribution_activity", { releaseId }),
+  /** Opens a native save dialog for the redacted log; resolves `false` when cancelled. */
+  exportDistributionActivity: () => invoke<boolean>("export_distribution_activity"),
   startSeeding: (releaseId: string) => invoke<void>("start_seeding", { releaseId }),
   stopSeeding: (releaseId: string) => invoke<void>("stop_seeding", { releaseId }),
   setTrackers: (trackers: string[]) => invoke<string[]>("set_trackers", { trackers }),

@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { copyText } from "../../lib/clipboard";
 import { formatBytes } from "../../lib/format";
 import { asCommandError, publisherApi, type Release, type SeedingStatus } from "../../services/publisher";
+import { ActivityLog } from "../distribution/ActivityLog";
 import { ConfirmAction } from "./ConfirmAction";
 import { seedingLabel } from "./labels";
 
@@ -101,6 +102,8 @@ export function ReleaseDetailsPanel({ id, release, currentVersion, seeding, onOp
           <Archive size={14} /> Archive release…
         </button>
       )}
+
+      <ActivityLog releaseId={release.releaseId} limit={10} />
 
       {filesPresent ? <div>
         <h4 className="text-xs font-semibold text-slate-400">Files</h4>

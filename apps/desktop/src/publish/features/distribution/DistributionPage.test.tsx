@@ -7,7 +7,7 @@ import { DistributionPage } from "./DistributionPage";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { getDistribution: vi.fn(), startSeeding: vi.fn(), stopSeeding: vi.fn(), setTrackers: vi.fn(), setTrackerLists: vi.fn(), refreshTrackerLists: vi.fn() },
+  publisherApi: { getDistribution: vi.fn(), startSeeding: vi.fn(), stopSeeding: vi.fn(), setTrackers: vi.fn(), setTrackerLists: vi.fn(), refreshTrackerLists: vi.fn(), getDistributionActivity: vi.fn(), exportDistributionActivity: vi.fn() },
 }));
 
 function status(overrides: Partial<SeedingStatus>): SeedingStatus {
@@ -31,6 +31,7 @@ function status(overrides: Partial<SeedingStatus>): SeedingStatus {
 let server: Distribution;
 
 beforeEach(() => {
+  vi.mocked(publisherApi.getDistributionActivity).mockResolvedValue([]);
   server = {
     trackers: [],
     trackerLists: [

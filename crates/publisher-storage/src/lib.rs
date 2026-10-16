@@ -9,7 +9,9 @@ use course_publisher::DraftCourse;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
+/// Distribution events kept; older ones are pruned as new ones arrive.
+pub const MAX_DISTRIBUTION_EVENTS: u64 = 2_000;
 
 /// Path-free draft information for Admin course lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,6 +145,21 @@ pub struct ReleaseRecord {
     pub status: ReleaseStatus,
     /// Whether the release files are still on disk.
     pub files: ReleaseFiles,
+}
+
+/// One recorded distribution event. Details are redacted before storage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DistributionEvent {
+    /// Monotonic event identity; larger is newer.
+    pub event_id: u64,
+    /// Time of the event as Unix seconds.
+    pub at_unix_seconds: u64,
+    /// Release the event concerns, if any.
+    pub release_id: Option<String>,
+    /// Stable machine-readable kind, such as `seeding_started`.
+    pub kind: String,
+    /// Redacted human-readable detail.
+    pub detail: String,
 }
 
 /// Publisher persistence failure.
@@ -698,6 +715,61 @@ impl PublisherStorage {
         Ok(())
     }
 
+    /// Append a distribution event and prune the oldest beyond
+    /// [`MAX_DISTRIBUTION_EVENTS`]. Callers redact `detail` first.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn record_distribution_event(
+        &mut self,
+        release_id: Option<&str>,
+        kind: &str,
+        detail: &str,
+    ) -> Result<(), PublisherStorageError> {
+        let at = to_i64(now()?, "event timestamp")?;
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO distribution_events (at, release_id, kind, detail) VALUES (?1, ?2, ?3, ?4)",
+            params![at, release_id, kind, detail],
+        )?;
+        let newest = transaction.last_insert_rowid();
+        let keep = to_i64(MAX_DISTRIBUTION_EVENTS, "event limit")?;
+        transaction.execute(
+            "DELETE FROM distribution_events WHERE event_id <= ?1",
+            [newest - keep],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Recorded distribution events, newest first, for one release or all.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn distribution_events(
+        &self,
+        release_id: Option<&str>,
+        limit: u64,
+    ) -> Result<Vec<DistributionEvent>, PublisherStorageError> {
+        let limit = to_i64(limit.min(MAX_DISTRIBUTION_EVENTS), "event limit")?;
+        let mut statement = self.connection.prepare(
+            "SELECT event_id, at, release_id, kind, detail FROM distribution_events
+             WHERE ?1 IS NULL OR release_id = ?1
+             ORDER BY event_id DESC LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![release_id, limit], |row| {
+            Ok(DistributionEvent {
+                event_id: from_i64(row.get(0)?, 0)?,
+                at_unix_seconds: from_i64(row.get(1)?, 1)?,
+                release_id: row.get(2)?,
+                kind: row.get(3)?,
+                detail: row.get(4)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(PublisherStorageError::from)
+    }
+
     fn current_revision(&self, draft_id: &str) -> Result<Option<u64>, PublisherStorageError> {
         let value: Option<i64> = self
             .connection
@@ -788,6 +860,21 @@ fn migrate(connection: &mut Connection) -> Result<(), PublisherStorageError> {
             "ALTER TABLE releases ADD COLUMN files_state TEXT NOT NULL DEFAULT 'present'
                 CHECK (files_state IN ('present', 'deleting', 'deleted'));
              PRAGMA user_version = 4;",
+        )?;
+        transaction.commit()?;
+    }
+    if found < 5 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE distribution_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                at INTEGER NOT NULL CHECK (at >= 0),
+                release_id TEXT,
+                kind TEXT NOT NULL,
+                detail TEXT NOT NULL
+             );
+             CREATE INDEX distribution_events_by_release ON distribution_events (release_id, event_id);
+             PRAGMA user_version = 5;",
         )?;
         transaction.commit()?;
     }
