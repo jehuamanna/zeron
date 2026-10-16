@@ -14,7 +14,7 @@ export function formatTimestamp(seconds: number) {
   return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
 }
 
-function anchorLabel(anchor: NoteAnchor) {
+export function anchorLabel(anchor: NoteAnchor) {
   switch (anchor.kind) {
     case "lesson":
       return "Lesson";
@@ -107,18 +107,53 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
 
   return (
     <section aria-label={`Notes for ${lessonTitle}`} className="flex h-full min-h-0 flex-col">
+      {draft ? (
+        <div
+          className="flex min-h-0 flex-1 flex-col"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && canSave) {
+              event.preventDefault();
+              save.mutate(draft);
+            }
+            if (event.key === "Escape" && !save.isPending && !conflict) setDraft(null);
+          }}
+        >
+          <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
+            <p className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-xs font-medium text-accent-text">
+              {draft.anchor.kind === "videoTime" ? <Clock size={12} /> : draft.anchor.kind === "pdfPage" ? <FileText size={12} /> : <BookmarkPlus size={12} />}
+              {draft.noteId ? "Editing note" : "New note"} · {anchorLabel(draft.anchor)}
+            </p>
+            {conflict ? (
+              <Button size="sm" variant="ghost" onClick={() => { setDraft(null); setConflict(false); void refresh(); }}>Load latest</Button>
+            ) : (
+              <Button size="sm" variant="quiet" disabled={save.isPending} onClick={() => setDraft(null)}>Cancel</Button>
+            )}
+            <Button size="sm" disabled={!canSave} title="Save (Ctrl+Enter)" onClick={() => save.mutate(draft)}>{save.isPending ? "Saving…" : "Save note"}</Button>
+          </div>
+          {conflict ? (
+            <p role="alert" className="shrink-0 px-3 pt-2 text-xs text-amber-200">
+              This note changed since you opened it, so your edit was not saved. Your text is still here; copy what you need, then load the latest version.
+            </p>
+          ) : null}
+          {error ? <p role="alert" className="shrink-0 px-3 pt-2 text-xs text-red-300">{error}</p> : null}
+          <div className="min-h-0 flex-1 px-3 py-2">
+            <NoteEditor key={draft.noteId ?? "new"} fill body={draft.body} editable autoFocus label="Note text" onChange={(body, text) => setDraft({ ...draft, body, text })} />
+          </div>
+        </div>
+      ) : (
+      <>
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-line px-3 py-2">
         {videoResourceId ? (
-          <button type="button" className={`${action} text-accent-text`} disabled={draft !== null} onClick={() => start({ kind: "videoTime", resourceId: videoResourceId, seconds: Math.floor(currentTime()) })}>
+          <button type="button" className={`${action} text-accent-text`} onClick={() => start({ kind: "videoTime", resourceId: videoResourceId, seconds: Math.floor(currentTime()) })}>
             <Clock size={13} /> Add note at {formatTimestamp(currentTime())}
           </button>
         ) : null}
         {documentAnchor ? (
-          <button type="button" className={`${action} text-accent-text`} disabled={draft !== null} onClick={() => start(documentAnchor)}>
+          <button type="button" className={`${action} text-accent-text`} onClick={() => start(documentAnchor)}>
             <FileText size={13} /> {documentAnchor.region ? "Add note on highlight" : `Add note on page ${documentAnchor.page}`}
           </button>
         ) : null}
-        <button type="button" className={action} disabled={draft !== null} onClick={() => start({ kind: "lesson" })}>
+        <button type="button" className={action} onClick={() => start({ kind: "lesson" })}>
           <BookmarkPlus size={13} /> Add lesson note
         </button>
       </div>
@@ -153,7 +188,7 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
                     </button>
                   )}
                   <div className="flex gap-0.5 opacity-60 transition group-hover:opacity-100 group-focus-within:opacity-100">
-                    <button type="button" aria-label="Edit note" disabled={draft !== null} onClick={() => { setConflict(false); setDraft({ noteId: note.noteId, revision: note.revision, anchor: note.anchor, body: note.body, text: note.text }); }} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-fg disabled:opacity-40"><Pencil size={13} /></button>
+                    <button type="button" aria-label="Edit note" onClick={() => { setConflict(false); setDraft({ noteId: note.noteId, revision: note.revision, anchor: note.anchor, body: note.body, text: note.text }); }} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-fg disabled:opacity-40"><Pencil size={13} /></button>
                     <button type="button" aria-label="Delete note" disabled={remove.isPending} onClick={() => remove.mutate(note)} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-red-300 disabled:opacity-40"><Trash2 size={13} /></button>
                   </div>
                 </div>
@@ -161,7 +196,7 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
               </li>
             ))}
           </ul>
-        ) : draft ? null : (
+        ) : (
           <div className="grid place-items-center px-4 py-10 text-center">
             <NotebookPen size={22} className="mb-2 text-faint" />
             <p className="text-sm text-muted">No notes for this lesson yet.</p>
@@ -171,39 +206,8 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
           </div>
         )}
       </div>
-
-      {draft ? (
-        <div
-          className="max-h-[60%] shrink-0 overflow-y-auto border-t border-line bg-surface px-3 py-3"
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && canSave) {
-              event.preventDefault();
-              save.mutate(draft);
-            }
-            if (event.key === "Escape" && !save.isPending && !conflict) setDraft(null);
-          }}
-        >
-          <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-accent-text">
-            {draft.anchor.kind === "videoTime" ? <Clock size={12} /> : draft.anchor.kind === "pdfPage" ? <FileText size={12} /> : <BookmarkPlus size={12} />}
-            {draft.noteId ? "Editing note" : "New note"} · {anchorLabel(draft.anchor)}
-          </p>
-          <NoteEditor key={draft.noteId ?? "new"} body={draft.body} editable autoFocus label="Note text" onChange={(body, text) => setDraft({ ...draft, body, text })} />
-          {conflict ? (
-            <p role="alert" className="mt-2 text-xs text-amber-200">
-              This note changed since you opened it, so your edit was not saved. Your text is still here; copy what you need, then load the latest version.
-            </p>
-          ) : null}
-          <div className="mt-3 flex items-center gap-2">
-            <Button size="sm" disabled={!canSave} onClick={() => save.mutate(draft)}>{save.isPending ? "Saving…" : "Save note"}</Button>
-            {conflict ? (
-              <Button size="sm" variant="ghost" onClick={() => { setDraft(null); setConflict(false); void refresh(); }}>Load latest</Button>
-            ) : (
-              <Button size="sm" variant="ghost" disabled={save.isPending} onClick={() => setDraft(null)}>Cancel</Button>
-            )}
-            <span className="ml-auto hidden text-[11px] text-subtle sm:inline">Ctrl+Enter saves</span>
-          </div>
-        </div>
-      ) : null}
+      </>
+      )}
     </section>
   );
 }

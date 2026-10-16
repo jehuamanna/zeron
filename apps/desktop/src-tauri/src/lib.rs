@@ -148,6 +148,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Every IPC command the app answers.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one flat list of commands is easiest to audit"
+)]
 fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         commands::readiness,
@@ -192,6 +196,7 @@ fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         commands::create_note,
         commands::update_note,
         commands::get_drawing,
+        commands::list_drawn_lessons,
         commands::save_drawing,
         commands::delete_note,
         commands::set_lesson_completed,

@@ -584,6 +584,10 @@ fn drawings_save_from_their_current_revision_and_keep_images() {
         None
     );
     assert_eq!(
+        library.drawn_lessons("course_recovery").unwrap(),
+        Vec::<String>::new()
+    );
+    assert_eq!(
         library
             .save_drawing(
                 "course_recovery",
@@ -594,6 +598,10 @@ fn drawings_save_from_their_current_revision_and_keep_images() {
             )
             .unwrap(),
         DrawingSave::Saved { revision: 0 }
+    );
+    assert_eq!(
+        library.drawn_lessons("course_recovery").unwrap(),
+        ["lesson_one"]
     );
     assert_eq!(
         library

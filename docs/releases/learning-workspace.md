@@ -80,6 +80,17 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
   - Download controls are icons in the Contents header.
   - Accessible names are unchanged.
 
+### 8. Full-height note writing and the course notebook (follow-up)
+
+- **Writing a note:** the editor fills the whole Notes panel. The note's anchor and **Cancel** / **Save note** sit at the top. The list and the add buttons return when the note is saved or cancelled.
+- **Notebook** (button in the course bar): every note and sketch of the course in one place.
+  - Grouped by lesson, in course order. Within a lesson: whole-lesson notes first, then by video moment, then by PDF page.
+  - Filters for All, Notes, and Sketches, and a search over note text.
+  - A timestamp or page chip jumps there; "Edit notes" and "Open sketch" open the lesson with that tab.
+  - Sketches show as still previews. `SketchPreview` loads lazily, renders with Excalidraw's `exportToSvg`, and shows the SVG through an `<img>` with a `data:` URL, so nothing in it can run and the CSP is unchanged.
+  - Notes on lessons that a newer course version dropped are not shown here; Annotation moves on the overview still offers to move them.
+- **New IPC command:** `list_drawn_lessons(courseId) -> string[]`, backed by `CourseLibrary::drawn_lessons` and the existing `drawing_lessons` storage query. It returns lesson IDs only, so the notebook stays light. The command table in `lib.rs` now carries `#[expect(clippy::too_many_lines)]`.
+
 ## Acceptance evidence
 
 - **Vitest:** all 176 tests pass, 3 of them new.
@@ -88,6 +99,10 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
   - The theme toggle switches `data-theme` and saves the choice.
 - The existing Library, player, PDF, notes, transcript, and drawing tests pass unchanged, apart from the new optional props.
 - The repository gates pass: `cargo fmt`, `clippy`, `cargo test`, `pnpm test`, `pnpm typecheck`, `pnpm build`, and `git diff --check`.
+
+- **Follow-up tests:**
+  - `drawings_save_from_their_current_revision_and_keep_images` now also checks `drawn_lessons` before and after the first save.
+  - `CourseNotebook.test.tsx` checks lesson order, ordering inside a lesson, counts, jumping to a moment, the search and Sketches filters, and axe.
 
 ## Manual verification
 

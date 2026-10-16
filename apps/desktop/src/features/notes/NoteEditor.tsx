@@ -9,24 +9,34 @@ export const EMPTY_DOC = JSON.stringify({ type: "doc", content: [{ type: "paragr
  * A Tiptap editor for one note. Read-only mode renders a saved note through
  * the same schema, so no stored HTML is ever injected into the page.
  */
-export function NoteEditor({ body, editable, label, onChange, autoFocus = false }: {
+export function NoteEditor({ body, editable, label, onChange, autoFocus = false, fill = false }: {
   body: string;
   editable: boolean;
   label: string;
   onChange?: (json: string, text: string) => void;
   autoFocus?: boolean;
+  /** Fill the parent's height: the toolbar stays, the text scrolls. */
+  fill?: boolean;
 }) {
   const editor = useEditor({
     extensions: [StarterKit.configure({ link: false })],
     content: parse(body),
     editable,
     autofocus: editable && autoFocus ? "end" : false,
-    editorProps: { attributes: { "aria-label": label, class: `prose-note text-[15px] text-fg-soft focus:outline-none ${editable ? "min-h-[4.5rem]" : ""}` } },
+    editorProps: { attributes: { "aria-label": label, class: `prose-note text-[15px] text-fg-soft focus:outline-none ${fill ? "min-h-full" : editable ? "min-h-[4.5rem]" : ""}` } },
     onUpdate: ({ editor: current }) => onChange?.(JSON.stringify(current.getJSON()), current.getText()),
   });
   useEffect(() => {
     editor?.setEditable(editable);
   }, [editor, editable]);
+  if (fill) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {editable && editor ? <Toolbar editor={editor} /> : null}
+        <EditorContent editor={editor} className="min-h-0 flex-1 cursor-text overflow-y-auto [&>.tiptap]:h-full" onClick={() => editor?.commands.focus()} />
+      </div>
+    );
+  }
   return (
     <div>
       {editable && editor ? <Toolbar editor={editor} /> : null}

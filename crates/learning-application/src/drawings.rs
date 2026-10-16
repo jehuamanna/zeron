@@ -60,6 +60,17 @@ impl CourseLibrary {
         }))
     }
 
+    /// Lessons of a course that have a drawing, in lesson-ID order. Drawings
+    /// of lessons a newer course version dropped are listed too; the caller
+    /// decides how to show them.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage failure.
+    pub fn drawn_lessons(&self, course_id: &str) -> Result<Vec<String>, LibraryError> {
+        Ok(self.storage.drawing_lessons(course_id)?)
+    }
+
     /// Save a lesson's drawing: create it when `expected_revision` is `None`,
     /// otherwise replace it only if it is still at that revision. Images whose
     /// IDs are already stored are kept unchanged; new ones are added.

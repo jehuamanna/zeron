@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, NotebookPen, PanelLeft, PanelRight } from "lucide-react";
+import { BookMarked, ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, NotebookPen, PanelLeft, PanelRight } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMediaQuery } from "../../lib/useMediaQuery";
@@ -13,6 +13,7 @@ import { LessonPlayer, type PlayerHandle } from "../player/LessonPlayer";
 import { MarkCompleteButton, useCourseProgress } from "../progress/progress";
 import { TranscriptPanel } from "../transcripts/TranscriptPanel";
 import { CourseContents, type Showing } from "./CourseContents";
+import { CourseNotebook } from "./CourseNotebook";
 import { CourseOverview } from "./CourseOverview";
 import { isReadable, nextToLearn, placeLessons, primaryResource, resourceLabel, type Lesson, type PlacedLesson } from "./lessons";
 import { SidePanel } from "./SidePanel";
@@ -23,6 +24,7 @@ const TextReader = lazy(() => import("../reader/TextReader").then((module) => ({
 /** What the stage, the large area in the middle, shows. */
 type Stage =
   | { kind: "overview" }
+  | { kind: "notebook" }
   | { kind: "video"; resourceId: string; url: string; startAt: number | null }
   | { kind: "pdf"; resourceId: string; page: number; region: Region | null }
   | { kind: "text"; resourceId: string };
@@ -234,7 +236,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
     );
   }
 
-  const showing: Showing = stage.kind === "overview" ? null : { kind: stage.kind, resourceId: stage.resourceId };
+  const showing: Showing = stage.kind === "overview" || stage.kind === "notebook" ? null : { kind: stage.kind, resourceId: stage.resourceId };
   const previous = active ? placed[active.index - 1] ?? null : null;
   const next = active ? placed[active.index + 1] ?? null : null;
   const upNext = nextToLearn(placed, progress.statusOf);
@@ -330,6 +332,16 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
         >
           <LayoutDashboard size={17} />
         </button>
+        <button
+          type="button"
+          aria-pressed={stage.kind === "notebook"}
+          title="All notes and sketches of this course"
+          onClick={() => setStage({ kind: "notebook" })}
+          className={`flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm ${stage.kind === "notebook" ? "bg-accent/10 text-accent-text" : "text-muted hover:bg-white/10 hover:text-fg"}`}
+        >
+          <BookMarked size={16} /> <span className="hidden sm:inline">Notebook</span>
+          <span className="sr-only sm:hidden">Notebook</span>
+        </button>
         <div className="relative">
           <button type="button" className={headerButton} aria-label="Keyboard shortcuts" aria-expanded={shortcutsOpen} title="Keyboard shortcuts (?)" onClick={() => setShortcutsOpen(!shortcutsOpen)}>
             <Keyboard size={17} />
@@ -368,7 +380,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
 
         {/* Stage */}
         <main aria-label="Lesson" className="flex min-w-0 flex-1 flex-col">
-          {stage.kind !== "overview" && active ? (
+          {stage.kind !== "overview" && stage.kind !== "notebook" && active ? (
             <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 pt-3">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[11px] font-medium uppercase tracking-wider text-subtle">
@@ -405,8 +417,24 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
             </div>
           ) : null}
 
-          <div className={`min-h-0 flex-1 ${stage.kind === "overview" ? "" : "px-4 pb-3"}`}>
-            {stage.kind === "pdf" ? (
+          <div className={`min-h-0 flex-1 ${stage.kind === "overview" || stage.kind === "notebook" ? "" : "px-4 pb-3"}`}>
+            {stage.kind === "notebook" ? (
+              <CourseNotebook
+                courseId={courseId}
+                placed={placed}
+                onOpenLesson={openLesson}
+                onSeek={seekTo}
+                onOpenPage={(resourceId, page) => openDocument(resourceId, page)}
+                onOpenSketch={(lesson) => {
+                  openLesson(lesson);
+                  showSide(true, "sketch");
+                }}
+                onEditNotes={(lesson) => {
+                  openLesson(lesson);
+                  showSide(true, "notes");
+                }}
+              />
+            ) : stage.kind === "pdf" ? (
               <DocumentViewer
                 key={stage.resourceId}
                 courseId={courseId}

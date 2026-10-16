@@ -1713,6 +1713,21 @@ fn annotation_moves(
         .collect())
 }
 
+/// Lessons of a course that have a drawing, for the course notebook.
+#[tauri::command]
+pub(crate) async fn list_drawn_lessons(
+    course_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .drawn_lessons(&course_id)
+            .map_err(note_error)
+    })
+    .await
+}
+
 /// The learner's drawing for a lesson, or `null`.
 #[tauri::command]
 pub(crate) async fn get_drawing(

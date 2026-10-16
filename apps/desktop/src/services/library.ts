@@ -398,6 +398,8 @@ export const libraryApi = {
   readText: (courseId: string, resourceId: string) =>
     invoke<{ format: "markdown" | "text"; text: string }>("read_text_resource", { courseId, resourceId }),
   transcript: (courseId: string, mediaResourceId: string) => invoke<Transcript | null>("read_transcript", { courseId, mediaResourceId }),
+  /** Lessons of a course with a drawing; IDs only, so the notebook stays light. */
+  drawnLessons: (courseId: string) => invoke<string[]>("list_drawn_lessons", { courseId }),
   drawing: (courseId: string, lessonId: string) => invoke<Drawing | null>("get_drawing", { courseId, lessonId }),
   saveDrawing: (courseId: string, lessonId: string, expectedRevision: number | null, sceneJson: string, files: DrawingFile[]) =>
     invoke<DrawingSave>("save_drawing", { courseId, lessonId, expectedRevision, sceneJson, files }),
