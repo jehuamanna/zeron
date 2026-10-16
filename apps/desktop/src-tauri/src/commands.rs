@@ -11,7 +11,7 @@ use learning_application::{
     MAX_TEXT_BYTES, MAX_TRANSCRIPT_BYTES, NetworkProfile, Note, NoteChange, PeerReachability,
     RateLimits, SearchKind, SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage,
     TorrentResource, TorrentSource, TransferState, fits, parse_transcript, read_local_document,
-    read_torrent_document,
+    read_torrent_document, set_aside_course_files,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::{Deserialize, Serialize};
@@ -546,7 +546,8 @@ pub(crate) async fn get_course_detail(
     run_blocking(move || {
         let library = lock_library(&library)?;
         let failed = |error| command_error("course_detail_failed", error);
-        let Some(manifest) = library.manifest(&course_id).map_err(failed)? else {
+        // A removed course's kept manifest still orders its notes in the notebook.
+        let Some(manifest) = library.kept_manifest(&course_id).map_err(failed)? else {
             return Ok(None);
         };
         let info_hash = library.torrent_info_hash(&course_id).map_err(failed)?;
@@ -1032,6 +1033,7 @@ pub(crate) async fn register_media(
 ) -> Result<MediaRegistrationDto, CommandError> {
     let library = Arc::clone(&state.library);
     let playing = course_id.clone();
+    let playing_course = course_id.clone();
     let media = run_blocking(move || {
         let mut library = lock_library(&library)?;
         // Opening a lesson starts it; a failure to record that never blocks playback.
@@ -1102,7 +1104,7 @@ pub(crate) async fn register_media(
     }
     // Only one lesson plays at a time: revoking the previous one stops its pending reads.
     if let Ok(mut current) = state.current_media.lock()
-        && let Some(previous) = current.replace(registration.url.clone())
+        && let Some((_, previous)) = current.replace((playing_course, registration.url.clone()))
     {
         state.media_gateway.revoke(&previous);
     }
@@ -1711,6 +1713,143 @@ fn annotation_moves(
             has_progress: item.has_progress,
         })
         .collect())
+}
+
+/// Courses the learner removed whose notes, drawings, and progress are kept.
+#[tauri::command]
+pub(crate) async fn list_removed_courses(
+    state: State<'_, AppState>,
+) -> Result<Vec<CourseSummaryDto>, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        let library = lock_library(&library)?;
+        library
+            .removed_courses()
+            .map(|courses| {
+                courses
+                    .into_iter()
+                    .map(|course| CourseSummaryDto {
+                        completed_lessons: 0,
+                        total_lessons: 0,
+                        course_id: course.course_id,
+                        course_version: course.course_version,
+                        title: course.title,
+                        publisher_name: course.publisher_name,
+                        language: course.language,
+                        total_resource_bytes: course.total_resource_bytes,
+                        imported_at_unix_seconds: course.imported_at_unix_seconds,
+                        source: source_name(None),
+                        torrent_info_hash: None,
+                        sharing: false,
+                    })
+                    .collect()
+            })
+            .map_err(|error| command_error("library_query_failed", error))
+    })
+    .await
+}
+
+/// Remove a course from the library and keep the learner's notes, drawings,
+/// and progress (ADR 0015). A torrent course's transfer stops and its
+/// downloads are deleted; a local course's folder is the learner's and is
+/// never touched. Returns `false` for a course that is not in the library.
+#[tauri::command]
+pub(crate) async fn remove_course(
+    course_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, CommandError> {
+    let library = Arc::clone(&state.library);
+    let lookup = course_id.clone();
+    let (present, sources) = run_blocking(move || {
+        let library = lock_library(&library)?;
+        let failed = |error| command_error("library_query_failed", error);
+        let present = library
+            .courses()
+            .map_err(failed)?
+            .iter()
+            .any(|course| course.course_id == lookup);
+        Ok((present, library.torrent_sources().map_err(failed)?))
+    })
+    .await?;
+    if !present {
+        return Ok(false);
+    }
+
+    // Nothing may keep reading the course's files.
+    if let Ok(mut current) = state.current_media.lock()
+        && current
+            .as_ref()
+            .is_some_and(|(playing, _)| *playing == course_id)
+        && let Some((_, url)) = current.take()
+    {
+        state.media_gateway.revoke(&url);
+    }
+    let source = sources
+        .iter()
+        .find(|source| source.course_id == course_id)
+        .cloned();
+    if let Some(source) = &source
+        && let (Some(router), Ok(info_hash)) =
+            (&state.torrents.router, InfoHash::parse(&source.info_hash))
+    {
+        router
+            .forget(&info_hash)
+            .await
+            .map_err(|error| command_error("engine_failed", error))?;
+    }
+
+    // Downloads are set aside first, so a crash after the course is marked
+    // removed only leaves a `.deleting` directory that the next start finishes.
+    let courses_root = state.courses_root.clone();
+    let aside = match &source {
+        Some(source) => {
+            let (source, sources) = (source.clone(), sources.clone());
+            run_blocking(move || {
+                set_aside_course_files(&courses_root, &source, &sources).map_err(|error| {
+                    CommandError {
+                        code: "removal_failed",
+                        message: format!(
+                            "the course's downloads could not be removed ({})",
+                            error.kind()
+                        ),
+                    }
+                })
+            })
+            .await?
+        }
+        None => None,
+    };
+    let library = Arc::clone(&state.library);
+    let removed = run_blocking(move || {
+        lock_library(&library)?
+            .remove_course(&course_id)
+            .map_err(|error| command_error("library_write_failed", error))
+    })
+    .await;
+    match (removed, aside) {
+        (Ok(removed), Some(aside)) => {
+            let deleted = run_blocking(move || Ok(aside.delete())).await?;
+            if let Err(error) = deleted {
+                // The next start finishes it.
+                eprintln!(
+                    "deleting a removed course's downloads stopped: {}",
+                    error.kind()
+                );
+            }
+            Ok(removed)
+        }
+        (Ok(removed), None) => Ok(removed),
+        (Err(error), Some(aside)) => {
+            if let Err(restore) = run_blocking(move || Ok(aside.restore())).await? {
+                eprintln!(
+                    "putting a course's downloads back failed: {}",
+                    restore.kind()
+                );
+            }
+            Err(error)
+        }
+        (Err(error), None) => Err(error),
+    }
 }
 
 /// Lessons of a course that have a drawing, for the course notebook.

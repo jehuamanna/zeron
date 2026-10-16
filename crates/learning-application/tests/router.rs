@@ -204,3 +204,31 @@ async fn a_reserved_torrent_stays_private_even_when_stored_as_shared() {
     router.set_shared(&hash, false).await.unwrap();
     assert_eq!(private.active.lock().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn forgetting_a_removed_course_stops_it_and_its_choices() {
+    let private = Arc::new(RecordingEngine::default());
+    let sharing = Arc::new(RecordingEngine::default());
+    let router = TransferRouter::new(Arc::clone(&private), Some(Arc::clone(&sharing)));
+    let hash = router
+        .fetch(FetchRequest {
+            metainfo: metainfo(),
+            content_root: PathBuf::from("/content"),
+            files: vec![0],
+            initial_peers: vec![],
+        })
+        .await
+        .unwrap();
+    router.set_shared(&hash, true).await.unwrap();
+    router.pause(&hash).await.unwrap();
+
+    router.forget(&hash).await.unwrap();
+    assert!(
+        sharing.active.lock().unwrap().is_empty(),
+        "the shared transfer stopped"
+    );
+    assert!(!router.is_shared(&hash), "a re-import starts private");
+    // Forgetting a torrent that is not running is fine.
+    router.forget(&hash).await.unwrap();
+    assert!(private.active.lock().unwrap().is_empty());
+}

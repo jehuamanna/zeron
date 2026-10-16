@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, BookMarked, BookOpen, Download, HardDrive, Magnet, Share2 } from "lucide-react";
+import { ArrowRight, BookMarked, BookOpen, Download, HardDrive, Magnet, MoreHorizontal, Share2, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { CatalogsSection } from "../features/catalogs/CatalogsSection";
 import { CourseWorkspace } from "../features/course/CourseWorkspace";
+import { RemoveCourseDialog } from "../features/course/RemoveCourseDialog";
 import type { WorkspaceTarget } from "../features/course/target";
 import { LibraryNotebook } from "../features/notebook/LibraryNotebook";
 import { ProgressBar } from "../features/progress/progress";
@@ -71,18 +72,14 @@ export function Library() {
 
   if (notebookOpen && courses.data) {
     return (
-      <main className="relative h-full overflow-y-auto">
-        <div className="px-4 py-6 sm:px-6 sm:py-8">
-          <LibraryNotebook
-            courses={courses.data}
-            onBack={() => showNotebook(false)}
-            onOpen={(courseId, next) => {
-              selectCourse(courseId);
-              setTarget(next);
-            }}
-          />
-        </div>
-      </main>
+      <NotebookScreen
+        courses={courses.data}
+        onBack={() => showNotebook(false)}
+        onOpen={(courseId, next) => {
+          selectCourse(courseId);
+          setTarget(next);
+        }}
+      />
     );
   }
   const resume = courses.data?.find((course) => course.completedLessons > 0 && course.completedLessons < course.totalLessons) ?? null;
@@ -188,12 +185,47 @@ function ResumeCard({ course, onOpen }: { course: CourseSummary; onOpen: () => v
 }
 
 function CourseCard({ course, onOpen }: { course: CourseSummary; onOpen: () => void }) {
+  const [menu, setMenu] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  return (
+    <div className="group/card relative">
+      <CourseCardBody course={course} onOpen={onOpen} />
+      <button
+        type="button"
+        aria-label={`Actions for ${course.title}`}
+        aria-expanded={menu}
+        onClick={() => setMenu(!menu)}
+        className="absolute right-3 top-20 grid size-7 place-items-center rounded-lg bg-[#000]/40 text-[#fff] opacity-0 backdrop-blur transition hover:bg-[#000]/60 focus-visible:opacity-100 group-hover/card:opacity-100 aria-expanded:opacity-100"
+      >
+        <MoreHorizontal size={15} />
+      </button>
+      {menu ? (
+        <div role="menu" aria-label={`Actions for ${course.title}`} className="absolute right-3 top-[7.25rem] z-20 w-52 rounded-xl border border-line bg-surface p-1 shadow-panel">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setMenu(false);
+              setRemoving(true);
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-red-300 hover:bg-red-400/10"
+          >
+            <Trash2 size={15} /> Remove from library…
+          </button>
+        </div>
+      ) : null}
+      {removing ? <RemoveCourseDialog course={course} onClose={() => setRemoving(false)} onRemoved={() => setRemoving(false)} /> : null}
+    </div>
+  );
+}
+
+function CourseCardBody({ course, onOpen }: { course: CourseSummary; onOpen: () => void }) {
   const done = course.totalLessons > 0 && course.completedLessons >= course.totalLessons;
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="group flex flex-col overflow-hidden rounded-2xl border border-line bg-surface text-left shadow-panel transition hover:-translate-y-0.5 hover:border-accent/40"
+      className="group flex h-full w-full flex-col overflow-hidden rounded-2xl border border-line bg-surface text-left shadow-panel transition hover:-translate-y-0.5 hover:border-accent/40"
     >
       <div
         className="relative flex h-28 items-start justify-between p-3 text-[#fff]"
@@ -228,5 +260,21 @@ function CourseCard({ course, onOpen }: { course: CourseSummary; onOpen: () => v
         </div>
       </div>
     </button>
+  );
+}
+
+/** The library notebook, with removed courses' kept notes after the library's own. */
+function NotebookScreen({ courses, onOpen, onBack }: {
+  courses: CourseSummary[];
+  onOpen: (courseId: string, target: WorkspaceTarget | null) => void;
+  onBack: () => void;
+}) {
+  const removed = useQuery({ queryKey: ["removed-courses"], queryFn: libraryApi.removedCourses });
+  return (
+    <main className="relative h-full overflow-y-auto">
+      <div className="px-4 py-6 sm:px-6 sm:py-8">
+        <LibraryNotebook courses={courses} removed={removed.data ?? []} onBack={onBack} onOpen={onOpen} />
+      </div>
+    </main>
   );
 }

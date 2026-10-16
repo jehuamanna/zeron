@@ -8,7 +8,7 @@ Phase 6 asks for Excalidraw scenes persisted with local assets. Excalidraw is a 
 
 ## Decision
 
-1. **One drawing per lesson.** Each lesson has at most one drawing (schema v10, `lesson_drawings`), keyed by course and lesson with cascade on course removal. It never lives in course packages.
+1. **One drawing per lesson.** Each lesson has at most one drawing (schema v10, `lesson_drawings`), keyed by course and lesson. Removing a course keeps it (ADR 0015). It never lives in course packages.
 2. **Compare-and-swap like notes.** A new drawing is saved with no expected revision; later saves must name the revision they saw. A conflict writes nothing, and the UI stops autosaving until the learner loads the saved drawing.
 3. **Validated scene.** `learning-domain::Scene` accepts a JSON object with an `elements` array, up to 2 MiB.
 4. **Images stored once, never changed.** They are kept in `drawing_files` as data URLs:

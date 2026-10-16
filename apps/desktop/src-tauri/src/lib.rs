@@ -26,9 +26,12 @@ use torrent_librqbit::{EngineConfig, LibrqbitEngine};
 pub(crate) struct AppState {
     pub(crate) library: Arc<Mutex<CourseLibrary>>,
     pub(crate) media_gateway: MediaGateway,
-    /// The capability URL currently playing; revoked when another is issued.
-    pub(crate) current_media: Mutex<Option<String>>,
+    /// The course and capability URL currently playing; revoked when another
+    /// is issued or its course is removed.
+    pub(crate) current_media: Mutex<Option<(String, String)>>,
     pub(crate) torrents: Torrents,
+    /// Where torrent courses download, `app_data/courses`. Never sent over IPC.
+    pub(crate) courses_root: PathBuf,
 }
 
 pub(crate) type Router = TransferRouter<LibrqbitEngine>;
@@ -115,6 +118,13 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         return Err(error.into());
     }
     let library = CourseLibrary::open(&app_data.join("library.sqlite3"), ImportLimits::default())?;
+    // Finish deleting the downloads of courses removed just before a crash.
+    let courses_root = app_data.join("courses");
+    match learning_application::finish_interrupted_removals(&courses_root) {
+        Ok(0) => {}
+        Ok(count) => eprintln!("finished removing {count} course download(s)"),
+        Err(error) => eprintln!("finishing course removals stopped: {}", error.kind()),
+    }
     let profile = library.network_profile()?;
     let reachability = library.peer_reachability()?;
     let library = Arc::new(Mutex::new(library));
@@ -143,6 +153,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         media_gateway,
         current_media: Mutex::new(None),
         torrents,
+        courses_root,
     });
     Ok(())
 }
@@ -197,6 +208,8 @@ fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         commands::update_note,
         commands::get_drawing,
         commands::list_drawn_lessons,
+        commands::remove_course,
+        commands::list_removed_courses,
         commands::save_drawing,
         commands::delete_note,
         commands::set_lesson_completed,

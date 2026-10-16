@@ -14,10 +14,30 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
 /// Schema version this build creates and understands.
-pub const CURRENT_SCHEMA_VERSION: i64 = 14;
+pub const CURRENT_SCHEMA_VERSION: i64 = 15;
 /// Previous versions of one course whose manifests are kept for moving annotations.
 pub const KEPT_PREVIOUS_MANIFESTS: u32 = 5;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
+
+/// What removing a course left for the caller to clean up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemovedCourse {
+    /// The torrent source the course had, whose transfer and downloaded
+    /// files the caller stops and deletes. `None` for a local folder import,
+    /// whose folder belongs to the learner and is never deleted.
+    pub torrent: Option<RemovedTorrent>,
+}
+
+/// A removed torrent course's transfer and download directory.
+///
+/// `content_root` must not cross the IPC boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemovedTorrent {
+    /// Info hash of the course torrent.
+    pub info_hash: String,
+    /// Directory its files were downloaded into.
+    pub content_root: PathBuf,
+}
 
 /// A publisher catalog kept by the Library. `document` is the verified
 /// catalog file, kept as it arrived.
@@ -1299,7 +1319,7 @@ impl Storage {
             "SELECT s.course_id, s.lesson_id, s.kind, s.source_id, s.position,
                     snippet(learning_search, -1, char(57344), char(57345), '…', 16)
              FROM learning_search AS s JOIN courses AS c ON c.course_id = s.course_id
-             WHERE learning_search MATCH ?1
+             WHERE learning_search MATCH ?1 AND c.removed_at IS NULL
              ORDER BY bm25(learning_search, 0, 0, 0, 0, 0, 0, 5.0, 1.0)
              LIMIT ?2",
         )?;
@@ -1356,7 +1376,7 @@ impl Storage {
     pub fn course(&self, course_id: &str) -> Result<Option<StoredCourseSummary>, StorageError> {
         self.connection
             .query_row(
-                &format!("SELECT {SUMMARY_COLUMNS} FROM courses AS c LEFT JOIN course_torrent_sources AS t ON t.course_id = c.course_id WHERE c.course_id = ?1"),
+                &format!("SELECT {SUMMARY_COLUMNS} FROM courses AS c LEFT JOIN course_torrent_sources AS t ON t.course_id = c.course_id WHERE c.course_id = ?1 AND c.removed_at IS NULL"),
                 [course_id],
                 summary_from_row,
             )
@@ -1371,14 +1391,125 @@ impl Storage {
     /// Returns [`StorageError`] for `SQLite` query or row-decoding failures.
     pub fn list_courses(&self) -> Result<Vec<StoredCourseSummary>, StorageError> {
         let mut statement = self.connection.prepare(&format!(
-            "SELECT {SUMMARY_COLUMNS} FROM courses AS c LEFT JOIN course_torrent_sources AS t ON t.course_id = c.course_id ORDER BY c.title COLLATE NOCASE, c.course_id"
+            "SELECT {SUMMARY_COLUMNS} FROM courses AS c LEFT JOIN course_torrent_sources AS t ON t.course_id = c.course_id WHERE c.removed_at IS NULL ORDER BY c.title COLLATE NOCASE, c.course_id"
         ))?;
         let rows = statement.query_map([], summary_from_row)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StorageError::from)
     }
 
-    /// Load and parse the exact manifest snapshot stored for a course.
+    /// Courses the learner removed whose notes, drawings, and progress are
+    /// kept, in title order (ADR 0015).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for `SQLite` query or row-decoding failures.
+    pub fn removed_courses(&self) -> Result<Vec<StoredCourseSummary>, StorageError> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {SUMMARY_COLUMNS} FROM courses AS c LEFT JOIN course_torrent_sources AS t ON t.course_id = c.course_id WHERE c.removed_at IS NOT NULL ORDER BY c.title COLLATE NOCASE, c.course_id"
+        ))?;
+        let rows = statement.query_map([], summary_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
+    }
+
+    /// The manifest of a course in the library or removed from it, so a
+    /// removed course's notes can still be read in lesson order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for `SQLite` or JSON failures.
+    pub fn kept_course_manifest(
+        &self,
+        course_id: &str,
+    ) -> Result<Option<CourseManifest>, StorageError> {
+        let json: Option<Vec<u8>> = self
+            .connection
+            .query_row(
+                "SELECT manifest_json FROM courses WHERE course_id = ?1",
+                [course_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        json.map(|bytes| parse_and_validate(&bytes))
+            .transpose()
+            .map_err(StorageError::from)
+    }
+
+    /// Remove a course from the library and keep the learner's own work.
+    ///
+    /// In one transaction the course is marked removed, and what tied it to
+    /// content goes: its location, torrent source, download commitments,
+    /// resources, outline and text index, signature, and publisher pin.
+    /// Notes, drawings, progress, playback positions, and manifest history
+    /// stay, and come back if the course is imported again. Files are not
+    /// touched here; the returned torrent source says what the caller may
+    /// delete. Returns `None` for an unknown or already removed course.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock, `SQLite`, or path-decoding failures.
+    pub fn remove_course(
+        &mut self,
+        course_id: &str,
+    ) -> Result<Option<RemovedCourse>, StorageError> {
+        let removed_at = unix_now()?;
+        let tx = self.connection.transaction()?;
+        let present: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM courses WHERE course_id = ?1 AND removed_at IS NULL)",
+            [course_id],
+            |row| row.get(0),
+        )?;
+        if !present {
+            return Ok(None);
+        }
+        let torrent: Option<(String, String, Vec<u8>)> = tx
+            .query_row(
+                "SELECT t.info_hash, l.path_encoding, l.path_bytes
+                 FROM course_torrent_sources AS t JOIN course_locations AS l ON l.course_id = t.course_id
+                 WHERE t.course_id = ?1",
+                [course_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let torrent = torrent
+            .map(|(info_hash, encoding, bytes)| {
+                decode_path(&encoding, &bytes).map(|content_root| RemovedTorrent {
+                    info_hash,
+                    content_root,
+                })
+            })
+            .transpose()?;
+        tx.execute(
+            "UPDATE courses SET removed_at = ?2 WHERE course_id = ?1",
+            params![course_id, removed_at],
+        )?;
+        for table in [
+            "course_locations",
+            "course_torrent_sources",
+            "download_commitments",
+            "course_resources",
+            "indexed_resources",
+            "course_signatures",
+            "course_pins",
+            "course_search",
+        ] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE course_id = ?1"),
+                [course_id],
+            )?;
+        }
+        // Notes stay indexed, so they are searchable again after a re-import.
+        tx.execute(
+            "DELETE FROM learning_search WHERE course_id = ?1 AND kind <> 'note'",
+            [course_id],
+        )?;
+        tx.commit()?;
+        Ok(Some(RemovedCourse { torrent }))
+    }
+
+    /// Load and parse the exact manifest snapshot stored for a course in the
+    /// library; removed courses have none.
     ///
     /// # Errors
     ///
@@ -1387,7 +1518,7 @@ impl Storage {
         let json: Option<Vec<u8>> = self
             .connection
             .query_row(
-                "SELECT manifest_json FROM courses WHERE course_id = ?1",
+                "SELECT manifest_json FROM courses WHERE course_id = ?1 AND removed_at IS NULL",
                 [course_id],
                 |row| row.get(0),
             )
@@ -1470,7 +1601,7 @@ impl Storage {
             "SELECT {SUMMARY_COLUMNS}
              FROM course_search AS s JOIN courses AS c ON c.course_id = s.course_id
              LEFT JOIN course_torrent_sources AS t ON t.course_id = c.course_id
-             WHERE course_search MATCH ?1
+             WHERE course_search MATCH ?1 AND c.removed_at IS NULL
              ORDER BY bm25(course_search), c.course_id"
         ))?;
         let rows = statement.query_map([query], summary_from_row)?;
@@ -1521,7 +1652,8 @@ impl Storage {
                language=excluded.language,
                manifest_json=excluded.manifest_json,
                total_resource_bytes=excluded.total_resource_bytes,
-               imported_at=excluded.imported_at",
+               imported_at=excluded.imported_at,
+               removed_at=NULL",
             params![
                 manifest.course_id,
                 manifest.version,
@@ -1890,7 +2022,7 @@ fn add_drawings(connection: &mut Connection) -> Result<(), StorageError> {
 }
 
 /// Migrations from schema 4 on, by the version they start from.
-const TABLE_MIGRATIONS: [(i64, Migration); 10] = [
+const TABLE_MIGRATIONS: [(i64, Migration); 11] = [
     (4, add_playback_positions),
     (5, add_download_commitments),
     (6, add_pause_flag),
@@ -1901,7 +2033,20 @@ const TABLE_MIGRATIONS: [(i64, Migration); 10] = [
     (11, add_manifest_history),
     (12, add_course_trust),
     (13, add_catalogs),
+    (14, add_course_removal),
 ];
+
+/// Schema 15. A removed course keeps its row, so the learner's notes,
+/// drawings, and progress, which cascade from it, survive (ADR 0015).
+fn add_course_removal(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "ALTER TABLE courses ADD COLUMN removed_at INTEGER CHECK(removed_at IS NULL OR removed_at >= 0);
+         PRAGMA user_version = 15;",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
 
 /// Schema 14. Publisher catalogs the learner imported (ADR 0014 decision 8).
 fn add_catalogs(connection: &mut Connection) -> Result<(), StorageError> {
@@ -2230,6 +2375,130 @@ mod tests {
     }
 
     #[test]
+    fn removed_courses_keep_learner_work_and_come_back_on_reimport() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let local = manifest("Local Course", "local");
+        storage
+            .save_imported_course(&local, 10, Path::new("/learner/own/folder"))
+            .unwrap();
+        let lesson = "lesson_welcome";
+        storage
+            .insert_note(
+                "note_1",
+                &local.course_id,
+                lesson,
+                r#"{"kind":"lesson"}"#,
+                r#"{"type":"doc"}"#,
+                "keep me",
+            )
+            .unwrap();
+        storage
+            .set_lesson_completed(&local.course_id, lesson, true)
+            .unwrap();
+        storage
+            .set_playback_position(
+                &local.course_id,
+                "res",
+                PlaybackPosition {
+                    position_ms: 5_000,
+                    duration_ms: 9_000,
+                },
+            )
+            .unwrap();
+
+        // A local folder is the learner's own: nothing is returned to delete.
+        let removed = storage.remove_course(&local.course_id).unwrap().unwrap();
+        assert_eq!(removed.torrent, None);
+        assert_eq!(
+            storage.remove_course(&local.course_id).unwrap(),
+            None,
+            "removing twice does nothing"
+        );
+        assert_eq!(storage.remove_course("course_missing").unwrap(), None);
+
+        assert_eq!(storage.list_courses().unwrap().len(), 0);
+        assert!(storage.course(&local.course_id).unwrap().is_none());
+        assert!(storage.course_manifest(&local.course_id).unwrap().is_none());
+        assert!(
+            storage
+                .course_package_root(&local.course_id)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            storage.removed_courses().unwrap()[0].course_id,
+            local.course_id
+        );
+        assert_eq!(
+            storage
+                .kept_course_manifest(&local.course_id)
+                .unwrap()
+                .unwrap()
+                .title,
+            "Local Course"
+        );
+        assert_eq!(
+            storage.search(r#""keep""#, 10).unwrap().len(),
+            0,
+            "removed courses are not searched"
+        );
+        // The learner's work is kept.
+        assert_eq!(storage.notes(&local.course_id, None).unwrap().len(), 1);
+        assert!(
+            storage
+                .playback_position(&local.course_id, "res")
+                .unwrap()
+                .is_some()
+        );
+
+        // Importing the course again brings it back with everything kept.
+        storage
+            .save_imported_course(&local, 10, Path::new("/learner/own/folder"))
+            .unwrap();
+        assert_eq!(storage.list_courses().unwrap().len(), 1);
+        assert_eq!(storage.removed_courses().unwrap().len(), 0);
+        assert_eq!(
+            storage.notes(&local.course_id, None).unwrap()[0].body_text,
+            "keep me"
+        );
+        assert_eq!(
+            storage.search(r#""keep""#, 10).unwrap().len(),
+            1,
+            "kept notes are searchable again"
+        );
+    }
+
+    #[test]
+    fn removing_a_torrent_course_hands_back_its_download_and_stops_restore() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let mut torrent = manifest("Torrent Course", "p2p");
+        torrent.course_id = "course_torrent".to_owned();
+        storage
+            .save_torrent_course(
+                &torrent,
+                64,
+                Path::new("/data/courses/aaaa"),
+                &"a".repeat(40),
+                b"d4:infoe",
+            )
+            .unwrap();
+        let removed = storage.remove_course("course_torrent").unwrap().unwrap();
+        assert_eq!(
+            removed.torrent,
+            Some(RemovedTorrent {
+                info_hash: "a".repeat(40),
+                content_root: PathBuf::from("/data/courses/aaaa")
+            })
+        );
+        assert_eq!(
+            storage.torrent_course_sources().unwrap().len(),
+            0,
+            "a removed torrent is not restored at start"
+        );
+        assert_eq!(storage.list_courses().unwrap().len(), 0);
+    }
+
+    #[test]
     fn migrates_and_proves_fts5() {
         let storage = Storage::open_in_memory().unwrap();
         assert_eq!(storage.list_courses().unwrap().len(), 0);
@@ -2405,7 +2674,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE catalogs;
+                    "ALTER TABLE courses DROP COLUMN removed_at;
+                     DROP TABLE catalogs;
                      DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;
                      DROP TABLE course_manifest_history;
                      DROP TABLE learning_search; DROP TABLE indexed_resources;
@@ -2448,7 +2718,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE catalogs;
+                    "ALTER TABLE courses DROP COLUMN removed_at;
+                     DROP TABLE catalogs;
                      DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;
                      DROP TABLE course_manifest_history; DROP TRIGGER notes_search_move;
                      DROP TRIGGER notes_search_insert; DROP TRIGGER notes_search_update;

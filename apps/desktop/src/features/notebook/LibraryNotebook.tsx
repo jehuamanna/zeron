@@ -8,8 +8,10 @@ import { asCommandError, libraryApi, type CourseSummary } from "../../services/l
 import { buildGroups, countSketches, LessonGroups, NotebookFilters, type Show } from "./LessonGroups";
 
 /** Every note and sketch across the library, course by course, in lesson order. */
-export function LibraryNotebook({ courses, onOpen, onBack }: {
+export function LibraryNotebook({ courses: active, removed = [], onOpen, onBack }: {
   courses: CourseSummary[];
+  /** Courses removed from the library whose notes are kept; shown read-only. */
+  removed?: CourseSummary[];
   /** Opens a course, optionally at a note's moment, page, or lesson. */
   onOpen: (courseId: string, target: WorkspaceTarget | null) => void;
   onBack: () => void;
@@ -18,6 +20,8 @@ export function LibraryNotebook({ courses, onOpen, onBack }: {
   const [filter, setFilter] = useState("");
   const [only, setOnly] = useState<string>("");
   const query = filter.trim().toLowerCase();
+  const courses = [...active, ...removed];
+  const removedIds = new Set(removed.map((course) => course.courseId));
 
   const details = useQueries({ queries: courses.map((course) => ({ queryKey: ["course-detail", course.courseId], queryFn: () => libraryApi.detail(course.courseId) })) });
   const notes = useQueries({ queries: courses.map((course) => ({ queryKey: ["notes", course.courseId, null], queryFn: () => libraryApi.notes(course.courseId, null), staleTime: 0 })) });
@@ -80,6 +84,7 @@ export function LibraryNotebook({ courses, onOpen, onBack }: {
           {shown.map(({ course, groups }) => {
             const open = (target: WorkspaceTarget | null) => onOpen(course.courseId, target);
             const courseId = course.courseId;
+            const gone = removedIds.has(courseId);
             return (
               <section key={courseId} aria-label={course.title}>
                 <div className="mb-5 flex items-end justify-between gap-3 border-b-2 border-accent/30 pb-2">
@@ -87,14 +92,21 @@ export function LibraryNotebook({ courses, onOpen, onBack }: {
                     <h2 className="truncate font-display text-2xl font-bold">{course.title}</h2>
                     <p className="text-xs text-subtle">{course.publisherName}</p>
                   </div>
-                  <button type="button" onClick={() => open(null)} className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-accent-text hover:underline">
-                    Open course <ArrowRight size={13} />
-                  </button>
+                  {gone ? (
+                    <span className="shrink-0 rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted" title="Import this course again to open it; these notes come back with it.">
+                      Removed from library
+                    </span>
+                  ) : (
+                    <button type="button" onClick={() => open(null)} className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-accent-text hover:underline">
+                      Open course <ArrowRight size={13} />
+                    </button>
+                  )}
                 </div>
                 <LessonGroups
                   courseId={courseId}
                   groups={groups}
                   headingLevel={3}
+                  readOnly={gone}
                   label={`Lessons with notes in ${course.title}`}
                   actions={{
                     onOpenLesson: (lesson) => open({ kind: "lesson", courseId, lessonId: lesson.id, tab: "notes" }),

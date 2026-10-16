@@ -121,6 +121,27 @@ impl<E: TorrentEngine> TransferRouter<E> {
         Ok(())
     }
 
+    /// Stop a torrent for good and forget every choice made about it, for a
+    /// course the learner removed: a later import starts private and unpaused.
+    /// A torrent that was not running is not an error.
+    ///
+    /// # Errors
+    /// The engine failure that kept the transfer from stopping.
+    pub async fn forget(&self, info_hash: &InfoHash) -> Result<(), EngineError> {
+        let _changes = self.changes.lock().await;
+        let shared = self.is_shared(info_hash);
+        {
+            let mut routes = self.routes();
+            routes.requests.remove(info_hash);
+            routes.paused.remove(info_hash);
+            routes.shared.remove(info_hash);
+        }
+        match self.engine(shared).stop(info_hash).await {
+            Ok(()) | Err(EngineError::NotActive) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     fn mark(&self, info_hash: &InfoHash, shared: bool) {
         let mut routes = self.routes();
         if shared {

@@ -409,6 +409,14 @@ export const libraryApi = {
   readText: (courseId: string, resourceId: string) =>
     invoke<{ format: "markdown" | "text"; text: string }>("read_text_resource", { courseId, resourceId }),
   transcript: (courseId: string, mediaResourceId: string) => invoke<Transcript | null>("read_transcript", { courseId, mediaResourceId }),
+  /**
+   * Remove a course: its torrent stops and its downloads are deleted; a local
+   * course's folder is never touched. Notes, sketches, and progress stay.
+   * Resolves `false` for a course not in the library.
+   */
+  removeCourse: (courseId: string) => invoke<boolean>("remove_course", { courseId }),
+  /** Courses the learner removed whose notes are kept. */
+  removedCourses: () => invoke<CourseSummary[]>("list_removed_courses"),
   /** Lessons of a course with a drawing; IDs only, so the notebook stays light. */
   drawnLessons: (courseId: string) => invoke<string[]>("list_drawn_lessons", { courseId }),
   drawing: (courseId: string, lessonId: string) => invoke<Drawing | null>("get_drawing", { courseId, lessonId }),

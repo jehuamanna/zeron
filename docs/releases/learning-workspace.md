@@ -154,6 +154,19 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
 - **Video player:** the seek bar and switches are white on black.
 - **Publish:** its main buttons use the shared accent instead of amber.
 
+### 13. Removing courses, a tidier overview, and a Previous button (follow-up)
+
+- **Remove from library** is in each course card's "⋯" menu and in the open course's actions menu (ADR 0015). The confirmation names what goes and what stays.
+  - **Local courses:** only Zeron's record goes; the folder is never touched.
+  - **Torrent courses:** the transfer stops and Zeron's download directory is deleted. Before deleting, Zeron checks the path, refuses links, and keeps a torrent another course shares. A crash is finished at the next start.
+  - **Kept:** notes, highlights, sketches, and progress stay. They return on re-import and stay readable, marked "Removed from library", in the library notebook.
+  - New IPC: `remove_course` and `list_removed_courses`. `get_course_detail` falls back to a removed course's kept manifest so the notebook can order its notes. Storage is at schema 15.
+- **Course overview:**
+  - The publisher, torrent, and sharing blocks became one row of chips: the publisher chip opens its explanation and "Forget publisher", the torrent chip explains streaming in a tooltip, and sharing is an inline switch.
+  - "What's inside" modules expand to their lessons, with status and duration, and each lesson opens directly.
+- **Notes and sketch panel:** it only appears once there is a lesson to take notes on.
+- **Player:** a Previous lesson button sits beside Next.
+
 ## Acceptance evidence
 
 - **Vitest:** all 176 tests pass, 3 of them new.

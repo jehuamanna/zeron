@@ -12,7 +12,11 @@ const audience: Record<CourseSharing["networkProfile"], string> = {
 const formatBytes = (bytes: number) =>
   new Intl.NumberFormat(undefined, { style: "unit", unit: "kilobyte", maximumFractionDigits: 1 }).format(bytes / 1000);
 
-export function CourseSharingCard({ courseId }: { courseId: string }) {
+export function CourseSharingCard({ courseId, compact = false }: {
+  courseId: string;
+  /** A one-line switch, for the course overview's detail row. */
+  compact?: boolean;
+}) {
   const queryClient = useQueryClient();
   const status = useQuery({
     queryKey: ["course-sharing", courseId],
@@ -31,6 +35,31 @@ export function CourseSharingCard({ courseId }: { courseId: string }) {
   if (status.isPending || !data) return null;
   const on = data.sharing;
   const error = toggle.isError ? (asCommandError(toggle.error)?.message ?? "The sharing choice could not be saved.") : null;
+
+  if (compact) {
+    const detail = on
+      ? `On: Zeron uploads the parts of this course this computer has verified to other learners ${audience[data.networkProfile]}, who can see this computer's IP address.`
+      : "Off: Zeron uploads nothing for this course. Only parts this computer has downloaded can be shared.";
+    return (
+      <div className="inline-flex items-center gap-2 rounded-full border border-line bg-surface py-1 pl-2.5 pr-1.5 text-xs" title={detail}>
+        <Share2 size={13} className="text-muted" />
+        <span id="sharing-heading" className="font-medium text-fg-soft">Share with other learners</span>
+        {on ? <span className="tabular-nums text-subtle">· {data.connectedPeers} peers · {formatBytes(data.uploadedBytes)} up</span> : null}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-labelledby="sharing-heading"
+          disabled={!data.available || toggle.isPending}
+          onClick={() => toggle.mutate(!on)}
+          className={`relative h-4 w-7 shrink-0 rounded-full transition disabled:opacity-50 ${on ? "bg-accent" : "bg-white/15"}`}
+        >
+          <span className={`absolute top-0.5 size-3 rounded-full transition-all ${on ? "left-3.5 bg-on-accent" : "left-0.5 bg-surface"}`} />
+        </button>
+        {error ? <span role="alert" className="text-red-300">{error}</span> : null}
+      </div>
+    );
+  }
 
   return (
     <section aria-labelledby="sharing-heading" className="mt-5 max-w-2xl rounded-2xl border border-white/10 bg-white/[0.04] p-5">

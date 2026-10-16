@@ -106,13 +106,15 @@ export function NotebookFilters({ show, onShow, filter, onFilter, children }: {
 }
 
 /** Lessons with their notes and sketch previews. */
-export function LessonGroups({ courseId, groups, actions, label = "Lessons with notes", headingLevel = 2 }: {
+export function LessonGroups({ courseId, groups, actions, label = "Lessons with notes", headingLevel = 2, readOnly = false }: {
   courseId: string;
   groups: LessonGroup[];
   actions: NotebookActions;
   label?: string;
   /** 2 on a course's notebook; 3 under a course heading in the library notebook. */
   headingLevel?: 2 | 3;
+  /** For a removed course: shown, but nothing opens until it is imported again. */
+  readOnly?: boolean;
 }) {
   const Heading = headingLevel === 2 ? "h2" : "h3";
   return (
@@ -123,18 +125,20 @@ export function LessonGroups({ courseId, groups, actions, label = "Lessons with 
             <div className="min-w-0">
               <p className="text-[11px] uppercase tracking-wider text-subtle">{item.moduleTitle} · Lesson {item.index + 1}</p>
               <Heading className="truncate font-display text-lg font-bold">
-                <button type="button" className="hover:text-accent-text" onClick={() => actions.onOpenLesson(item.lesson)}>{item.lesson.title}</button>
+                {readOnly ? item.lesson.title : <button type="button" className="hover:text-accent-text" onClick={() => actions.onOpenLesson(item.lesson)}>{item.lesson.title}</button>}
               </Heading>
             </div>
-            <button type="button" className="shrink-0 text-xs text-muted hover:text-fg" onClick={() => actions.onEditNotes(item.lesson)}>
-              Edit notes
-            </button>
+            {readOnly ? null : (
+              <button type="button" className="shrink-0 text-xs text-muted hover:text-fg" onClick={() => actions.onEditNotes(item.lesson)}>
+                Edit notes
+              </button>
+            )}
           </div>
           <ul aria-label={`Notes in ${item.lesson.title}`} className="space-y-3">
             {notes.map((note) => (
               <li key={note.noteId} className="rounded-xl border border-line bg-surface p-4 shadow-sm">
-                {note.anchor.kind === "lesson" ? (
-                  <span className="mb-2 inline-block rounded-md bg-white/5 px-2 py-0.5 text-[11px] font-medium text-muted">Lesson</span>
+                {note.anchor.kind === "lesson" || readOnly ? (
+                  <span className="mb-2 inline-block rounded-md bg-white/5 px-2 py-0.5 text-[11px] font-medium text-muted">{anchorLabel(note.anchor)}</span>
                 ) : (
                   <button
                     type="button"
@@ -157,7 +161,7 @@ export function LessonGroups({ courseId, groups, actions, label = "Lessons with 
               <li className="rounded-xl border border-line bg-surface p-3 shadow-sm">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted"><PenTool size={11} /> Sketch</span>
-                  <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => actions.onOpenSketch(item.lesson)}>Open sketch</button>
+                  {readOnly ? null : <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => actions.onOpenSketch(item.lesson)}>Open sketch</button>}
                 </div>
                 <Suspense fallback={<div aria-hidden className="h-40 animate-pulse rounded-lg bg-white/5" />}>
                   <SketchPreview courseId={courseId} lessonId={item.lesson.id} title={item.lesson.title} />

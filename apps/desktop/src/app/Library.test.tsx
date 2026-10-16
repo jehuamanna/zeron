@@ -35,6 +35,8 @@ vi.mock("../services/library", async (importOriginal) => ({
     setLessonCompleted: vi.fn(),
     notes: vi.fn(() => Promise.resolve([])),
     drawnLessons: vi.fn(() => Promise.resolve([])),
+    removeCourse: vi.fn(),
+    removedCourses: vi.fn(() => Promise.resolve([])),
     storage: vi.fn(() => Promise.resolve({ streamedBytes: 0, cacheLimitBytes: null, availableBytes: 50 * 1024 ** 3, lowDisk: false })),
     savePlaybackPosition: vi.fn(() => Promise.resolve(true)),
     search: vi.fn(),
@@ -230,7 +232,7 @@ describe("learner library", () => {
     });
 
     const view = renderApp();
-    await waitFor(() => expect(view.container.textContent).toContain("Lessons download while you watch"));
+    await waitFor(() => expect(view.container.textContent).toContain("Streams from a torrent"));
     await waitFor(() => expect(view.container.textContent).toContain("25% downloaded"));
     const play = Array.from(view.container.querySelectorAll("button")).find((candidate) => candidate.textContent?.includes("Play video"));
     fireEvent.click(play!);
@@ -375,7 +377,7 @@ describe("learner library", () => {
     });
     const view = renderApp();
     await waitFor(() => expect(view.container.textContent).toContain("1 of 2 lessons complete"));
-    const statuses = () => Array.from(view.container.querySelectorAll("[data-lesson-status]")).map((item) => item.getAttribute("data-lesson-status"));
+    const statuses = () => Array.from(view.getByRole("complementary", { name: "Course contents" }).querySelectorAll("[data-lesson-status]")).map((item) => item.getAttribute("data-lesson-status"));
     expect(statuses()).toEqual(["completed", "in_progress"]);
     expect(view.getByRole("button", { name: "Mark First complete" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(view.getByRole("button", { name: "Mark Second complete" }));
@@ -513,5 +515,78 @@ describe("learner library", () => {
 
     fireEvent.click(view.getByRole("button", { name: "Back to library" }));
     await waitFor(() => expect(view.container.textContent).toContain("All your notes"));
+  });
+
+  it("removes a course from its card after saying what goes and what stays", async () => {
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    const summary = { courseVersion: "1.0.0", publisherName: "Zeron Tests", language: "en", totalResourceBytes: 50 * 1024 ** 2, importedAtUnixSeconds: 1, completedLessons: 0, totalLessons: 1, sharing: false };
+    let courses = [
+      { ...summary, courseId: "local", title: "Local Course", source: "local" as const, torrentInfoHash: null },
+      { ...summary, courseId: "torrent", title: "Torrent Course", source: "torrent" as const, torrentInfoHash: "ab".repeat(20) },
+    ];
+    vi.mocked(libraryApi.list).mockImplementation(async () => courses);
+    vi.mocked(libraryApi.removeCourse).mockImplementation(async (courseId) => {
+      courses = courses.filter((course) => course.courseId !== courseId);
+      return true;
+    });
+
+    const view = renderApp();
+    fireEvent.click(await waitFor(() => view.getByRole("button", { name: "Actions for Local Course" })));
+    fireEvent.click(view.getByRole("menuitem", { name: /Remove from library/ }));
+    let dialog = view.getByRole("alertdialog", { name: "Remove “Local Course”?" });
+    expect(dialog.textContent).toContain("The folder you imported it from is not touched.");
+    expect(dialog.textContent).toContain("Your notes, highlights, sketches, and progress stay.");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(libraryApi.removeCourse).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByRole("button", { name: "Actions for Torrent Course" }));
+    fireEvent.click(view.getByRole("menuitem", { name: /Remove from library/ }));
+    dialog = view.getByRole("alertdialog", { name: "Remove “Torrent Course”?" });
+    expect(dialog.textContent).toContain("its download stops, and the 50 MB it may have downloaded is deleted");
+    expect(await accessibilityViolations(dialog)).toEqual([]);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove course" }));
+    await waitFor(() => expect(libraryApi.removeCourse).toHaveBeenCalledWith("torrent"));
+    await waitFor(() => expect(view.container.textContent).not.toContain("Torrent Course"));
+    expect(view.container.textContent).toContain("Local Course");
+  });
+
+  it("removes the open course from its menu and returns to the library", async () => {
+    useLibraryUi.getState().selectCourse("course_one");
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "course_one", courseVersion: "1.0.0", title: "Course", description: null,
+      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null }, modules: [],
+    });
+    vi.mocked(libraryApi.removeCourse).mockResolvedValue(true);
+    const view = renderApp();
+    fireEvent.click(await waitFor(() => view.getByRole("button", { name: "Course actions" })));
+    fireEvent.click(view.getByRole("menuitem", { name: /Remove from library/ }));
+    fireEvent.click(view.getByRole("button", { name: "Remove course" }));
+    await waitFor(() => expect(libraryApi.removeCourse).toHaveBeenCalledWith("course_one"));
+    await waitFor(() => expect(useLibraryUi.getState().selectedCourseId).toBeNull());
+  });
+
+  it("keeps a removed course's notes readable in the notebook", async () => {
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.removedCourses).mockResolvedValue([{
+      courseVersion: "1.0.0", publisherName: "Zeron Tests", language: "en", totalResourceBytes: 1, importedAtUnixSeconds: 1, completedLessons: 0, totalLessons: 0,
+      courseId: "gone", title: "Gone Course", source: "local", torrentInfoHash: null, sharing: false,
+    }]);
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: "gone", courseVersion: "1.0.0", title: "Gone Course", description: null, publisherName: "Zeron Tests", source: "local", torrentInfoHash: null,
+      publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null },
+      modules: [{ id: "m", title: "Module", lessons: [{ id: "gone_lesson", title: "Old lesson", resources: [{ id: "v", kind: "video", mediaType: "video/mp4", byteLength: 1, durationSeconds: 60 }] }] }],
+    });
+    const body = JSON.stringify({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "still mine" }] }] });
+    vi.mocked(libraryApi.notes).mockResolvedValue([{ noteId: "n", lessonId: "gone_lesson", anchor: { kind: "videoTime", resourceId: "v", seconds: 12 }, body, text: "still mine", revision: 0, createdAtUnixSeconds: 1, updatedAtUnixSeconds: 1 }]);
+
+    const view = renderApp();
+    fireEvent.click(await waitFor(() => view.getByRole("button", { name: "Notebook" })));
+    await waitFor(() => expect(view.container.textContent).toContain("still mine"));
+    expect(view.container.textContent).toContain("Removed from library");
+    expect(view.queryByRole("button", { name: /Go to 0:12/ })).toBeNull();
+    expect(view.queryByRole("button", { name: "Open course" })).toBeNull();
   });
 });

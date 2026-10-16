@@ -38,7 +38,7 @@ A torrent info hash proves that bytes were not changed, not who published them. 
 6. **Learner trust: trust on first use, by course.**
    - The first signed version of a course the Library verifies pins that course's root key (`publisherId`).
    - A later version must verify and chain to the pinned root. Otherwise the import is refused, so an impostor cannot replace a course. This applies to a different root, a broken chain, an unsigned package where a signature was pinned, or a revoked key.
-   - A learner who really wants the other publisher's course removes the course first. Pins are removed with it.
+   - A learner who really wants the other publisher's course removes the course first. Pins are removed with it (ADR 0015).
    - Unsigned courses that were never signed import as before and are labelled "Unsigned".
 7. **Revocation.**
    - A *revocation statement* `{ revokedKey, revokedAt, reason }` is signed by the revoked key itself or by a key later in the same chain.

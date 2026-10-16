@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookMarked, ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, Maximize, Minimize, NotebookPen, PanelLeft, PanelRight } from "lucide-react";
+import { BookMarked, ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, Maximize, Minimize, MoreHorizontal, NotebookPen, PanelLeft, PanelRight, Trash2 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMediaQuery } from "../../lib/useMediaQuery";
@@ -15,6 +15,7 @@ import { TranscriptPanel } from "../transcripts/TranscriptPanel";
 import { CourseContents, type Showing } from "./CourseContents";
 import { CourseNotebook } from "./CourseNotebook";
 import { CourseOverview } from "./CourseOverview";
+import { RemoveCourseDialog } from "./RemoveCourseDialog";
 import { isReadable, nextToLearn, placeLessons, primaryResource, resourceLabel, type Lesson, type PlacedLesson } from "./lessons";
 import { SidePanel } from "./SidePanel";
 import type { WorkspaceTarget } from "./target";
@@ -61,6 +62,8 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
   const [noteRequest, setNoteRequest] = useState<NoteRequest | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const player = useRef<PlayerHandle>(null);
   // A note's timestamp to start at when it opens a video that is not playing.
   const pendingSeek = useRef<number | null>(null);
@@ -382,6 +385,26 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
           <span className="sr-only sm:hidden">Notebook</span>
         </button>
         <div className="relative">
+          <button type="button" className={headerButton} aria-label="Course actions" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
+            <MoreHorizontal size={17} />
+          </button>
+          {menuOpen ? (
+            <div role="menu" aria-label="Course actions" className="absolute right-0 top-10 z-40 w-56 rounded-xl border border-line bg-surface p-1 shadow-panel">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setRemoving(true);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-red-300 hover:bg-red-400/10"
+              >
+                <Trash2 size={15} /> Remove from library…
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <div className="relative">
           <button type="button" className={headerButton} aria-label="Keyboard shortcuts" aria-expanded={shortcutsOpen} title="Keyboard shortcuts (?)" onClick={() => setShortcutsOpen(!shortcutsOpen)}>
             <Keyboard size={17} />
           </button>
@@ -521,7 +544,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
                 onPrevious={() => previous && openLesson(previous.lesson)}
               />
             ) : (
-              <CourseOverview course={course} placed={placed} progress={progress} next={upNext} onStart={(item) => openLesson(item.lesson)} />
+              <CourseOverview course={course} placed={placed} progress={progress} next={upNext} onStart={(item) => openLesson(item.lesson)} onOpenLesson={openLesson} />
             )}
           </div>
           {openMedia.isError ? (
@@ -534,7 +557,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
         </main>
 
         {/* Notes, sketch, transcript */}
-        {sideOpen ? (
+        {sideOpen && active ? (
           sideDocked ? (
             <aside aria-label="Notes and tools" style={{ width: layout.sideWidth }} className="relative shrink-0 border-l border-line">{side}</aside>
           ) : (
@@ -545,6 +568,18 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
           )
         ) : null}
       </div>
+      {removing ? (
+        <RemoveCourseDialog
+          course={{
+            courseId,
+            title: course.title,
+            source: torrent ? "torrent" : "local",
+            totalResourceBytes: placed.reduce((sum, item) => sum + item.lesson.resources.reduce((bytes, resource) => bytes + resource.byteLength, 0), 0),
+          }}
+          onClose={() => setRemoving(false)}
+          onRemoved={onLeave}
+        />
+      ) : null}
     </div>
   );
 }

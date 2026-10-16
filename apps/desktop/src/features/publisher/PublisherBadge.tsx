@@ -6,9 +6,15 @@ import { Button } from "../../components/ui/button";
 import { asCommandError, libraryApi, type CoursePublisher } from "../../services/library";
 
 /** Who published a course, and a way to stop requiring that publisher. */
-export function PublisherBadge({ courseId, publisher }: { courseId: string; publisher: CoursePublisher }) {
+export function PublisherBadge({ courseId, publisher, compact = false }: {
+  courseId: string;
+  publisher: CoursePublisher;
+  /** A chip that opens the explanation, for the course overview's detail row. */
+  compact?: boolean;
+}) {
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
+  const [open, setOpen] = useState(false);
   const forget = useMutation({
     mutationFn: () => libraryApi.forgetCoursePublisher(courseId),
     onSuccess: () => {
@@ -17,6 +23,47 @@ export function PublisherBadge({ courseId, publisher }: { courseId: string; publ
     },
   });
   const signed = publisher.status === "verified" || publisher.status === "signed";
+  const label = publisher.status === "verified" ? "Verified publisher" : publisher.status === "signed" ? "Signed, publisher not pinned" : "Unsigned course";
+  if (compact) {
+    return (
+      <div className="relative">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+          className={`inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-medium hover:bg-white/5 ${signed ? "text-emerald-200" : "text-muted"}`}
+        >
+          {signed ? <ShieldCheck size={13} /> : <ShieldQuestion size={13} />}
+          {label}
+          {publisher.fingerprint ? <code className="font-mono text-[10px] tracking-wider text-subtle">{publisher.fingerprint}</code> : null}
+        </button>
+        {open ? (
+          <div className="absolute left-0 top-9 z-20 w-80 rounded-xl border border-line bg-surface p-3 text-xs shadow-panel">
+            <p className="text-muted">
+              {publisher.status === "verified"
+                ? "Updates must be signed by this publisher. Compare the fingerprint with the one your publisher gives you."
+                : publisher.status === "unsigned"
+                  ? "Zeron cannot tell who published this course. Anyone could publish an update of it."
+                  : "This version is signed, but Zeron has not pinned its publisher yet."}
+            </p>
+            {publisher.status === "verified" && !confirming ? (
+              <button type="button" onClick={() => setConfirming(true)} className="mt-2 text-muted underline-offset-2 hover:text-fg hover:underline">Forget publisher…</button>
+            ) : null}
+            {confirming ? (
+              <div role="alertdialog" aria-label="Forget this publisher?" className="mt-2 space-y-2 rounded-lg border border-amber-300/30 bg-amber-300/10 p-2.5 text-amber-100">
+                <p>The next signed version you import will be trusted, whoever signed it. Do this only if your publisher told you they have a new identity. Your notes and progress stay.</p>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => forget.mutate()} disabled={forget.isPending}>{forget.isPending ? "Forgetting…" : "Forget publisher"}</Button>
+                  <Button size="sm" variant="ghost" autoFocus onClick={() => setConfirming(false)}>Cancel</Button>
+                </div>
+                {forget.isError ? <p role="alert" className="text-red-200">{asCommandError(forget.error)?.message ?? "The publisher could not be forgotten."}</p> : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
   return (
     <div className="mt-4 max-w-2xl text-sm">
       <p className={`flex flex-wrap items-center gap-2 ${signed ? "text-emerald-200" : "text-slate-400"}`}>

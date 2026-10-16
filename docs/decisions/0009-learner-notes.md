@@ -16,7 +16,7 @@ Phase 6 adds notes that point at places in a lesson. The roadmap requires that a
    Parsing is strict, so unknown kinds and fields are rejected. The application also checks that the lesson exists and that the anchor's resource belongs to it with the matching kind: a video for timestamps, a PDF for pages.
 2. **Bodies are validated Tiptap JSON.** A body is at most 256 KiB, must have a top-level `doc`, can nest at most 64 levels, and may carry text only in string `text` fields. Plain text is extracted on save and stored beside the document for previews and search. The UI renders saved notes with a read-only Tiptap editor on the same schema, so no stored HTML is ever injected.
 3. **Compare-and-swap revisions.** Notes start at revision 0. Updates and deletes must name the revision they saw. A mismatch is reported as a conflict with the current revision, and nothing is written. The UI keeps the learner's draft on screen and offers to load the latest version, rather than retrying blindly.
-4. **Storage.** Notes live in the learner database (schema v9, table `notes`), keyed by course with cascade on course removal. They are never stored in course packages, and they are kept across re-imports of the same course.
+4. **Storage.** Notes live in the learner database (schema v9, table `notes`), keyed by course. Removing a course keeps them (ADR 0015). They are never stored in course packages, and they are kept across re-imports of the same course.
 
 ## Consequences
 
