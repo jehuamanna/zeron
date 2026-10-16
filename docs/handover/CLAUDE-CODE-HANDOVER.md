@@ -28,7 +28,7 @@ Continue through the dependency-ordered roadmap ([docs/roadmap.md](../roadmap.md
 - a destructive action outside the approved scope;
 - an architectural blocker you can show evidence for.
 
-Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0013), and [phase-0 spike results](../research/phase-0-spike-results.md).
+Read first: [AGENTS.md](../../AGENTS.md) (authoritative rules), [CLAUDE.md](../../CLAUDE.md), [system-overview](../architecture/system-overview.md), [distribution](../architecture/distribution.md), [admin-publisher](../architecture/admin-publisher.md), the ADRs in `docs/decisions/` (0001–0014), and [phase-0 spike results](../research/phase-0-spike-results.md).
 
 ## Start-of-session checklist
 
@@ -323,11 +323,7 @@ Partly pulled forward by the active slice. Remaining:
 
 ### Phase 8 — optional headless seeding
 
-- A Linux-first seed server reusing `torrent-port` and `torrent-librqbit`.
-- Session restore and a health endpoint.
-- Bandwidth policies.
-- systemd and Docker deployment.
-- Later: authenticated, staged remote transfer of releases and remote management. Remote management is a security-review trigger.
+Done (`docs/releases/phase-8-seed-server.md`, ADR 0014, operator guide `docs/operations/seed-server.md`): `zeron-seed` follows magnets or serves copied releases, restores after restart, has a read-only health endpoint, bandwidth limits, and systemd and Docker deployment. Still open: confirm the Docker image build (this session had no Docker access), and the deferred, security-reviewed authenticated release upload and remote management.
 
 ### Phase 9 — optional catalog and publisher identity
 
@@ -355,6 +351,7 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 - `learning-domain`: pure learner rules (progress now, annotations next).
 - `learning-application` / `learning-storage`: learner import, library, torrent imports, sharing, and routing.
 - `media-gateway`: authenticated loopback HTTP(S) delivery, with no dependency on Tauri or torrents.
+- `tools/seed-server`: the headless `zeron-seed` hub (ADR 0014).
 - `port-mapping`: PCP, NAT-PMP, and `UPnP` IGD mapping for TCP and UDP, with renewal, removal, and status (ADR 0013).
 - `data-import`: one-time, crash-safe import of the former Learner and Publisher data into `app.zeron` (ADR 0011).
 - `apps/desktop/src-tauri`: composition and path-free DTO translation only; Publish commands live in its `publish` module. Command bodies are plain functions tested against in-memory storage. Errors carry `code`, plus `field` or `currentRevision` where relevant.

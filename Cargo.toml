@@ -16,6 +16,7 @@ members = [
     "crates/torrent-port",
     "tools/course-cli",
     "tools/publisher-cli",
+    "tools/seed-server",
 ]
 exclude = ["spikes"]
 resolver = "3"

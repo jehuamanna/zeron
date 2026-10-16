@@ -1,0 +1,53 @@
+# Zeron seed server. Install the binary as /usr/local/bin/zeron-seed, copy
+# this file to /etc/systemd/system/, then:
+#   systemctl daemon-reload && systemctl enable --now zeron-seed
+# Manage the seed list with, for example:
+#   sudo -u zeron-seed zeron-seed --data /var/lib/zeron-seed add 'magnet:?xt=urn:btih:…'
+# or, with DynamicUser, run management commands as root; files stay owned
+# by the service's user because the server reads them only.
+
+[Unit]
+Description=Zeron seed server
+Documentation=https://github.com/jehuamanna/zeron/blob/main/docs/operations/seed-server.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/zeron-seed --data /var/lib/zeron-seed serve --port 51413 --health 127.0.0.1:8571
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+# Runs as a throwaway user that owns only /var/lib/zeron-seed.
+DynamicUser=yes
+StateDirectory=zeron-seed
+StateDirectoryMode=0750
+# Copied releases ("add-release") may live elsewhere; grant read access to
+# their directory here, for example: ReadOnlyPaths=/srv/zeron-releases
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+# Netlink lets --map-ports find the default gateway.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
