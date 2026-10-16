@@ -12,6 +12,10 @@ const MAX_SECONDS: f64 = 48.0 * 3600.0;
 const MAX_PAGE: u32 = 100_000;
 /// Deepest nesting accepted in a note document.
 const MAX_DEPTH: usize = 64;
+/// Longest quoted passage a text highlight keeps.
+pub const MAX_QUOTE_CHARS: usize = 4_000;
+/// Most rectangles one text highlight may cover.
+pub const MAX_HIGHLIGHT_RECTS: usize = 256;
 
 /// A rectangle on a PDF page, in fractions of the page (0 to 1).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -24,6 +28,65 @@ pub struct Region {
     pub width: f64,
     /// Height.
     pub height: f64,
+}
+
+/// Colours a learner can highlight PDF text with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HighlightColor {
+    /// Yellow.
+    Yellow,
+    /// Green.
+    Green,
+    /// Blue.
+    Blue,
+    /// Pink.
+    Pink,
+    /// Orange.
+    Orange,
+    /// Purple.
+    Purple,
+}
+
+/// How a text highlight is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HighlightStyle {
+    /// A coloured background.
+    Highlight,
+    /// A coloured line under the text.
+    Underline,
+    /// A coloured line through the text.
+    Strike,
+}
+
+/// Selected text on a PDF page: what it says and where it lies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextHighlight {
+    /// Colour.
+    pub color: HighlightColor,
+    /// Drawing style.
+    pub style: HighlightStyle,
+    /// The selected text.
+    pub quote: String,
+    /// Line boxes of the selection, in page fractions.
+    pub rects: Vec<Region>,
+}
+
+impl Region {
+    /// Whether the rectangle lies inside the page and has a positive size.
+    #[must_use]
+    pub fn fits_page(&self) -> bool {
+        let inside = |value: f64| value.is_finite() && (0.0..=1.0).contains(&value);
+        [self.x, self.y, self.width, self.height]
+            .into_iter()
+            .all(inside)
+            && self.width > 0.0
+            && self.height > 0.0
+            && self.x + self.width <= 1.0 + f64::EPSILON
+            && self.y + self.height <= 1.0 + f64::EPSILON
+    }
 }
 
 /// Where in a lesson a note points.
@@ -49,6 +112,9 @@ pub enum Anchor {
         page: u32,
         /// Highlighted part of the page.
         region: Option<Region>,
+        /// Highlighted text on the page; absent in notes made before text highlights.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        highlight: Option<Box<TextHighlight>>,
     },
 }
 
@@ -79,21 +145,32 @@ impl Anchor {
                     Err(NoteError::InvalidAnchor("the timestamp is out of range"))
                 }
             }
-            Self::PdfPage { page, region, .. } => {
+            Self::PdfPage {
+                page,
+                region,
+                highlight,
+                ..
+            } => {
                 if !(1..=MAX_PAGE).contains(page) {
                     return Err(NoteError::InvalidAnchor("the page number is out of range"));
                 }
-                if let Some(region) = region {
-                    let inside = |value: f64| value.is_finite() && (0.0..=1.0).contains(&value);
-                    let fits = [region.x, region.y, region.width, region.height]
-                        .into_iter()
-                        .all(inside)
-                        && region.width > 0.0
-                        && region.height > 0.0
-                        && region.x + region.width <= 1.0 + f64::EPSILON
-                        && region.y + region.height <= 1.0 + f64::EPSILON;
-                    if !fits {
-                        return Err(NoteError::InvalidAnchor("the region is outside the page"));
+                if region.is_some_and(|region| !region.fits_page()) {
+                    return Err(NoteError::InvalidAnchor("the region is outside the page"));
+                }
+                if let Some(highlight) = highlight {
+                    let quote = highlight.quote.trim();
+                    if quote.is_empty() || quote.chars().count() > MAX_QUOTE_CHARS {
+                        return Err(NoteError::InvalidAnchor(
+                            "the highlighted text is empty or too long",
+                        ));
+                    }
+                    if highlight.rects.is_empty()
+                        || highlight.rects.len() > MAX_HIGHLIGHT_RECTS
+                        || !highlight.rects.iter().all(Region::fits_page)
+                    {
+                        return Err(NoteError::InvalidAnchor(
+                            "the highlighted text is not on the page",
+                        ));
                     }
                 }
                 Ok(())
@@ -228,6 +305,7 @@ mod tests {
                 resource_id: "p".into(),
                 page: 0,
                 region: None,
+                highlight: None,
             },
             Anchor::PdfPage {
                 resource_id: "p".into(),
@@ -238,6 +316,7 @@ mod tests {
                     width: 0.5,
                     height: 0.1,
                 }),
+                highlight: None,
             },
             Anchor::PdfPage {
                 resource_id: "p".into(),
@@ -248,12 +327,72 @@ mod tests {
                     width: 0.0,
                     height: 0.1,
                 }),
+                highlight: None,
             },
         ];
         for anchor in bad {
             assert!(
                 matches!(anchor.validate(), Err(NoteError::InvalidAnchor(_))),
                 "{anchor:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn text_highlights_round_trip_and_older_page_notes_still_read() {
+        let older: Anchor =
+            serde_json::from_str(r#"{"kind":"pdfPage","resourceId":"p1","page":3,"region":null}"#)
+                .unwrap();
+        assert_eq!(
+            older,
+            Anchor::PdfPage {
+                resource_id: "p1".into(),
+                page: 3,
+                region: None,
+                highlight: None
+            }
+        );
+        // Notes without a highlight are stored exactly as before.
+        assert!(!older.to_json().contains("highlight"));
+
+        let line = Region {
+            x: 0.1,
+            y: 0.2,
+            width: 0.6,
+            height: 0.02,
+        };
+        let highlighted = |quote: &str, rects: Vec<Region>| Anchor::PdfPage {
+            resource_id: "p1".into(),
+            page: 43,
+            region: None,
+            highlight: Some(Box::new(TextHighlight {
+                color: HighlightColor::Pink,
+                style: HighlightStyle::Underline,
+                quote: quote.into(),
+                rects,
+            })),
+        };
+        let good = highlighted("improve consistency across sessions", vec![line, line]);
+        good.validate().unwrap();
+        let json = good.to_json();
+        assert!(json.contains(r#""color":"pink""#) && json.contains(r#""style":"underline""#));
+        assert_eq!(Anchor::from_json(&json).unwrap(), good);
+        assert!(
+            Anchor::from_json(&json.replace(r#""style""#, r#""weight":1,"style""#)).is_err(),
+            "unknown highlight fields are refused"
+        );
+
+        let outside = Region { x: 0.9, ..line };
+        for bad in [
+            highlighted("  ", vec![line]),
+            highlighted(&"x".repeat(MAX_QUOTE_CHARS + 1), vec![line]),
+            highlighted("text", vec![]),
+            highlighted("text", vec![outside]),
+            highlighted("text", vec![line; MAX_HIGHLIGHT_RECTS + 1]),
+        ] {
+            assert!(
+                matches!(bad.validate(), Err(NoteError::InvalidAnchor(_))),
+                "{bad:?}"
             );
         }
     }

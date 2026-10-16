@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { asCommandError, libraryApi, type Note, type NoteAnchor } from "../../services/library";
+import { colorCss } from "../documents/pdfGeometry";
 import { EMPTY_DOC, NoteEditor } from "./NoteEditor";
 
 export function formatTimestamp(seconds: number) {
@@ -21,14 +22,17 @@ export function anchorLabel(anchor: NoteAnchor) {
     case "videoTime":
       return formatTimestamp(anchor.seconds);
     case "pdfPage":
-      return anchor.region ? `Page ${anchor.page}, highlight` : `Page ${anchor.page}`;
+      return anchor.highlight ? `p. ${anchor.page}` : anchor.region ? `Page ${anchor.page}, highlight` : `Page ${anchor.page}`;
   }
 }
 
 type Draft = { noteId: string | null; revision: number; anchor: NoteAnchor; body: string; text: string };
 
-/** A request from outside the panel (the player, a shortcut) to start a note. */
-export type NoteRequest = { id: number; anchor: NoteAnchor };
+/**
+ * A request from outside the panel (the player, the PDF viewer, a shortcut):
+ * start a note at an anchor, optionally with a starting body, or edit a note.
+ */
+export type NoteRequest = { id: number; anchor: NoteAnchor; body?: string } | { id: number; edit: string };
 
 /** Notes of one lesson. The player handle supplies timestamps and seeking. */
 export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, currentTime, onSeek, onOpenPage, documentAnchor = null, onNoteCreated, request = null, onRequestHandled }: {
@@ -80,9 +84,13 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
     onSuccess: () => void refresh(),
   });
 
-  const start = (anchor: NoteAnchor) => {
+  const start = (anchor: NoteAnchor, body = EMPTY_DOC, text = "") => {
     setConflict(false);
-    setDraft({ noteId: null, revision: 0, anchor, body: EMPTY_DOC, text: "" });
+    setDraft({ noteId: null, revision: 0, anchor, body, text });
+  };
+  const edit = (note: Note) => {
+    setConflict(false);
+    setDraft({ noteId: note.noteId, revision: note.revision, anchor: note.anchor, body: note.body, text: note.text });
   };
 
   // Follow the player so "Add note at" shows the current moment.
@@ -95,11 +103,18 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
 
   useEffect(() => {
     if (!request) return;
-    if (draft === null) start(request.anchor);
+    if ("edit" in request) {
+      // Wait for the list, then open the note if it is in this lesson.
+      if (!notes.data) return;
+      const note = notes.data.find((candidate) => candidate.noteId === request.edit);
+      if (note && draft === null) edit(note);
+    } else if (draft === null) {
+      start(request.anchor, request.body, request.body ? "quote" : "");
+    }
     onRequestHandled?.();
-    // A new request id starts a note; an open draft is never replaced.
+    // A new request id starts or opens a note; an open draft is never replaced.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request?.id]);
+  }, [request?.id, notes.data]);
   const error = save.isError ? (asCommandError(save.error)?.message ?? "The note could not be saved.") : remove.isError ? (asCommandError(remove.error)?.message ?? "The note could not be deleted.") : null;
 
   const canSave = !save.isPending && !conflict && draft !== null && draft.text.trim() !== "";
@@ -168,7 +183,11 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
         ) : notes.data?.length ? (
           <ul aria-label="Notes" className="space-y-2.5">
             {notes.data.map((note) => (
-              <li key={note.noteId} className="group rounded-xl border border-line bg-surface p-3 shadow-sm">
+              <li
+                key={note.noteId}
+                className="group rounded-xl border border-line bg-surface p-3 shadow-sm"
+                style={note.anchor.kind === "pdfPage" && note.anchor.highlight ? { borderLeft: `4px solid ${colorCss(note.anchor.highlight.color)}` } : undefined}
+              >
                 <div className="mb-1.5 flex items-center justify-between gap-2">
                   {note.anchor.kind === "lesson" ? (
                     <span className="rounded-md bg-white/5 px-2 py-0.5 text-[11px] font-medium text-muted">Lesson</span>
@@ -188,7 +207,7 @@ export function NotesPanel({ courseId, lessonId, lessonTitle, videoResourceId, c
                     </button>
                   )}
                   <div className="flex gap-0.5 opacity-60 transition group-hover:opacity-100 group-focus-within:opacity-100">
-                    <button type="button" aria-label="Edit note" onClick={() => { setConflict(false); setDraft({ noteId: note.noteId, revision: note.revision, anchor: note.anchor, body: note.body, text: note.text }); }} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-fg disabled:opacity-40"><Pencil size={13} /></button>
+                    <button type="button" aria-label="Edit note" onClick={() => edit(note)} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-fg disabled:opacity-40"><Pencil size={13} /></button>
                     <button type="button" aria-label="Delete note" disabled={remove.isPending} onClick={() => remove.mutate(note)} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-red-300 disabled:opacity-40"><Trash2 size={13} /></button>
                   </div>
                 </div>

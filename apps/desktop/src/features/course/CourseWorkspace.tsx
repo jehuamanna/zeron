@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookMarked, ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, NotebookPen, PanelLeft, PanelRight } from "lucide-react";
+import { BookMarked, ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, Maximize, Minimize, NotebookPen, PanelLeft, PanelRight } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMediaQuery } from "../../lib/useMediaQuery";
@@ -33,8 +33,12 @@ type Stage =
 const SHORTCUTS: Array<[string, string]> = [
   ["K", "Play or pause"],
   ["J / L", "Back or forward 10 seconds"],
+  ["← / →", "Back or forward 5 seconds, or PDF page"],
+  ["↑ / ↓", "Volume"],
+  ["M", "Mute"],
+  ["C", "Captions"],
+  ["F", "Full-screen video"],
   ["N", "New note at this moment or page"],
-  ["← / →", "Previous or next PDF page"],
   ["[", "Show or hide contents"],
   ["]", "Show or hide the side panel"],
 ];
@@ -56,6 +60,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
   const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
   const [noteRequest, setNoteRequest] = useState<NoteRequest | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const player = useRef<PlayerHandle>(null);
   // A note's timestamp to start at when it opens a video that is not playing.
   const pendingSeek = useRef<number | null>(null);
@@ -183,24 +188,31 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, course]);
 
-  const lessonNotes = useQuery({
-    queryKey: ["notes", courseId, activeLessonId],
-    queryFn: () => libraryApi.notes(courseId, activeLessonId),
-    enabled: stage.kind === "pdf" && activeLessonId !== null,
-  });
-  const pageHighlights = stage.kind === "pdf"
-    ? (lessonNotes.data ?? []).flatMap((note) =>
-        note.anchor.kind === "pdfPage" && note.anchor.resourceId === stage.resourceId && note.anchor.page === stage.page && note.anchor.region ? [note.anchor.region] : [],
-      )
-    : [];
   const documentAnchor: Extract<NoteAnchor, { kind: "pdfPage" }> | null =
     stage.kind === "pdf" ? { kind: "pdfPage", resourceId: stage.resourceId, page: stage.page, region: stage.region } : null;
   const playingInActive = stage.kind === "video" && active?.lesson.resources.some((resource) => resource.id === stage.resourceId) ? stage.resourceId : null;
 
-  const requestNote = (anchor: NoteAnchor) => {
+  const requestNote = (anchor: NoteAnchor, body?: string) => {
     showSide(true, "notes");
-    setNoteRequest({ id: Date.now(), anchor });
+    setNoteRequest(body === undefined ? { id: Date.now(), anchor } : { id: Date.now(), anchor, body });
   };
+  const editNote = (noteId: string) => {
+    showSide(true, "notes");
+    setNoteRequest({ id: Date.now(), edit: noteId });
+  };
+
+  // Notes of the playing lesson mark the timeline; its transcript gives captions.
+  const videoNotes = useQuery({
+    queryKey: ["notes", courseId, activeLessonId],
+    queryFn: () => libraryApi.notes(courseId, activeLessonId),
+    enabled: stage.kind === "video" && activeLessonId !== null,
+  });
+  const transcript = useQuery({
+    queryKey: ["transcript", courseId, stage.kind === "video" ? stage.resourceId : null],
+    queryFn: () => libraryApi.transcript(courseId, stage.kind === "video" ? stage.resourceId : ""),
+    enabled: stage.kind === "video",
+    staleTime: Infinity,
+  });
 
   const sideTabs: SideTab[] = stage.kind === "video" ? ["notes", "sketch", "transcript"] : ["notes", "sketch"];
   const sideTab = sideTabs.includes(layout.sideTab) ? layout.sideTab : "notes";
@@ -218,6 +230,13 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
     else if (stage.kind === "video" && key === "k") player.current?.togglePlay();
     else if (stage.kind === "video" && key === "j") player.current?.skip(-10);
     else if (stage.kind === "video" && key === "l") player.current?.skip(10);
+    else if (stage.kind === "video" && key === "arrowleft") player.current?.skip(-5);
+    else if (stage.kind === "video" && key === "arrowright") player.current?.skip(5);
+    else if (stage.kind === "video" && key === "arrowup") player.current?.nudgeVolume(0.1);
+    else if (stage.kind === "video" && key === "arrowdown") player.current?.nudgeVolume(-0.1);
+    else if (stage.kind === "video" && key === "m") player.current?.toggleMute();
+    else if (stage.kind === "video" && key === "c") player.current?.toggleCaptions();
+    else if (stage.kind === "video" && key === "f") player.current?.toggleFullscreen();
     else if (stage.kind === "video" && key === "n") requestNote({ kind: "videoTime", resourceId: stage.resourceId, seconds: Math.floor(currentPlayerTime()) });
     else if (stage.kind === "pdf" && key === "n" && documentAnchor) requestNote(documentAnchor);
     else if (stage.kind === "pdf" && key === "arrowright") setStage({ ...stage, page: stage.page + 1, region: null });
@@ -226,6 +245,12 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
     else return;
     event.preventDefault();
   };
+  useEffect(() => {
+    const follow = () => setFullscreen(document.fullscreenElement === document.documentElement);
+    document.addEventListener("fullscreenchange", follow);
+    return () => document.removeEventListener("fullscreenchange", follow);
+  }, []);
+
   useEffect(() => {
     const listener = (event: KeyboardEvent) => keys.current(event);
     window.addEventListener("keydown", listener);
@@ -374,6 +399,15 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
             </div>
           ) : null}
         </div>
+        <button
+          type="button"
+          className={headerButton}
+          aria-label={fullscreen ? "Exit full screen" : "Full screen"}
+          title={fullscreen ? "Exit full screen" : "Full screen: the whole course fills the screen"}
+          onClick={() => (fullscreen ? void document.exitFullscreen?.().catch(() => undefined) : void document.documentElement.requestFullscreen?.().catch(() => undefined))}
+        >
+          {fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+        </button>
         <button type="button" className={headerButton} aria-label={sideOpen ? "Hide side panel" : "Show side panel"} aria-pressed={sideOpen} title="Notes and sketch (])" onClick={() => showSide(!sideOpen)}>
           <PanelRight size={17} />
         </button>
@@ -449,13 +483,15 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
                 resourceId={stage.resourceId}
                 title={`${active?.lesson.title ?? "Lesson"} · PDF`}
                 page={stage.page}
-                onPage={(page) => setStage({ ...stage, page, region: null })}
-                highlights={pageHighlights}
+                lessonId={active?.lesson.id ?? ""}
+                onPage={(page) => setStage((current) => (current.kind === "pdf" && current.page !== page ? { ...current, page, region: null } : current))}
                 pendingRegion={stage.region}
-                onRegion={(region) => {
-                  setStage({ ...stage, region });
+                onRegion={(page, region) => {
+                  setStage({ ...stage, page, region });
                   if (region) showSide(true, "notes");
                 }}
+                onComment={requestNote}
+                onEditNote={editNote}
               />
             ) : stage.kind === "text" ? (
               <div className="relative h-full overflow-y-auto rounded-xl border border-line bg-surface">
@@ -475,6 +511,12 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
                 transfersPaused={(offline.downloads?.paused ?? false) || lowDisk}
                 onPosition={savePosition(stage.resourceId)}
                 onAddNote={(seconds) => requestNote({ kind: "videoTime", resourceId: stage.resourceId, seconds })}
+                markers={(videoNotes.data ?? []).flatMap((note) =>
+                  note.anchor.kind === "videoTime" && note.anchor.resourceId === stage.resourceId ? [{ seconds: note.anchor.seconds, label: note.text }] : [],
+                )}
+                cues={transcript.data?.cues ?? null}
+                upNext={next ? { title: next.lesson.title } : null}
+                onNext={() => next && openLesson(next.lesson)}
               />
             ) : (
               <CourseOverview course={course} placed={placed} progress={progress} next={upNext} onStart={(item) => openLesson(item.lesson)} />

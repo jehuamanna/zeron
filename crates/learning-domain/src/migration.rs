@@ -148,6 +148,7 @@ pub fn remap_anchor(anchor: &Anchor, map: &BTreeMap<String, String>) -> (Anchor,
             resource_id,
             page,
             region,
+            highlight,
         } => map
             .get(resource_id)
             .map_or((Anchor::Lesson {}, true), |mapped| {
@@ -156,6 +157,7 @@ pub fn remap_anchor(anchor: &Anchor, map: &BTreeMap<String, String>) -> (Anchor,
                         resource_id: mapped.clone(),
                         page: *page,
                         region: *region,
+                        highlight: highlight.clone(),
                     },
                     false,
                 )
@@ -256,6 +258,7 @@ mod tests {
             resource_id: "slides".to_owned(),
             page: 3,
             region: None,
+            highlight: None,
         };
         assert_eq!(
             remap_anchor(&page, &map),
@@ -263,7 +266,37 @@ mod tests {
                 Anchor::PdfPage {
                     resource_id: "deck".to_owned(),
                     page: 3,
-                    region: None
+                    region: None,
+                    highlight: None
+                },
+                false
+            )
+        );
+        let highlight = Box::new(crate::TextHighlight {
+            color: crate::HighlightColor::Yellow,
+            style: crate::HighlightStyle::Highlight,
+            quote: "a quorum".to_owned(),
+            rects: vec![crate::Region {
+                x: 0.1,
+                y: 0.1,
+                width: 0.2,
+                height: 0.02,
+            }],
+        });
+        let marked = Anchor::PdfPage {
+            resource_id: "slides".to_owned(),
+            page: 3,
+            region: None,
+            highlight: Some(highlight.clone()),
+        };
+        assert_eq!(
+            remap_anchor(&marked, &map),
+            (
+                Anchor::PdfPage {
+                    resource_id: "deck".to_owned(),
+                    page: 3,
+                    region: None,
+                    highlight: Some(highlight)
                 },
                 false
             )

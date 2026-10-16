@@ -101,6 +101,32 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
   - Leaving the course returns to the notebook (`useLibraryUi.notebookOpen`).
 - **Loading:** no new IPC. Each course's outline, notes (`list_notes` with no lesson), and drawn lessons load in parallel with `useQueries`; the outlines share the workspace's cache entries.
 
+### 10. PDF reader, rich notes, tooltips, and the video player (follow-up)
+
+- **PDF reader** (`PdfDocument`, `PdfSidebar`, `DocumentViewer`):
+  - **Layout:** one continuous column of pages; only pages near the view render. Each rendered page has a pdf.js canvas and a selectable text layer.
+  - **Toolbar:** sidebar, page field, zoom (fit width, fit page, 50–300%), rotate, two pages side by side, paper/sepia/night page colours, a highlight colour palette, note on this page, box an area, find in document, and full screen.
+  - **Sidebar:** Pages (lazy thumbnails), Contents (the PDF outline), Highlights, and Details (metadata, size, version).
+- **Text highlights are notes:**
+  - Selecting text shows colour dots, underline, strike-through, "Highlight and comment", and copy.
+  - Clicking a saved highlight recolours, restyles, comments on, copies, or deletes it.
+  - The anchor gains an optional `highlight` (`color`, `style`, `quote`, `rects` in page fractions). It is validated in `learning-domain`: quote 1–4,000 characters, 1–256 boxes inside the page.
+  - It is stored inside the existing `anchor_json`, so no migration is needed; notes without it serialize exactly as before. The highlight is boxed so `Anchor` stays small.
+  - The note body also quotes the text, so a highlight that annotation moves re-attach to a whole lesson keeps its words.
+  - Rectangles are stored for the unrotated page and turned for display.
+- **Note editor:** the toolbar has undo/redo, H1–H3, bold, italic, underline, strike-through, highlight, inline code, link, bulleted, numbered, and checklist lists, quote, code block, and divider.
+  - This adds `@tiptap/extension-highlight` and `@tiptap/extension-list`, pinned to 3.32.0.
+  - Links accept only `http(s)` and `mailto`, and never navigate the app window.
+  - The Notes panel starts notes from the reader with a quoted body and opens existing notes for editing (`NoteRequest`).
+- **Tooltips:** one app-wide `Tooltips` layer explains every icon-only control (its `aria-label`) and every control with a `title`, on hover and keyboard focus. The native tooltip is held back so only one shows.
+- **Video player:** custom controls replace the built-in ones.
+  - **Seek bar:** played, buffered, and verified data, notes as markers, and a time preview under the pointer.
+  - **Controls:** play/pause, ±10 s, volume and mute, elapsed or remaining time, Note at m:ss, captions from the transcript, a speed menu, a settings menu, picture-in-picture where available, next lesson, and full screen.
+  - **Autoplay:** "Autoplay next lesson" counts down 5 s with Play now / Cancel.
+  - The controls hide while playing. Speed, volume, mute, captions, and autoplay are remembered (`zeron.player`).
+  - **Shortcuts:** ←/→, ↑/↓, M, C, and F.
+- **Full screen** for the whole workspace from the course bar.
+
 ## Acceptance evidence
 
 - **Vitest:** all 176 tests pass, 3 of them new.
@@ -115,6 +141,12 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
   - `CourseNotebook.test.tsx` checks lesson order, ordering inside a lesson, counts, jumping to a moment, the search and Sketches filters, and axe.
 
 - **Library notebook test** (`Library.test.tsx`): notes from two of three courses appear under their course headings with the right counts, the search narrows to one course, axe passes, and a timestamp opens the right course at that moment. Back to library returns to the notebook.
+
+- **Follow-up tests:**
+  - **Domain:** highlights round-trip, older page notes still read, and bad highlights are refused. Annotation moves carry highlights, and an application test saves and reads one.
+  - **Viewer and geometry:** `DocumentViewer.test.tsx` (selection, colours, styles, comment, recolour, delete, area, layout controls) and `pdfGeometry.test.ts` (line joining, clipping, caps, rotation).
+  - **Tooltips:** `Tooltips.test.tsx`.
+  - **Player:** play/pause, speed memory, mute, captions, markers, and the autoplay countdown and its cancel and off switch.
 
 ## Manual verification
 

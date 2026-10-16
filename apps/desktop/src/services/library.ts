@@ -58,10 +58,21 @@ export interface Region {
   height: number;
 }
 
+export type HighlightColor = "yellow" | "green" | "blue" | "pink" | "orange" | "purple";
+export type HighlightStyle = "highlight" | "underline" | "strike";
+
+/** Selected text on a PDF page: what it says and its line boxes, in page fractions. */
+export interface TextHighlight {
+  color: HighlightColor;
+  style: HighlightStyle;
+  quote: string;
+  rects: Region[];
+}
+
 export type NoteAnchor =
   | { kind: "lesson" }
   | { kind: "videoTime"; resourceId: string; seconds: number }
-  | { kind: "pdfPage"; resourceId: string; page: number; region: Region | null };
+  | { kind: "pdfPage"; resourceId: string; page: number; region: Region | null; highlight?: TextHighlight };
 
 export interface Note {
   noteId: string;

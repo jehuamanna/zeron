@@ -388,6 +388,7 @@ fn notes_are_anchored_only_to_real_targets() {
                 resource_id: "resource_video".to_owned(),
                 page: 1,
                 region: None,
+                highlight: None,
             },
         ),
         (

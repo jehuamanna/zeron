@@ -201,3 +201,58 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
+
+/* pdf.js text layer: transparent text over the page canvas, selectable. From pdfjs-dist/web/pdf_viewer.css. */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  letter-spacing: normal;
+  word-spacing: normal;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer .markedContent { display: contents; }
+.textLayer span[role="img"] { user-select: none; cursor: default; }
+.textLayer ::selection { background: rgb(37 99 235 / 0.3); color: transparent; }
+.textLayer br::selection { background: transparent; }
+.textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
+.textLayer.selecting .endOfContent { top: 0; }
+.textLayer .zr-hit { background: rgb(250 204 21 / 0.45); border-radius: 2px; }
+
+/* Note formatting added with the full toolbar. */
+.prose-note u { text-underline-offset: 2px; }
+.prose-note mark, .prose-note .note-mark { background: rgb(250 204 21 / 0.45); color: inherit; border-radius: 2px; padding: 0 1px; }
+.prose-note a { color: var(--zr-accent-text); text-decoration: underline; text-underline-offset: 2px; cursor: default; }
+.prose-note ul[data-type="taskList"] { list-style: none; padding-left: 0.25rem; }
+.prose-note ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.5rem; }
+.prose-note ul[data-type="taskList"] li > label { margin-top: 0.3rem; user-select: none; }
+.prose-note ul[data-type="taskList"] li > div { flex: 1; }
+.prose-note ul[data-type="taskList"] li[data-checked="true"] > div { color: var(--zr-subtle); text-decoration: line-through; }
+.prose-note ul[data-type="taskList"] input[type="checkbox"] { accent-color: var(--zr-accent); }

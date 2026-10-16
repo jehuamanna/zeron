@@ -28,8 +28,9 @@ pub use documents::{
 pub use downloads::{Availability, DownloadScope};
 pub use drawings::{Drawing, DrawingSave};
 pub use learning_domain::{
-    Anchor, CourseProgress, Cue, DrawingError, DrawingFile, LessonStatus, MAX_TRANSCRIPT_BYTES,
-    MatchReason, NoteError, Region, TranscriptError, parse_transcript,
+    Anchor, CourseProgress, Cue, DrawingError, DrawingFile, HighlightColor, HighlightStyle,
+    LessonStatus, MAX_TRANSCRIPT_BYTES, MatchReason, NoteError, Region, TextHighlight,
+    TranscriptError, parse_transcript,
 };
 pub use library::{
     CourseImportReceipt, CourseLibrary, LibraryError, LocalResource, TorrentResource,

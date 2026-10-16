@@ -182,6 +182,7 @@ fn annotate(library: &mut CourseLibrary) {
                 resource_id: "pdf_b".to_owned(),
                 page: 2,
                 region: None,
+                highlight: None,
             },
             &doc("slide two"),
         )
@@ -417,4 +418,50 @@ fn a_drawing_never_replaces_the_target_lessons_own() {
             .contains("\"old\"")
     );
     assert_eq!(library.annotation_moves(COURSE).unwrap().len(), 1);
+}
+
+#[test]
+fn text_highlights_on_pdf_pages_are_kept_whole_and_checked() {
+    use learning_application::{HighlightColor, HighlightStyle, Region, TextHighlight};
+
+    let temp = TempRoot::new("highlights");
+    let v1 = version_one(&temp.0);
+    let mut library =
+        CourseLibrary::open(&temp.0.join("library.sqlite3"), ImportLimits::default()).unwrap();
+    library
+        .import_local_folder(&v1, &CancellationFlag::default())
+        .unwrap();
+    let highlighted = |quote: &str| Anchor::PdfPage {
+        resource_id: "pdf_b".to_owned(),
+        page: 2,
+        region: None,
+        highlight: Some(Box::new(TextHighlight {
+            color: HighlightColor::Green,
+            style: HighlightStyle::Strike,
+            quote: quote.to_owned(),
+            rects: vec![Region {
+                x: 0.1,
+                y: 0.3,
+                width: 0.5,
+                height: 0.02,
+            }],
+        })),
+    };
+
+    library
+        .create_note(
+            COURSE,
+            "lesson_b",
+            &highlighted("write-back caches"),
+            &doc("write-back caches"),
+        )
+        .unwrap();
+    let notes = library.notes(COURSE, Some("lesson_b")).unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].anchor, highlighted("write-back caches"));
+
+    assert!(matches!(
+        library.create_note(COURSE, "lesson_b", &highlighted(" "), &doc("empty quote")),
+        Err(LibraryError::Note(_))
+    ));
 }
