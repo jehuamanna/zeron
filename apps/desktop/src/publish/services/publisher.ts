@@ -237,6 +237,30 @@ export interface ActivityEvent {
   detail: string;
 }
 
+export interface NetworkConfiguration {
+  profile: "loopback" | "local_network" | "internet";
+  peerPort: number | null;
+  portForwarding: boolean;
+  downloadLimitKib: number | null;
+  uploadLimitKib: number | null;
+}
+
+/** A validated configuration file awaiting review; `token` refers to it. */
+export interface ConfigurationPreview {
+  token: string;
+  trackers: string[];
+  trackerLists: string[];
+  network: NetworkConfiguration | null;
+}
+
+export interface AppliedConfiguration {
+  trackers: number;
+  trackerLists: number;
+  networkApplied: boolean;
+  /** The network profile or port changed; they take effect when Zeron restarts. */
+  restartRequired: boolean;
+}
+
 export interface CommandError {
   code: string;
   message: string;
@@ -289,6 +313,12 @@ export const publisherApi = {
   getDistributionActivity: (releaseId: string | null) => invoke<ActivityEvent[]>("get_distribution_activity", { releaseId }),
   /** Opens a native save dialog for the redacted log; resolves `false` when cancelled. */
   exportDistributionActivity: () => invoke<boolean>("export_distribution_activity"),
+  /** Opens a native save dialog; resolves `false` when cancelled. */
+  exportPublisherConfiguration: (includeNetwork: boolean) => invoke<boolean>("export_publisher_configuration", { includeNetwork }),
+  /** Opens a native picker and validates the file; resolves `null` when cancelled. Nothing changes until applied. */
+  choosePublisherConfiguration: () => invoke<ConfigurationPreview | null>("choose_publisher_configuration"),
+  applyPublisherConfiguration: (token: string, applyNetwork: boolean) => invoke<AppliedConfiguration>("apply_publisher_configuration", { token, applyNetwork }),
+  discardPublisherConfiguration: (token: string) => invoke<void>("discard_publisher_configuration", { token }),
   startSeeding: (releaseId: string) => invoke<void>("start_seeding", { releaseId }),
   stopSeeding: (releaseId: string) => invoke<void>("stop_seeding", { releaseId }),
   setTrackers: (trackers: string[]) => invoke<string[]>("set_trackers", { trackers }),

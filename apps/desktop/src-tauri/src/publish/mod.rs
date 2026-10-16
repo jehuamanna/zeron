@@ -2,6 +2,7 @@
 //! from the app's public engine, the one that also serves shared courses.
 
 pub(crate) mod commands;
+pub(crate) mod configuration;
 pub(crate) mod drops;
 pub(crate) mod tracker_lists;
 
@@ -29,6 +30,8 @@ pub(crate) struct PublishState {
     /// The Library's router, told which torrents are releases so the
     /// learner's copy of one never moves onto the public engine.
     pub(crate) library_router: Option<Arc<Router>>,
+    /// An imported configuration file waiting to be applied.
+    pub(crate) pending_configuration: Mutex<configuration::PendingConfiguration>,
 }
 
 impl PublishState {
@@ -74,6 +77,7 @@ impl PublishState {
             seeding,
             drops: Arc::new(DropInbox::default()),
             library_router,
+            pending_configuration: Mutex::default(),
         })
     }
 

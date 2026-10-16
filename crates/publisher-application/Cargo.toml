@@ -11,6 +11,8 @@ course-publisher = { path = "../course-publisher" }
 getrandom.workspace = true
 publisher-storage = { path = "../publisher-storage" }
 semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 torrent-metainfo = { path = "../torrent-metainfo" }

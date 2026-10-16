@@ -4,6 +4,7 @@ import { AlertTriangle, CirclePause, CirclePlay, Loader2, Network, Radio } from 
 import { formatBytes } from "../../lib/format";
 import { asCommandError, publisherApi, type SeedingStatus } from "../../services/publisher";
 import { ActivityLog } from "./ActivityLog";
+import { ConfigurationSection } from "./ConfigurationSection";
 import { TrackersSection } from "./TrackersSection";
 
 /** Release seeding and trackers. Where peers can reach releases is the app's one Network setting. */
@@ -49,6 +50,8 @@ export function DistributionPage({ onOpenNetwork }: { onOpenNetwork: () => void 
           <p className="mt-4 text-sm text-slate-500">Publish a release to seed it.</p>
         )}
       </section>
+
+      <ConfigurationSection />
 
       <ActivityLog />
     </div>
