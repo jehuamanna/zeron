@@ -1,0 +1,22 @@
+{
+  "format": "zeron.publisher-key-backup",
+  "version": 1,
+  "identity": {
+    "root": "ed25519-5748c78a43d41aaa54e830d638aa2700e23c389039105e92f31a8123b22bdf27",
+    "current": "ed25519-5748c78a43d41aaa54e830d638aa2700e23c389039105e92f31a8123b22bdf27",
+    "createdAt": 1700000000,
+    "rotations": []
+  },
+  "kdf": {
+    "algorithm": "argon2id",
+    "memoryKib": 65536,
+    "iterations": 3,
+    "parallelism": 1,
+    "salt": "fafababfb4f5266873fa45da9c5497a0"
+  },
+  "cipher": {
+    "algorithm": "xchacha20-poly1305",
+    "nonce": "0e8f3cc42471990a7b179d1f11f0ce3a4c6dabeb69a2cd50"
+  },
+  "ciphertext": "37c838d0851bbdb6f5d184989777bf06adff88ca2534120e715cc1196389deeb41d772301a517abe19c79c7c612b56e1"
+}

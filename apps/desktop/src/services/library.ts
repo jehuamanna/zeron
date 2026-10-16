@@ -365,7 +365,24 @@ export interface AnnotationMoveReport {
   positionsMoved: number;
 }
 
+/** This computer's learner key (ADR 0017). Only public keys cross IPC. */
+export interface LearnerKey {
+  status: "none" | "ready" | "key_missing" | "keychain_unavailable";
+  signingKey: string | null;
+  encryptionKey: string | null;
+  fingerprint: string | null;
+  createdAtUnixSeconds: number | null;
+  /** Why the keychain or key cannot be used, when it cannot. */
+  problem: string | null;
+}
+
 export const libraryApi = {
+  getLearnerKey: () => invoke<LearnerKey>("get_learner_key"),
+  createLearnerKey: () => invoke<LearnerKey>("create_learner_key"),
+  /** Saves an encrypted backup through a save dialog; `false` when cancelled. */
+  exportLearnerKeyBackup: (passphrase: string) => invoke<boolean>("export_learner_key_backup", { passphrase }),
+  /** Restores from a backup chosen in an open dialog; `null` when cancelled. */
+  restoreLearnerKeyBackup: (passphrase: string) => invoke<LearnerKey | null>("restore_learner_key_backup", { passphrase }),
   readiness: () => invoke<Readiness>("readiness"),
   list: () => invoke<CourseSummary[]>("list_courses"),
   detail: (courseId: string) => invoke<CourseDetail | null>("get_course_detail", { courseId }),

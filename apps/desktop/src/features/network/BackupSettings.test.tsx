@@ -33,7 +33,7 @@ describe("backup", () => {
     expect(view.queryByRole("status")).toBeNull();
     fireEvent.click(view.getByRole("button", { name: "Save backup…" }));
     await waitFor(() => expect(view.getByRole("status").textContent).toContain("your library, notes, and progress and your Publish drafts"));
-    expect(view.container.textContent).toContain("does not hold course videos, release files, or your signing key");
+    expect(view.container.textContent).toContain("does not hold course videos, release files, or your keys");
   });
 
   it("confirms, stages a restore, and offers a restart or to keep the current data", async () => {

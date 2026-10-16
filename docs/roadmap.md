@@ -83,6 +83,9 @@ Slices, in dependency order:
 3. **Learner identity.**
    - A learner key in the OS credential store on all three platforms.
    - An optional passphrase backup and restore, matching the ADR 0014 format.
+
+   Done 2026-10-16: see [phase-11-learner-identity.md](releases/phase-11-learner-identity.md).
+
 4. **Offline licenses.**
    - License, issuer-delegation, and revocation verification against the pinned publisher chain.
    - HPKE unwrapping.

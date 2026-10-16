@@ -7,6 +7,7 @@ import { PeerReachabilityForm } from "./PeerReachabilityForm";
 import { routerStatus } from "./routerStatus";
 import { SpeedLimitsForm } from "./SpeedLimitsForm";
 import { BackupSettings } from "./BackupSettings";
+import { LearnerKeySettings } from "./LearnerKeySettings";
 import { StorageSettings } from "./StorageSettings";
 import { UpdateSettings } from "./UpdateSettings";
 
@@ -105,6 +106,7 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
             />
             <StorageSettings />
             <BackupSettings />
+            <LearnerKeySettings />
             <UpdateSettings />
             <SpeedLimitsForm
               key={`${data.downloadLimitKib}-${data.uploadLimitKib}`}

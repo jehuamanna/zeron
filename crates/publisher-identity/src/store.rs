@@ -34,23 +34,35 @@ pub trait CredentialStore: Send + Sync {
 /// Credential Manager, or the Secret Service on Linux and the BSDs.
 pub struct OsStore {
     store: Arc<keyring_core::CredentialStore>,
+    service: &'static str,
 }
 
 impl OsStore {
-    /// Connect to this platform's credential store.
+    /// Connect to this platform's credential store, for publisher keys
+    /// (service [`SERVICE`]).
     ///
     /// # Errors
     /// Returns [`IdentityError::Store`] when the platform has none, or on
     /// Linux when no Secret Service (GNOME Keyring or `KWallet`) is running.
     pub fn open() -> Result<Self, IdentityError> {
+        Self::open_service(SERVICE)
+    }
+
+    /// [`Self::open`] for another Zeron service name, such as the learner's
+    /// key (ADR 0017).
+    ///
+    /// # Errors
+    /// As [`Self::open`].
+    pub fn open_service(service: &'static str) -> Result<Self, IdentityError> {
         Ok(Self {
             store: platform_store().map_err(store_error)?,
+            service,
         })
     }
 
     fn entry(&self, account: &str) -> Result<keyring_core::Entry, IdentityError> {
         self.store
-            .build(SERVICE, account, None)
+            .build(self.service, account, None)
             .map_err(store_error)
     }
 }

@@ -7,6 +7,7 @@ members = [
     "crates/course-signing",
     "crates/data-backup",
     "crates/data-import",
+    "crates/learner-identity",
     "crates/learning-domain",
     "crates/learning-application",
     "crates/learning-storage",
@@ -71,6 +72,7 @@ tower-http = "=0.7.1"
 unicode-normalization = "=0.1.25"
 url = "=2.5.8"
 windows-native-keyring-store = { version = "=1.1.0", default-features = false }
+x25519-dalek = { version = "=3.0.0", features = ["static_secrets"] }
 zeroize = "=1.9.1"
 
 [workspace.lints.rust]

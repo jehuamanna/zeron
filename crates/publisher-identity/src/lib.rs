@@ -6,6 +6,7 @@
 //! [`Identity`] is plain data for the publisher database.
 
 mod backup;
+pub mod passphrase;
 mod store;
 
 use course_signing::{PublicKey, RotationStatement, SecretKey, Signed, fingerprint, rotate};

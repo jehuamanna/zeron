@@ -10,6 +10,7 @@ vi.mock("../../services/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/library")>()),
   libraryApi: {
     pendingRestore: vi.fn(() => Promise.resolve(null)),
+    getLearnerKey: vi.fn(() => Promise.resolve({ status: "none", signingKey: null, encryptionKey: null, fingerprint: null, createdAtUnixSeconds: null, problem: null })),
     getNetworkSettings: vi.fn(),
     setNetworkProfile: vi.fn(),
     setPeerReachability: vi.fn(),

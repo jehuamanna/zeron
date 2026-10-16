@@ -39,6 +39,7 @@ apps/
 crates/
   course-format/         shared manifest/release types, schema validation
   course-access/         paid-lesson encryption: content keys, chunk sealing, decrypting reader
+  learner-identity/      the learner key: keychain seed, derived Ed25519/X25519 keys, backups
   learning-domain/       annotations, progress, stable identity rules
   torrent-engine/        engine-neutral port plus librqbit adapter
   course-publisher/      draft validation, packaging, torrent creation

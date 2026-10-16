@@ -5,6 +5,7 @@ mod appimage;
 mod backup;
 mod catalogs;
 mod commands;
+mod learner_key;
 mod media;
 mod navigation;
 mod publish;
@@ -39,6 +40,8 @@ pub(crate) struct AppState {
     pub(crate) courses_root: PathBuf,
     /// Opens paid lessons this computer holds keys for (ADR 0017).
     pub(crate) content_keys: Arc<dyn learning_application::ContentKeys>,
+    /// The learner key's OS keychain, opened on first use (ADR 0017).
+    pub(crate) learner_credentials: Arc<learner_key::LearnerCredentials>,
 }
 
 pub(crate) type Router = TransferRouter<LibrqbitEngine>;
@@ -171,6 +174,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         torrents,
         courses_root,
         content_keys,
+        learner_credentials: Arc::default(),
     });
     Ok(())
 }
@@ -186,6 +190,10 @@ fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         commands::list_courses,
         commands::get_course_detail,
         commands::register_media,
+        learner_key::get_learner_key,
+        learner_key::create_learner_key,
+        learner_key::export_learner_key_backup,
+        learner_key::restore_learner_key_backup,
         commands::choose_and_import_course,
         youtube::inspect_youtube_link,
         youtube::add_youtube_video,

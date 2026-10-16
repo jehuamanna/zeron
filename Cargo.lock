@@ -2721,6 +2721,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "learner-identity"
+version = "0.1.0"
+dependencies = [
+ "course-signing",
+ "getrandom 0.4.3",
+ "hkdf 0.13.0",
+ "publisher-identity",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "learning-application"
 version = "0.1.0"
 dependencies = [
@@ -7102,6 +7118,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "x25519-dalek"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7e8131a03190127fb2263afc72b322ecadae46b6ff8c6f399ff5d02f5559af6"
+dependencies = [
+ "curve25519-dalek",
+ "rand_core 0.10.1",
+ "zeroize",
+]
+
+[[package]]
 name = "x509-parser"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7234,6 +7261,7 @@ dependencies = [
  "data-backup",
  "data-import",
  "futures-util",
+ "learner-identity",
  "learning-application",
  "learning-storage",
  "media-gateway",

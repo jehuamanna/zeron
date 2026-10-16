@@ -36,7 +36,7 @@ export function BackupSettings() {
     <section aria-labelledby="backup-heading" className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 text-sm">
       <h2 id="backup-heading" className="flex items-center gap-2 font-semibold"><Archive size={17} className="text-cyan-300" /> Backup</h2>
       <p className="mt-1 text-slate-400">
-        A backup holds your library, notes, drawings, progress, catalogs, and Publish drafts and release records. It does not hold course videos, release files, or your signing key; back up the key from Publish → Identity.
+        A backup holds your library, notes, drawings, progress, catalogs, and Publish drafts and release records. It does not hold course videos, release files, or your keys; back up your learner key below and your signing key from Publish → Identity.
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
         <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save backup…"}</Button>

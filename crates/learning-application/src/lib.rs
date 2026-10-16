@@ -9,6 +9,7 @@ mod disk;
 mod documents;
 mod downloads;
 mod drawings;
+mod learner_key;
 mod library;
 mod local_import;
 mod notes;

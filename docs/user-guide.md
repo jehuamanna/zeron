@@ -82,6 +82,7 @@ From then on every release is signed.
 
 ## Settings
 
-- **Backup** saves your library, notes, progress, catalogs, and Publish drafts and release records. Restoring takes effect when Zeron restarts, and the previous data is kept in a `before-restore-…` folder. A backup does not hold course videos, release files, or your signing key.
+- **Backup** saves your library, notes, progress, catalogs, and Publish drafts and release records. Restoring takes effect when Zeron restarts, and the previous data is kept in a `before-restore-…` folder. A backup does not hold course videos, release files, or your keys.
+- **Learner key** is this computer's key for paid lessons: licenses will be made for it. It lives in your keychain; there is no account or password. You can save an encrypted backup with a passphrase of at least 12 characters, and restore it on another computer. Restoring never replaces a different key this computer already has.
 - **Updates:** Zeron checks for a new version only when you click "Check for updates", and installs only updates signed with Zeron's release key.
 - **Publisher configuration** (Publish → Distribution) moves trackers and Network settings to another computer.

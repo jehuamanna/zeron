@@ -70,9 +70,13 @@ jobs:
 
       - name: Real keychain (macOS Keychain, Windows Credential Manager)
         if: runner.os != 'Linux'
+        # bash -e stops at the first failing test; pwsh would report only the last.
+        shell: bash
         env:
           ZERON_KEYCHAIN_TESTS: "1"
-        run: cargo test -p publisher-identity --test os_store -- --nocapture
+        run: |
+          cargo test -p publisher-identity --test os_store -- --nocapture
+          cargo test -p learner-identity --test os_store -- --nocapture
 
       - name: Real keychain (Secret Service through GNOME Keyring)
         if: runner.os == 'Linux'
@@ -82,6 +86,7 @@ jobs:
           dbus-run-session -- bash -c '
             echo -n "ci-keyring" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
             cargo test -p publisher-identity --test os_store -- --nocapture
+            cargo test -p learner-identity --test os_store -- --nocapture
           '
 
       - name: Frontend tests

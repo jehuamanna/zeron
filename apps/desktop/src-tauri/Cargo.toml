@@ -20,6 +20,7 @@ course-publisher = { path = "../../../crates/course-publisher" }
 data-backup = { path = "../../../crates/data-backup" }
 data-import = { path = "../../../crates/data-import" }
 futures-util.workspace = true
+learner-identity = { path = "../../../crates/learner-identity" }
 learning-application = { path = "../../../crates/learning-application" }
 learning-storage = { path = "../../../crates/learning-storage" }
 media-gateway = { path = "../../../crates/media-gateway" }

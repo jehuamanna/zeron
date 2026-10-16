@@ -213,9 +213,6 @@ pub(crate) async fn restore_identity_backup(
     .await
 }
 
-/// The signer for a new preparation: `None` when there is no identity or the
-/// publisher turned signing off. A failure to reach the key stops the
-/// preparation rather than publishing an unsigned release by surprise.
 /// The content key to seal a draft's paid lessons with, created and saved to
 /// the keychain on first use; `None` for a draft without paid lessons.
 ///
@@ -239,6 +236,9 @@ pub(crate) fn release_content_key(
     .map_err(identity_error)
 }
 
+/// The signer for a new preparation: `None` when there is no identity or the
+/// publisher turned signing off. A failure to reach the key stops the
+/// preparation rather than publishing an unsigned release by surprise.
 pub(crate) fn release_signer(
     drafts: &PublisherDrafts,
     credentials: &Credentials,

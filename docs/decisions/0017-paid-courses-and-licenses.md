@@ -47,6 +47,10 @@ The user does not want Zeron accounts, meaning no Zeron passwords, profiles, or 
    - The secret never crosses IPC, never enters SQLite, and is never logged.
    - Each machine has its own learner key by default. Moving machines re-issues licenses to the new key (decision 7) instead of copying the secret.
    - An optional *learner key backup* uses the same passphrase format as ADR 0014's publisher backup. It is for learners who do not want to depend on Google or GitHub.
+   - As built in slice 3 (2026-10-16):
+     - The keychain holds one random 32-byte seed (account `learner-key`). The two keys are derived from it with HKDF-SHA256, salt `zeron.learner-key.v1`, info `signing` for the Ed25519 key and `encryption` for the X25519 key.
+     - The Library's database records only the public identity (`ed25519-…`, `x25519-…`, creation time). This lets it tell "no key yet" from "this keychain lost the key". A key the keychain holds without a record is recorded again.
+     - Backups are `zeron.learner-key-backup` version 1, with the associated data `zeron.learner-key-backup.v1\n` plus the public identity. Restoring never replaces a different key already in the keychain.
 4. **License.**
    - A license is a signed statement `zeron.license.v1\n`, written in ADR 0014's canonical encoding:
 
