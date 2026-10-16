@@ -517,6 +517,8 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
                 cues={transcript.data?.cues ?? null}
                 upNext={next ? { title: next.lesson.title } : null}
                 onNext={() => next && openLesson(next.lesson)}
+                previous={previous ? { title: previous.lesson.title } : null}
+                onPrevious={() => previous && openLesson(previous.lesson)}
               />
             ) : (
               <CourseOverview course={course} placed={placed} progress={progress} next={upNext} onStart={(item) => openLesson(item.lesson)} />

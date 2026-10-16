@@ -11,6 +11,7 @@ import {
   RotateCcw,
   RotateCw,
   Settings,
+  SkipBack,
   SkipForward,
   Volume1,
   Volume2,
@@ -74,6 +75,9 @@ interface LessonPlayerProps {
   /** The next lesson, for "Up next" and autoplay. */
   upNext?: { title: string } | null;
   onNext?: () => void;
+  /** The lesson before this one, for the Previous button. */
+  previous?: { title: string } | null;
+  onPrevious?: () => void;
 }
 
 /** Resume only from a meaningful point that is not right at the end. */
@@ -106,7 +110,7 @@ function bufferedRanges(video: HTMLVideoElement): Array<[number, number]> {
   return ranges;
 }
 
-export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, startAt = null, onPosition, onAddNote, transfersPaused = false, markers = [], cues = null, upNext = null, onNext }: LessonPlayerProps) {
+export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, startAt = null, onPosition, onAddNote, transfersPaused = false, markers = [], cues = null, upNext = null, onNext, previous = null, onPrevious }: LessonPlayerProps) {
   const [playback, dispatch] = useReducer(playbackReducer, initialPlayback);
   const [ahead, setAhead] = useState(0);
   const [ranges, setRanges] = useState<Array<[number, number]>>([]);
@@ -507,6 +511,11 @@ export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, s
                   }}
                 >
                   <PictureInPicture2 size={17} />
+                </button>
+              ) : null}
+              {previous ? (
+                <button type="button" className={control} aria-label={`Previous lesson: ${previous.title}`} onClick={() => onPrevious?.()}>
+                  <SkipBack size={17} />
                 </button>
               ) : null}
               {upNext ? (
