@@ -33,7 +33,7 @@ export function App() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg text-fg">
       <Tooltips />
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-surface px-3 sm:px-4">
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-panel px-3 sm:px-4">
         <div className="flex items-center gap-2">
           <div aria-hidden className="grid size-7 place-items-center rounded-lg bg-accent text-on-accent">
             <BookOpen size={15} />

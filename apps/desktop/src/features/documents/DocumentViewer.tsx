@@ -174,7 +174,7 @@ export function DocumentViewer({ courseId, lessonId, resourceId, title, page, on
 
   return (
     <div ref={root} aria-label={`Document ${title}`} role="region" className="relative flex h-full min-h-0 flex-col bg-bg">
-      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-line bg-surface pb-2 text-sm">
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-line pb-2 text-sm">
         <button
           type="button"
           className={`${tool} ${sidebar ? "bg-accent/10 text-accent-text" : ""}`}

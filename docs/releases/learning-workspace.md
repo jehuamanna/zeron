@@ -146,6 +146,9 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
   - **Other colour:** red, amber, and green remain only for errors, warnings, and success, and the six highlight colours stay the learner's own.
 - **Type:** headings are bold Inter. A new `--font-reading` keeps Source Serif 4 for notes, quotes, and lesson readings.
 - **Covers:** course covers are near-black tiles with diagonal bands at a per-course angle.
+- **Dark theme, revised:** it follows a second reference as layered charcoal.
+  - **Layers:** a new `--zr-panel` token (white in light) carries the header, course bar, contents, side panel, and PDF sidebar at the darkest step. The stage is mid-grey (`#25262a`) and cards a step lighter (`#2d2e33`).
+  - **Controls:** buttons are light grey with dark text.
 - **Video player:** the seek bar and switches are white on black.
 - **Publish:** its main buttons use the shared accent instead of amber.
 

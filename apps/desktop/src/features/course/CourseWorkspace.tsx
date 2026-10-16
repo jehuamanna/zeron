@@ -345,7 +345,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Course bar */}
-      <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-line bg-surface px-2 sm:px-3">
+      <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-line bg-panel px-2 sm:px-3">
         <BackButton onLeave={onLeave} />
         <button type="button" className={headerButton} aria-label={contentsOpen ? "Hide contents" : "Show contents"} aria-pressed={contentsOpen} title="Contents ([)" onClick={() => showContents(!contentsOpen)}>
           <PanelLeft size={17} />
@@ -417,11 +417,11 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
         {/* Contents */}
         {contentsOpen ? (
           contentsDocked ? (
-            <aside aria-label="Course contents" className="w-[300px] shrink-0 border-r border-line bg-surface">{contents}</aside>
+            <aside aria-label="Course contents" className="w-[300px] shrink-0 border-r border-line bg-panel">{contents}</aside>
           ) : (
             <>
               <button type="button" aria-label="Close contents" className="absolute inset-0 z-20 bg-[#000]/30" onClick={() => setContentsOverlay(false)} />
-              <aside aria-label="Course contents" className="absolute inset-y-0 left-0 z-30 w-[min(340px,88%)] border-r border-line bg-surface shadow-panel">{contents}</aside>
+              <aside aria-label="Course contents" className="absolute inset-y-0 left-0 z-30 w-[min(340px,88%)] border-r border-line bg-panel shadow-panel">{contents}</aside>
             </>
           )
         ) : null}

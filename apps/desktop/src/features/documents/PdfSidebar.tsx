@@ -33,7 +33,7 @@ export function PdfSidebar({ pdf, tab, onTab, page, onJump, marks, bytes, rotati
   rotation: number;
 }) {
   return (
-    <div className="flex h-full min-h-0 flex-col border-r border-line bg-surface">
+    <div className="flex h-full min-h-0 flex-col border-r border-line bg-panel">
       <div role="tablist" aria-label="Document sidebar" className="flex shrink-0 border-b border-line px-1">
         {TABS.map(([value, label]) => (
           <button

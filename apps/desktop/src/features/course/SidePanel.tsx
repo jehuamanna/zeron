@@ -22,7 +22,7 @@ export function SidePanel({ tabs, active, onClose, resizable, children }: {
   const drag = useRef<{ x: number; width: number } | null>(null);
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-surface">
+    <div className="relative flex h-full min-h-0 flex-col bg-panel">
       {resizable ? (
         <div
           role="separator"
