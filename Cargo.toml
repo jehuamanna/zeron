@@ -3,12 +3,14 @@ members = [
     "apps/desktop/src-tauri",
     "crates/course-format",
     "crates/course-publisher",
+    "crates/course-signing",
     "crates/data-import",
     "crates/learning-domain",
     "crates/learning-application",
     "crates/learning-storage",
     "crates/media-gateway",
     "crates/port-mapping",
+    "crates/publisher-identity",
     "crates/publisher-application",
     "crates/publisher-storage",
     "crates/torrent-librqbit",
@@ -28,9 +30,15 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "=1.0.104"
+apple-native-keyring-store = { version = "=1.0.2", features = ["keychain"] }
+argon2 = { version = "=0.6.0", default-features = false, features = ["alloc", "zeroize"] }
 axum = "=0.8.9"
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+dbus-secret-service-keyring-store = { version = "=1.0.1", features = ["crypto-rust"] }
+ed25519-dalek = "=3.0.0"
 futures-util = "=0.3.34"
 getrandom = "=0.4.3"
+keyring-core = "=1.0.1"
 hyper = { version = "=1.12.0", features = ["server", "http1"] }
 hyper-util = { version = "=0.1.21", features = ["tokio", "service"] }
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls"] }
@@ -56,6 +64,8 @@ tokio-util = "=0.7.20"
 tower-http = "=0.7.1"
 unicode-normalization = "=0.1.25"
 url = "=2.5.8"
+windows-native-keyring-store = { version = "=1.1.0", default-features = false }
+zeroize = "=1.9.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

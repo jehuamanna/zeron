@@ -328,6 +328,8 @@ The user removed the headless seed server on 2026-10-16 (an earlier attempt, `f1
 
 ### Phase 9 — optional catalog and publisher identity
 
+The user wants signing, working on Windows and macOS without limitation (2026-10-16; ADR 0014). Done so far: the signature formats and key handling (`phase-9-signing-foundation.md`, crates `course-signing` and `publisher-identity`) and a three-platform CI matrix (`.github/workflows/ci.yml`). Next: sign releases when publishing, verify and pin in the Library, then catalogs.
+
 - Canonical signed release envelopes and an Ed25519 key lifecycle (key storage is a security trigger).
 - A catalog API, discovery, and an explicit publication confirmation.
 - Learner torrent and magnet import must keep working without the catalog.
@@ -352,6 +354,8 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 - `learning-domain`: pure learner rules (progress now, annotations next).
 - `learning-application` / `learning-storage`: learner import, library, torrent imports, sharing, and routing.
 - `media-gateway`: authenticated loopback HTTP(S) delivery, with no dependency on Tauri or torrents.
+- `course-signing`: pure Ed25519 keys, canonical statements, release signatures, rotation chains, revocations, and catalogs (ADR 0014).
+- `publisher-identity`: the publisher's signing key in the OS credential store, rotation, and passphrase backups.
 - `port-mapping`: PCP, NAT-PMP, and `UPnP` IGD mapping for TCP and UDP, with renewal, removal, and status (ADR 0013).
 - `data-import`: one-time, crash-safe import of the former Learner and Publisher data into `app.zeron` (ADR 0011).
 - `apps/desktop/src-tauri`: composition and path-free DTO translation only; Publish commands live in its `publish` module. Command bodies are plain functions tested against in-memory storage. Errors carry `code`, plus `field` or `currentRevision` where relevant.
