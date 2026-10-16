@@ -3,8 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use course_publisher::PackagingCancellation;
-use publisher_storage::{NewRelease, ReleaseFiles, ReleaseRecord, ReleaseStatus};
+use course_publisher::{
+    DraftCourse, DraftLesson, DraftMetadata, DraftModule, DraftResource, PackagingCancellation,
+};
+use publisher_storage::{NewRelease, ReleaseFiles, ReleaseRecord, ReleaseStatus, StoredDraft};
 use torrent_metainfo::{
     HashProgress, PackageFile, TorrentError, file_table, info_hash, inspect_torrent, verify_torrent,
 };
@@ -176,6 +178,125 @@ impl PublisherDrafts {
         self.storage
             .archive_release(release_id)?
             .ok_or(DraftServiceError::InvalidAttempt("unknown release"))
+    }
+
+    /// Make a superseded release the course's current release again, for
+    /// example to roll back a newer version. The release that was current
+    /// becomes superseded. Release bytes and seeding are unchanged.
+    ///
+    /// # Errors
+    /// Returns [`DraftServiceError::InvalidAttempt`] for unknown releases,
+    /// [`DraftServiceError::ReleaseArchived`] for archived ones, or a storage
+    /// failure.
+    pub fn make_release_current(
+        &mut self,
+        release_id: &str,
+    ) -> Result<ReleaseRecord, DraftServiceError> {
+        let record = self
+            .storage
+            .release(release_id)?
+            .ok_or(DraftServiceError::InvalidAttempt("unknown release"))?;
+        if record.status == ReleaseStatus::Archived {
+            return Err(DraftServiceError::ReleaseArchived);
+        }
+        self.storage
+            .make_release_current(release_id)?
+            .ok_or(DraftServiceError::ReleaseArchived)
+    }
+
+    /// Start a new draft from a recorded release, for the course's next
+    /// version.
+    ///
+    /// The release's `course.json` is re-read and validated together with
+    /// the exact package tree. The draft keeps the course, module, lesson, and
+    /// resource IDs, so learners' notes stay attached, and its sources are
+    /// the release's own read-only package files, which are only ever read.
+    /// The version is the next patch version when the released one is
+    /// semantic, and otherwise the same version for the publisher to change.
+    ///
+    /// # Errors
+    /// Returns [`DraftServiceError::InvalidAttempt`] for unknown releases,
+    /// releases whose files were deleted, or packages that no longer match
+    /// their record, or a storage failure.
+    pub fn draft_from_release(
+        &mut self,
+        releases_root: &Path,
+        release_id: &str,
+    ) -> Result<StoredDraft, DraftServiceError> {
+        let unknown = || DraftServiceError::InvalidAttempt("unknown release");
+        let directory = release_directory(releases_root, release_id).ok_or_else(unknown)?;
+        let record = self.storage.release(release_id)?.ok_or_else(unknown)?;
+        if record.files != ReleaseFiles::Present {
+            return Err(DraftServiceError::InvalidAttempt(
+                "the release files were deleted",
+            ));
+        }
+        let package_root = directory.join(RELEASE_PACKAGE_DIRECTORY);
+        let package = StagedAttempt::open_package(
+            package_root.clone(),
+            directory.join(RELEASE_TORRENT_FILE),
+        )?;
+        if package.manifest_sha256 != record.release.manifest_sha256 {
+            return Err(DraftServiceError::InvalidAttempt(
+                "the released course.json differs from its record",
+            ));
+        }
+        let package_root = fs::canonicalize(&package_root)
+            .map_err(|source| io_error("resolving the release package", source))?;
+        let manifest = package.manifest;
+        let draft = DraftCourse {
+            draft_id: opaque_id("draft")?,
+            revision: 0,
+            metadata: DraftMetadata {
+                course_id: manifest.course_id,
+                version: next_patch_version(&manifest.version),
+                title: manifest.title,
+                description: manifest.description,
+                publisher_name: manifest.publisher.name,
+                language: manifest.language,
+                category: manifest.category,
+                tags: manifest.tags,
+                prerequisites: manifest.prerequisites,
+                license_name: manifest.license.map(|license| license.name),
+            },
+            modules: manifest
+                .modules
+                .into_iter()
+                .map(|module| DraftModule {
+                    id: module.id,
+                    title: module.title,
+                    lessons: module
+                        .lessons
+                        .into_iter()
+                        .map(|lesson| DraftLesson {
+                            id: lesson.id,
+                            title: lesson.title,
+                            estimated_duration_seconds: lesson
+                                .estimated_duration_seconds
+                                .map(whole_seconds),
+                            resources: lesson
+                                .resources
+                                .into_iter()
+                                .map(|resource| DraftResource {
+                                    source_path: package_root.join(&resource.path),
+                                    id: resource.id,
+                                    kind: resource.kind,
+                                    package_path: resource.path,
+                                    media_type: resource.media_type,
+                                    duration_seconds: resource.duration_seconds.map(whole_seconds),
+                                    language: resource.language,
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        };
+        let summary = self.storage.create_draft(&draft)?;
+        Ok(StoredDraft {
+            draft,
+            updated_at_unix_seconds: summary.updated_at_unix_seconds,
+        })
     }
 
     /// Permanently remove an archived release's directory. The record stays
@@ -420,6 +541,26 @@ fn is_release_id(value: &str) -> bool {
                 .bytes()
                 .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
     })
+}
+
+/// The next patch version of a semantic version, without pre-release or
+/// build parts; any other version is returned unchanged.
+fn next_patch_version(version: &str) -> String {
+    match semver::Version::parse(version) {
+        Ok(parsed) => {
+            semver::Version::new(parsed.major, parsed.minor, parsed.patch + 1).to_string()
+        }
+        Err(_) => version.to_owned(),
+    }
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "manifest durations are validated finite and non-negative"
+)]
+fn whole_seconds(seconds: f64) -> u64 {
+    seconds.round() as u64
 }
 
 fn io_error(operation: &'static str, source: io::Error) -> DraftServiceError {

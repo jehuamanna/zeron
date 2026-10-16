@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, Copy, Download, Trash2 } from "lucide-react";
+import { Archive, Check, Copy, Download, FilePlus2, History, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { copyText } from "../../lib/clipboard";
@@ -10,7 +10,16 @@ import { seedingLabel } from "./labels";
 
 type CopyState = "idle" | "copied" | "manual";
 
-export function ReleaseDetailsPanel({ id, release, seeding }: { id: string; release: Release; seeding: SeedingStatus | "unavailable" | undefined }) {
+interface ReleaseDetailsPanelProps {
+  id: string;
+  release: Release;
+  /** Version of the course's current release, if any. */
+  currentVersion: string | null;
+  seeding: SeedingStatus | "unavailable" | undefined;
+  onOpenDraft: (draftId: string) => void;
+}
+
+export function ReleaseDetailsPanel({ id, release, currentVersion, seeding, onOpenDraft }: ReleaseDetailsPanelProps) {
   const filesPresent = release.files === "present";
   const details = useQuery({
     queryKey: ["publisher-release-details", release.releaseId],
@@ -71,6 +80,8 @@ export function ReleaseDetailsPanel({ id, release, seeding }: { id: string; rele
         {exportTorrent.isError ? <p role="alert" className="text-xs text-red-300">{asCommandError(exportTorrent.error)?.message ?? "The torrent file could not be exported."}</p> : null}
       </div> : null}
 
+      <VersionActions release={release} currentVersion={currentVersion} onOpenDraft={onOpenDraft} />
+
       {release.status === "archived" ? (
         <DeleteFiles release={release} />
       ) : archiving ? (
@@ -106,6 +117,64 @@ export function ReleaseDetailsPanel({ id, release, seeding }: { id: string; rele
           </ul>
         )}
       </div> : null}
+    </div>
+  );
+}
+
+function VersionActions({ release, currentVersion, onOpenDraft }: { release: Release; currentVersion: string | null; onOpenDraft: (draftId: string) => void }) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const makeCurrent = useMutation({
+    mutationFn: () => publisherApi.makeReleaseCurrent(release.releaseId),
+    onSuccess: () => {
+      setConfirming(false);
+      void queryClient.invalidateQueries({ queryKey: ["publisher-releases"] });
+      void queryClient.invalidateQueries({ queryKey: ["distribution"] });
+    },
+  });
+  const newDraft = useMutation({
+    mutationFn: () => publisherApi.createDraftFromRelease(release.releaseId),
+    onSuccess: (draft) => {
+      queryClient.setQueryData(["publisher-draft", draft.draftId], draft);
+      void queryClient.invalidateQueries({ queryKey: ["publisher-drafts"] });
+      onOpenDraft(draft.draftId);
+    },
+  });
+  const filesPresent = release.files === "present";
+  const canMakeCurrent = release.status === "superseded";
+  if (!filesPresent && !canMakeCurrent) return null;
+  return (
+    <div className="space-y-2">
+      {release.status === "superseded" && currentVersion ? (
+        <p className="text-xs text-slate-400">Superseded. Version {currentVersion} is the current release.</p>
+      ) : null}
+      {release.status === "published" ? <p className="text-xs text-slate-400">This is the course's current release.</p> : null}
+      <div className="flex flex-wrap items-center gap-3">
+        {filesPresent ? (
+          <button type="button" onClick={() => newDraft.mutate()} disabled={newDraft.isPending} className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs hover:border-amber-300/40 disabled:opacity-50">
+            <FilePlus2 size={14} /> {newDraft.isPending ? "Creating draft…" : "New draft from this version"}
+          </button>
+        ) : null}
+        {canMakeCurrent && !confirming ? (
+          <button type="button" onClick={() => setConfirming(true)} className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs hover:border-amber-300/40">
+            <History size={14} /> Make current…
+          </button>
+        ) : null}
+      </div>
+      {newDraft.isError ? <p role="alert" className="text-xs text-red-300">{asCommandError(newDraft.error)?.message ?? "A draft could not be created from this release."}</p> : null}
+      {confirming ? (
+        <ConfirmAction
+          title={`Make version ${release.courseVersion} current?`}
+          confirmLabel="Make current"
+          pendingLabel="Switching…"
+          pending={makeCurrent.isPending}
+          error={makeCurrent.isError ? (asCommandError(makeCurrent.error)?.message ?? "The release could not be made current.") : null}
+          onConfirm={() => makeCurrent.mutate()}
+          onCancel={() => { makeCurrent.reset(); setConfirming(false); }}
+        >
+          {currentVersion ? `Version ${currentVersion} becomes superseded. ` : ""}No files change, seeding continues as it is, and learners who have a newer version keep it.
+        </ConfirmAction>
+      ) : null}
     </div>
   );
 }

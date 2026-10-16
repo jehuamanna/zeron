@@ -7,7 +7,7 @@ import { CourseList, groupCourses } from "./CourseList";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn(), deleteDraft: vi.fn(), archiveRelease: vi.fn(), deleteReleaseFiles: vi.fn() },
+  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn(), deleteDraft: vi.fn(), archiveRelease: vi.fn(), deleteReleaseFiles: vi.fn(), makeReleaseCurrent: vi.fn(), createDraftFromRelease: vi.fn() },
 }));
 
 const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=rust-systems";
@@ -260,5 +260,57 @@ describe("course management", () => {
     expect(rust.textContent).toContain("did not finish");
     expect(within(rust).getByRole("button", { name: /Delete files/ })).toBeTruthy();
     expect(publisherApi.getReleaseDetails).not.toHaveBeenCalled();
+  });
+
+  it("makes a superseded release current after confirmation", async () => {
+    vi.mocked(publisherApi.makeReleaseCurrent).mockImplementation(async () => {
+      const current = release({ releaseId: "release_1", courseVersion: "1.0.0", status: "published" });
+      vi.mocked(publisherApi.listReleases).mockResolvedValue([release({ status: "superseded" }), current, releases[2]!]);
+      return current;
+    });
+    const { view } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.0.0/ }));
+    expect(rust.textContent).toContain("Version 1.1.0 is the current release");
+    fireEvent.click(within(rust).getByRole("button", { name: /Make current/ }));
+    const dialog = within(rust).getByRole("alertdialog", { name: "Make version 1.0.0 current?" });
+    expect(dialog.textContent).toContain("Version 1.1.0 becomes superseded");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Make current" }));
+    await waitFor(() => expect(publisherApi.makeReleaseCurrent).toHaveBeenCalledWith("release_1"));
+    await waitFor(() => expect(within(rust).getByRole("button", { name: /Version 1.0.0/ }).textContent).toContain("published"));
+    expect(within(rust).getByRole("button", { name: /Version 1.1.0/ }).textContent).toContain("superseded");
+  });
+
+  it("offers no rollback for the current or an archived release", async () => {
+    vi.mocked(publisherApi.listReleases).mockResolvedValue([release({}), release({ releaseId: "release_1", courseVersion: "1.0.0", status: "archived" })]);
+    const { view } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.1.0/ }));
+    expect(rust.textContent).toContain("This is the course's current release");
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.0.0/ }));
+    expect(within(rust).queryByRole("button", { name: /Make current/ })).toBeNull();
+  });
+
+  it("starts a new draft from a release and opens it", async () => {
+    vi.mocked(publisherApi.createDraftFromRelease).mockResolvedValue({
+      draftId: "draft_next", courseId: "course_rust", courseVersion: "1.1.1", title: "Rust Systems", revision: 0, updatedAtUnixSeconds: 1_790_000_000,
+      description: null, publisherName: "P", language: "en", category: null, tags: [], prerequisites: [], licenseName: null, modules: [],
+    });
+    const { view, onOpenDraft } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.1.0/ }));
+    fireEvent.click(within(rust).getByRole("button", { name: /New draft from this version/ }));
+    await waitFor(() => expect(onOpenDraft).toHaveBeenCalledWith("draft_next"));
+    expect(publisherApi.createDraftFromRelease).toHaveBeenCalledWith("release_2");
+  });
+
+  it("explains when a draft cannot be started from a release", async () => {
+    vi.mocked(publisherApi.createDraftFromRelease).mockRejectedValue({ code: "release_unavailable", message: "the released course.json differs from its record" });
+    const { view, onOpenDraft } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.1.0/ }));
+    fireEvent.click(within(rust).getByRole("button", { name: /New draft from this version/ }));
+    await waitFor(() => expect(within(rust).getByRole("alert").textContent).toContain("differs from its record"));
+    expect(onOpenDraft).not.toHaveBeenCalled();
   });
 });

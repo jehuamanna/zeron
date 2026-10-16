@@ -206,6 +206,8 @@ pub fn run() {
             publish::commands::activate_release,
             publish::commands::list_releases,
             publish::commands::archive_release,
+            publish::commands::make_release_current,
+            publish::commands::create_draft_from_release,
             publish::commands::delete_release_files,
             publish::drops::apply_drop,
             publish::drops::choose_lesson_sources,

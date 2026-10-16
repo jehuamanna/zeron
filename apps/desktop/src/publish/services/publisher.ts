@@ -254,6 +254,10 @@ export const publisherApi = {
   archiveRelease: (releaseId: string) => invoke<Release>("archive_release", { releaseId }),
   /** Permanently removes an archived release's files; `confirmation` must be its course version. */
   deleteReleaseFiles: (releaseId: string, confirmation: string) => invoke<Release>("delete_release_files", { releaseId, confirmation }),
+  /** Makes a superseded release the course's current release again; the current one becomes superseded. */
+  makeReleaseCurrent: (releaseId: string) => invoke<Release>("make_release_current", { releaseId }),
+  /** Starts a draft for the next version from a release, keeping its module, lesson, and resource IDs. */
+  createDraftFromRelease: (releaseId: string) => invoke<DraftDetail>("create_draft_from_release", { releaseId }),
   getReleaseDetails: (releaseId: string) => invoke<ReleaseDetails>("get_release_details", { releaseId }),
   /** Opens a native save dialog; resolves `false` when the publisher cancels. */
   exportReleaseTorrent: (releaseId: string) => invoke<boolean>("export_release_torrent", { releaseId }),

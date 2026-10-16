@@ -592,6 +592,53 @@ fn delete(
         .map_err(|error| service_error("draft_delete_failed", error))
 }
 
+/// Make a superseded release the course's current release again, for
+/// example to roll back a newer version. Seeding is unchanged.
+#[tauri::command]
+pub(crate) async fn make_release_current(
+    release_id: String,
+    state: State<'_, PublishState>,
+) -> Result<ReleaseDto, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    run_blocking(move || make_current(&mut *lock_drafts(&drafts)?, &release_id)).await
+}
+
+/// Start a new draft for the course's next version from a release. The
+/// draft keeps the release's IDs and reads its package files as sources.
+#[tauri::command]
+pub(crate) async fn create_draft_from_release(
+    release_id: String,
+    state: State<'_, PublishState>,
+) -> Result<DraftDetailDto, CommandError> {
+    let drafts = Arc::clone(&state.drafts);
+    let releases_root = state.releases_root.clone();
+    run_blocking(move || {
+        draft_from_release(&mut *lock_drafts(&drafts)?, &releases_root, &release_id)
+    })
+    .await
+}
+
+fn make_current(
+    drafts: &mut PublisherDrafts,
+    release_id: &str,
+) -> Result<ReleaseDto, CommandError> {
+    drafts
+        .make_release_current(release_id)
+        .map(ReleaseDto::from)
+        .map_err(|error| service_error("release_unavailable", error))
+}
+
+fn draft_from_release(
+    drafts: &mut PublisherDrafts,
+    releases_root: &std::path::Path,
+    release_id: &str,
+) -> Result<DraftDetailDto, CommandError> {
+    drafts
+        .draft_from_release(releases_root, release_id)
+        .map(DraftDetailDto::from)
+        .map_err(|error| service_error("release_unavailable", error))
+}
+
 fn archive(drafts: &mut PublisherDrafts, release_id: &str) -> Result<ReleaseDto, CommandError> {
     drafts
         .archive_release(release_id)
@@ -1707,6 +1754,57 @@ mod tests {
         assert!(list(&drafts).unwrap().is_empty());
         let missing = delete(&mut drafts, &jobs, &draft.draft_id, draft.revision).unwrap_err();
         assert_eq!(missing.code, "draft_not_found");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn version_history_commands_roll_back_and_start_drafts_without_paths() {
+        let (directory, mut drafts, draft) = publishable_draft("history");
+        let jobs = publisher_application::PublishJobs::new(&directory.join("staging"));
+        let releases_root = directory.join("releases");
+        let job = jobs.begin(&draft).unwrap();
+        jobs.run(
+            &job.job_id,
+            &draft,
+            &DistributionOptions::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+        let (first, _) = jobs
+            .activate(&job.job_id, &mut drafts, &releases_root)
+            .unwrap();
+        let first_id = first.release.release_id;
+
+        let started = draft_from_release(&mut drafts, &releases_root, &first_id).unwrap();
+        let started = serde_json::to_value(started).unwrap();
+        assert_eq!(started["courseVersion"], "1.0.1");
+        assert_eq!(started["revision"], 0);
+        assert_eq!(started["courseId"], draft.metadata.course_id);
+        assert!(!started.to_string().contains(&*directory.to_string_lossy()));
+        let next = drafts
+            .draft(started["draftId"].as_str().unwrap())
+            .unwrap()
+            .unwrap()
+            .draft;
+        let job = jobs.begin(&next).unwrap();
+        jobs.run(
+            &job.job_id,
+            &next,
+            &DistributionOptions::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+        jobs.activate(&job.job_id, &mut drafts, &releases_root)
+            .unwrap();
+
+        let current = serde_json::to_value(make_current(&mut drafts, &first_id).unwrap()).unwrap();
+        assert_eq!(current["status"], "published");
+        archive(&mut drafts, &first_id).unwrap();
+        let refused = make_current(&mut drafts, &first_id).unwrap_err();
+        assert_eq!(refused.code, "release_archived");
+        let unknown = draft_from_release(&mut drafts, &releases_root, "../x").unwrap_err();
+        assert_eq!(unknown.code, "release_unavailable");
+        make_writable(&directory);
         std::fs::remove_dir_all(directory).unwrap();
     }
 

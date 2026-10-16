@@ -665,3 +665,155 @@ fn startup_finishes_interrupted_and_half_done_file_deletions() {
     );
     assert_eq!(fixture.drafts.recover_release_deletions(&root).unwrap(), 0);
 }
+
+#[test]
+fn an_older_release_can_be_made_current_and_archived_ones_cannot() {
+    let mut fixture = Fixture::new("make-current");
+    let first = fixture.prepare();
+    let (first_record, _) = fixture
+        .jobs
+        .activate(&first, &mut fixture.drafts, &fixture.scratch.releases())
+        .unwrap();
+    fixture.set_version("1.1.0");
+    let second = fixture.prepare();
+    let (second_record, _) = fixture
+        .jobs
+        .activate(&second, &mut fixture.drafts, &fixture.scratch.releases())
+        .unwrap();
+    let first_id = first_record.release.release_id;
+    let second_id = second_record.release.release_id;
+
+    let current = fixture.drafts.make_release_current(&first_id).unwrap();
+    assert_eq!(current.status, ReleaseStatus::Published);
+    let status = |drafts: &PublisherDrafts, id: &str| {
+        drafts
+            .releases()
+            .unwrap()
+            .into_iter()
+            .find(|record| record.release.release_id == id)
+            .unwrap()
+            .status
+    };
+    assert_eq!(
+        status(&fixture.drafts, &second_id),
+        ReleaseStatus::Superseded
+    );
+
+    fixture.drafts.archive_release(&second_id).unwrap();
+    assert!(matches!(
+        fixture.drafts.make_release_current(&second_id),
+        Err(DraftServiceError::ReleaseArchived)
+    ));
+    assert!(matches!(
+        fixture.drafts.make_release_current("release_unknown"),
+        Err(DraftServiceError::InvalidAttempt(_))
+    ));
+    assert_eq!(status(&fixture.drafts, &first_id), ReleaseStatus::Published);
+}
+
+#[test]
+fn a_new_draft_from_a_release_keeps_its_ids_and_publishes_the_next_version() {
+    let mut fixture = Fixture::new("draft-from-release");
+    let first = fixture.prepare();
+    let (record, _) = fixture
+        .jobs
+        .activate(&first, &mut fixture.drafts, &fixture.scratch.releases())
+        .unwrap();
+    let original = fixture
+        .drafts
+        .draft(&fixture.draft_id)
+        .unwrap()
+        .unwrap()
+        .draft;
+    let release_id = record.release.release_id.clone();
+
+    let stored = fixture
+        .drafts
+        .draft_from_release(&fixture.scratch.releases(), &release_id)
+        .unwrap();
+    let draft = stored.draft;
+    assert_ne!(draft.draft_id, original.draft_id);
+    assert_eq!(draft.revision, 0);
+    assert_eq!(draft.metadata.course_id, original.metadata.course_id);
+    assert_eq!(draft.metadata.version, "1.0.1");
+    assert_eq!(draft.metadata.title, "Released Course");
+    assert_eq!(draft.metadata.publisher_name, "Zeron Tests");
+    assert_eq!(draft.modules.len(), 1);
+    assert_eq!(draft.modules[0].id, original.modules[0].id);
+    let lesson = &draft.modules[0].lessons[0];
+    assert_eq!(lesson.id, original.modules[0].lessons[0].id);
+    let resource = &lesson.resources[0];
+    let original_resource = &original.modules[0].lessons[0].resources[0];
+    assert_eq!(resource.id, original_resource.id);
+    assert_eq!(resource.package_path, original_resource.package_path);
+    let package = fs::canonicalize(
+        fixture
+            .scratch
+            .releases()
+            .join(&release_id)
+            .join(RELEASE_PACKAGE_DIRECTORY),
+    )
+    .unwrap();
+    assert!(resource.source_path.starts_with(&package));
+    assert!(
+        fixture
+            .drafts
+            .list()
+            .unwrap()
+            .iter()
+            .any(|summary| summary.draft_id == draft.draft_id)
+    );
+
+    let job = fixture.jobs.begin(&draft).unwrap();
+    let finished = fixture
+        .jobs
+        .run(
+            &job.job_id,
+            &draft,
+            &DistributionOptions::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(finished.stage, PublishStage::ReadyToPublish);
+    let (next, _) = fixture
+        .jobs
+        .activate(
+            &job.job_id,
+            &mut fixture.drafts,
+            &fixture.scratch.releases(),
+        )
+        .unwrap();
+    assert_eq!(next.release.course_version, "1.0.1");
+    assert_eq!(next.release.course_id, record.release.course_id);
+
+    assert!(matches!(
+        fixture
+            .drafts
+            .draft_from_release(&fixture.scratch.releases(), "../release_x"),
+        Err(DraftServiceError::InvalidAttempt(_))
+    ));
+}
+
+#[test]
+fn a_release_without_its_files_cannot_start_a_draft() {
+    let mut fixture = Fixture::new("draft-from-deleted");
+    let first = fixture.prepare();
+    let (record, _) = fixture
+        .jobs
+        .activate(&first, &mut fixture.drafts, &fixture.scratch.releases())
+        .unwrap();
+    let release_id = record.release.release_id;
+    fixture.drafts.archive_release(&release_id).unwrap();
+    fixture
+        .drafts
+        .delete_release_files(&fixture.scratch.releases(), &release_id, "1.0.0")
+        .unwrap();
+    assert!(matches!(
+        fixture
+            .drafts
+            .draft_from_release(&fixture.scratch.releases(), &release_id),
+        Err(DraftServiceError::InvalidAttempt(
+            "the release files were deleted"
+        ))
+    ));
+}

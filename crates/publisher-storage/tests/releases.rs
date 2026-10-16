@@ -310,3 +310,47 @@ fn file_deletion_is_recorded_before_and_after_removal() {
     );
     assert!(storage.version_released("course_one", "1.0.0").unwrap());
 }
+
+#[test]
+fn a_superseded_release_can_become_current_again() {
+    let mut storage = PublisherStorage::open_in_memory().unwrap();
+    storage
+        .insert_release(release("release_1", "1.0.0"))
+        .unwrap();
+    storage
+        .insert_release(release("release_2", "1.1.0"))
+        .unwrap();
+    storage
+        .insert_release(release("release_3", "1.2.0"))
+        .unwrap();
+    storage.archive_release("release_2").unwrap();
+    let status =
+        |storage: &PublisherStorage, id: &str| storage.release(id).unwrap().unwrap().status;
+
+    let current = storage.make_release_current("release_1").unwrap().unwrap();
+    assert_eq!(current.status, ReleaseStatus::Published);
+    assert_eq!(status(&storage, "release_3"), ReleaseStatus::Superseded);
+    assert_eq!(status(&storage, "release_2"), ReleaseStatus::Archived);
+
+    let again = storage.make_release_current("release_1").unwrap().unwrap();
+    assert_eq!(again.status, ReleaseStatus::Published);
+    assert!(storage.make_release_current("release_2").unwrap().is_none());
+    assert_eq!(status(&storage, "release_2"), ReleaseStatus::Archived);
+    assert!(
+        storage
+            .make_release_current("release_missing")
+            .unwrap()
+            .is_none()
+    );
+
+    storage.make_release_current("release_3").unwrap().unwrap();
+    assert_eq!(status(&storage, "release_1"), ReleaseStatus::Superseded);
+    assert_eq!(status(&storage, "release_3"), ReleaseStatus::Published);
+    let published = storage
+        .releases()
+        .unwrap()
+        .into_iter()
+        .filter(|record| record.status == ReleaseStatus::Published)
+        .count();
+    assert_eq!(published, 1);
+}

@@ -550,6 +550,40 @@ impl PublisherStorage {
         self.release(release_id)
     }
 
+    /// Make a superseded release the course's current release again. The
+    /// release that was current becomes superseded, in one transaction. A
+    /// release that is already current is returned unchanged.
+    ///
+    /// Returns `None` for unknown releases and archived ones, which never
+    /// return to service.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn make_release_current(
+        &mut self,
+        release_id: &str,
+    ) -> Result<Option<ReleaseRecord>, PublisherStorageError> {
+        let Some(record) = self.release(release_id)? else {
+            return Ok(None);
+        };
+        match record.status {
+            ReleaseStatus::Archived => return Ok(None),
+            ReleaseStatus::Published => return Ok(Some(record)),
+            ReleaseStatus::Superseded => {}
+        }
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "UPDATE releases SET status='superseded' WHERE course_id=?1 AND status='published'",
+            [&record.release.course_id],
+        )?;
+        transaction.execute(
+            "UPDATE releases SET status='published' WHERE release_id=?1 AND status='superseded'",
+            [release_id],
+        )?;
+        transaction.commit()?;
+        self.release(release_id)
+    }
+
     /// Record that an archived release's files are about to be removed. Only
     /// archived releases qualify; a release already deleting or deleted is
     /// returned unchanged so callers can resume.

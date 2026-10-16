@@ -92,7 +92,13 @@ export function CourseList({ onOpenDraft }: { onOpenDraft: (draftId: string) => 
               <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500"><Lock size={13} /> Releases</h3>
               <ul aria-label="Release history" className="mt-3 space-y-2">
                 {course.releases.map((release) => (
-                  <ReleaseRow key={release.releaseId} release={release} seeding={distribution.isError ? "unavailable" : seeding.get(release.releaseId)} />
+                  <ReleaseRow
+                    key={release.releaseId}
+                    release={release}
+                    currentVersion={course.releases.find((candidate) => candidate.status === "published")?.courseVersion ?? null}
+                    seeding={distribution.isError ? "unavailable" : seeding.get(release.releaseId)}
+                    onOpenDraft={onOpenDraft}
+                  />
                 ))}
               </ul>
             </section>
@@ -159,7 +165,15 @@ function deleteError(error: unknown) {
   }
 }
 
-function ReleaseRow({ release, seeding }: { release: Release; seeding: SeedingStatus | "unavailable" | undefined }) {
+interface ReleaseRowProps {
+  release: Release;
+  /** Version of the course's current (published) release, if it has one. */
+  currentVersion: string | null;
+  seeding: SeedingStatus | "unavailable" | undefined;
+  onOpenDraft: (draftId: string) => void;
+}
+
+function ReleaseRow({ release, currentVersion, seeding, onOpenDraft }: ReleaseRowProps) {
   const [open, setOpen] = useState(false);
   const detailsId = `release-details-${release.releaseId}`;
   return (
@@ -175,7 +189,7 @@ function ReleaseRow({ release, seeding }: { release: Release; seeding: SeedingSt
         <span className="text-xs text-slate-400">{release.files === "deleted" ? "Files deleted" : seedingLabel(seeding)}</span>
         <span className={`rounded-full px-2.5 py-0.5 text-xs capitalize ${statusStyles[release.status]}`}>{release.status}</span>
       </button>
-      {open ? <ReleaseDetailsPanel id={detailsId} release={release} seeding={seeding} /> : null}
+      {open ? <ReleaseDetailsPanel id={detailsId} release={release} currentVersion={currentVersion} seeding={seeding} onOpenDraft={onOpenDraft} /> : null}
     </li>
   );
 }

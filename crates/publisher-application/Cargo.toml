@@ -10,6 +10,7 @@ course-format = { path = "../course-format" }
 course-publisher = { path = "../course-publisher" }
 getrandom.workspace = true
 publisher-storage = { path = "../publisher-storage" }
+semver.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 torrent-metainfo = { path = "../torrent-metainfo" }

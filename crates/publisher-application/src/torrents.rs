@@ -188,6 +188,8 @@ pub(crate) struct StagedAttempt {
     pub(crate) title: String,
     pub(crate) manifest_sha256: String,
     pub(crate) files: Vec<PackageFile>,
+    /// The validated `course.json`.
+    pub(crate) manifest: course_format::CourseManifest,
 }
 
 impl StagedAttempt {
@@ -247,11 +249,12 @@ impl StagedAttempt {
         Ok(Self {
             torrent_path,
             root,
-            course_id: manifest.course_id,
-            course_version: manifest.version,
-            title: manifest.title,
+            course_id: manifest.course_id.clone(),
+            course_version: manifest.version.clone(),
+            title: manifest.title.clone(),
             manifest_sha256,
             files,
+            manifest,
         })
     }
 
