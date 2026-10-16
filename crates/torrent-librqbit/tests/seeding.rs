@@ -1146,6 +1146,11 @@ async fn a_stream_survives_losing_one_of_two_seeders() {
         info_hash = Some(hash);
     }
     let info_hash = info_hash.unwrap();
+    // Cap each seeder so the lesson takes several seconds: on a fast
+    // loopback the learner can otherwise finish before it reaches both.
+    let cap = torrent_port::RateLimits::from_kib_per_second(None, Some(4 * 1024)).unwrap();
+    first.set_rate_limits(cap).unwrap();
+    second.set_rate_limits(cap).unwrap();
     let learner = loopback(&scratch.0, "learner", false).await;
     learner
         .fetch(FetchRequest {

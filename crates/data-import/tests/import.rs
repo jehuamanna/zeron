@@ -60,7 +60,13 @@ fn old_learner(plan: &ImportPlan, settings: &[(&str, &str)]) -> String {
     fs::create_dir_all(plan.learner.join("courses/abc")).unwrap();
     fs::write(plan.learner.join("courses/abc/lesson.mp4"), b"video").unwrap();
     fs::create_dir_all(plan.learner.join("engine")).unwrap();
-    let mut library = Storage::open(&plan.learner.join("library.sqlite3")).unwrap();
+    // Write in a scratch place and copy the files while the writer is still
+    // open, so the old directory holds a database whose last writes are only
+    // in its write-ahead log, as after a crash, without leaving a handle open
+    // (Windows cannot remove files someone still holds).
+    let live = plan.learner.with_file_name("learner-live");
+    fs::create_dir_all(&live).unwrap();
+    let mut library = Storage::open(&live.join("library.sqlite3")).unwrap();
     let course = manifest();
     library
         .save_torrent_course(
@@ -74,8 +80,13 @@ fn old_learner(plan: &ImportPlan, settings: &[(&str, &str)]) -> String {
     for (key, value) in settings {
         library.set_setting(key, value).unwrap();
     }
-    // Left open in WAL mode, like a running app's last write.
-    std::mem::forget(library);
+    for suffix in ["", "-wal"] {
+        let from = live.join(format!("library.sqlite3{suffix}"));
+        assert!(from.exists(), "the writer keeps a {suffix} file");
+        fs::copy(&from, plan.learner.join(format!("library.sqlite3{suffix}"))).unwrap();
+    }
+    drop(library);
+    fs::remove_dir_all(&live).unwrap();
     course.course_id
 }
 
