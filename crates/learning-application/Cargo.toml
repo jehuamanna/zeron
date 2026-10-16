@@ -10,6 +10,7 @@ course-format = { path = "../course-format" }
 course-signing = { path = "../course-signing" }
 learning-domain = { path = "../learning-domain" }
 learning-storage = { path = "../learning-storage" }
+futures-util.workspace = true
 getrandom.workspace = true
 semver.workspace = true
 serde_json.workspace = true

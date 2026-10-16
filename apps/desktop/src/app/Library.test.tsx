@@ -15,6 +15,7 @@ vi.mock("../services/library", async (importOriginal) => ({
     list: vi.fn(),
     chooseAndImport: vi.fn(),
     addYouTubeVideo: vi.fn(),
+    inspectYouTubeLink: vi.fn(() => Promise.resolve({ kind: "video" })),
     detail: vi.fn(),
     registerMedia: vi.fn(),
     chooseTorrentFile: vi.fn(),
@@ -628,10 +629,10 @@ describe("learner library", () => {
       .mockRejectedValueOnce({ code: "youtube_not_embeddable", message: "the owner of this video does not allow it to be played outside YouTube" })
       .mockResolvedValueOnce({ courseId: "youtube-video-M7lc1UVf-VE", courseVersion: "1.0.0", title: "Embedded player", verifiedResourceCount: 1, totalResourceBytes: 0 });
     const view = renderApp();
-    const input = await view.findByLabelText("YouTube video link");
+    const input = await view.findByLabelText("YouTube video or playlist link");
 
     fireEvent.change(input, { target: { value: "https://youtu.be/M7lc1UVf-VE" } });
-    fireEvent.click(view.getByRole("button", { name: "Add video" }));
+    fireEvent.click(view.getByRole("button", { name: "Add" }));
     await waitFor(() => expect(view.getByRole("alert").textContent).toContain("does not allow it to be played outside YouTube"));
 
     const course = {
@@ -650,7 +651,7 @@ describe("learner library", () => {
     };
     vi.mocked(libraryApi.list).mockResolvedValue([course]);
     fireEvent.change(input, { target: { value: "https://youtu.be/M7lc1UVf-VE" } });
-    fireEvent.click(view.getByRole("button", { name: "Add video" }));
+    fireEvent.click(view.getByRole("button", { name: "Add" }));
     await waitFor(() => expect(view.container.textContent).toContain("Added “Embedded player”."));
     expect(libraryApi.addYouTubeVideo).toHaveBeenLastCalledWith("https://youtu.be/M7lc1UVf-VE");
     await waitFor(() => expect(view.container.textContent).toContain("Online · YouTube"));

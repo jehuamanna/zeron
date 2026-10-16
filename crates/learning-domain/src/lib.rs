@@ -24,4 +24,6 @@ pub use notes::{
 pub use progress::{COMPLETION_RATIO, CourseProgress, LessonStatus, watched_enough};
 pub use search::{fts_query, text_passages, transcript_passages};
 pub use transcript::{Cue, MAX_TRANSCRIPT_BYTES, TranscriptError, parse_transcript};
-pub use youtube::{MAX_LINK_BYTES, VideoId, YouTubeLink, YouTubeLinkError, clean_youtube_text};
+pub use youtube::{
+    MAX_LINK_BYTES, PlaylistId, VideoId, YouTubeLink, YouTubeLinkError, clean_youtube_text,
+};

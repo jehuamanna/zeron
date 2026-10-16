@@ -32,6 +32,8 @@ pub(crate) struct AppState {
     /// The course and capability URL currently playing; revoked when another
     /// is issued or its course is removed.
     pub(crate) current_media: Mutex<Option<(String, String)>>,
+    /// The playlist page and playlist add in progress (ADR 0018).
+    pub(crate) youtube: youtube::YouTubeState,
     pub(crate) torrents: Torrents,
     /// Where torrent courses download, `app_data/courses`. Never sent over IPC.
     pub(crate) courses_root: PathBuf,
@@ -155,6 +157,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         library,
         media_gateway,
         current_media: Mutex::new(None),
+        youtube: youtube::YouTubeState::default(),
         torrents,
         courses_root,
     });
@@ -173,7 +176,10 @@ fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         commands::get_course_detail,
         commands::register_media,
         commands::choose_and_import_course,
-        commands::add_youtube_video,
+        youtube::inspect_youtube_link,
+        youtube::add_youtube_video,
+        youtube::add_youtube_playlist,
+        youtube::cancel_youtube_playlist,
         commands::choose_torrent_file_and_import,
         commands::import_magnet,
         commands::get_torrent_import,

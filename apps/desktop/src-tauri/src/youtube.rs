@@ -1,20 +1,39 @@
 //! YouTube for the Library (ADR 0018): video titles over keyless oEmbed, and
 //! the gateway page that hosts YouTube's player outside the app's origin.
 
-use std::{sync::LazyLock, time::Duration};
+use std::{
+    sync::{Arc, LazyLock, Mutex},
+    time::Duration,
+};
 
 use base64::Engine as _;
-use learning_application::{VideoDetails, VideoId, VideoLookupError, VideoMetadataSource};
-use media_gateway::PageResource;
-use serde::Deserialize;
+use learning_application::{
+    CancellationFlag, CourseImportReceipt, MAX_YOUTUBE_LINK_BYTES, PlaylistId, VideoDetails,
+    VideoId, VideoLookupError, VideoMetadataSource, YouTubeAddError, YouTubeLink, YouTubeLinkError,
+    look_up_youtube_playlist, look_up_youtube_video,
+};
+use media_gateway::{MediaGateway, PageResource};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use tauri::{AppHandle, Emitter as _, State};
+
+use crate::{
+    AppState,
+    commands::{CommandError, ImportReceiptDto, command_error, lock_library, run_blocking},
+};
+
+const PLAYLIST_PROGRESS_EVENT: &str = "youtube-playlist-progress";
+/// More IDs than any playlist the keyless player lists, with room for junk.
+const MAX_LISTED_IDS: usize = 1000;
 
 const OEMBED_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OEMBED_BYTES: usize = 64 * 1024;
 
 /// Titles and channel names from `https://www.youtube.com/oembed`, which
-/// needs no API key.
-pub(crate) struct OEmbed;
+/// needs no API key. One client serves every lookup of an add.
+pub(crate) struct OEmbed {
+    client: Option<reqwest::Client>,
+}
 
 #[derive(Deserialize)]
 struct OEmbedAnswer {
@@ -23,18 +42,24 @@ struct OEmbedAnswer {
     author_name: Option<String>,
 }
 
-impl VideoMetadataSource for OEmbed {
-    async fn video(&self, id: &VideoId) -> Result<VideoDetails, VideoLookupError> {
-        let client = reqwest::Client::builder()
-            .user_agent(concat!("Zeron/", env!("CARGO_PKG_VERSION")))
-            .timeout(OEMBED_TIMEOUT)
-            .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| VideoLookupError::Unreachable)?;
+impl OEmbed {
+    pub(crate) fn new() -> Self {
+        Self {
+            client: reqwest::Client::builder()
+                .user_agent(concat!("Zeron/", env!("CARGO_PKG_VERSION")))
+                .timeout(OEMBED_TIMEOUT)
+                .https_only(true)
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .ok(),
+        }
+    }
+
+    async fn describe(&self, page: &str) -> Result<VideoDetails, VideoLookupError> {
+        let client = self.client.as_ref().ok_or(VideoLookupError::Unreachable)?;
         let request = url::Url::parse_with_params(
             "https://www.youtube.com/oembed",
-            [("format", "json"), ("url", id.watch_url().as_str())],
+            [("format", "json"), ("url", page)],
         )
         .map_err(|_| VideoLookupError::Unreachable)?;
         let mut response = client
@@ -68,17 +93,76 @@ impl VideoMetadataSource for OEmbed {
     }
 }
 
+impl VideoMetadataSource for OEmbed {
+    async fn video(&self, id: &VideoId) -> Result<VideoDetails, VideoLookupError> {
+        self.describe(&id.watch_url()).await
+    }
+
+    async fn playlist(&self, id: &PlaylistId) -> Result<VideoDetails, VideoLookupError> {
+        self.describe(&id.playlist_url()).await
+    }
+}
+
 const PLAYER_STYLE: &str =
     "html,body,#player{margin:0;width:100%;height:100%;background:#000;overflow:hidden}";
 
-/// Runs inside the gateway page. It reads the video ID and start second from
-/// the URL fragment, which is never sent to any server, reports the player's
-/// time and state to the parent, and takes commands only from the parent.
+/// Runs inside the gateway page. It reads what to load from the URL
+/// fragment, which is never sent to any server, and reports to the parent:
+///
+/// - `#list=<id>` cues a playlist and reports its video IDs once;
+/// - `#v=<id>&t=<second>` plays a video, reports its time and state, and
+///   takes commands only from the parent.
 const PLAYER_SCRIPT: &str = r#"(() => {
   const params = new URLSearchParams(location.hash.slice(1));
   const id = params.get("v") || "";
   const start = Math.max(0, Math.floor(Number(params.get("t")) || 0));
+  const list = params.get("list") || "";
   const send = (message) => window.parent.postMessage(Object.assign({ zeron: "youtube" }, message), "*");
+  const loadApi = () => {
+    const api = document.createElement("script");
+    api.src = "https://www.youtube.com/iframe_api";
+    api.onerror = () => send({ type: "error", code: "offline" });
+    document.head.appendChild(api);
+  };
+  if (list) {
+    if (!/^[A-Za-z0-9_-]{2,64}$/.test(list)) {
+      send({ type: "error", code: "invalid" });
+      return;
+    }
+    let sent = false;
+    let lister = null;
+    const finish = (videoIds) => {
+      if (sent) return;
+      sent = true;
+      send({ type: "playlist", videoIds });
+    };
+    const check = () => {
+      const ids = lister && typeof lister.getPlaylist === "function" ? lister.getPlaylist() : null;
+      if (Array.isArray(ids) && ids.length) finish(ids.filter((value) => typeof value === "string"));
+    };
+    window.onYouTubeIframeAPIReady = () => {
+      lister = new YT.Player("player", {
+        host: "https://www.youtube-nocookie.com",
+        width: "100%",
+        height: "100%",
+        playerVars: { listType: "playlist", list, origin: location.origin },
+        events: {
+          onReady: () => {
+            check();
+            const poll = setInterval(() => (sent ? clearInterval(poll) : check()), 500);
+            setTimeout(() => finish([]), 20000);
+          },
+          onStateChange: check,
+          onError: (event) => {
+            if (!sent) send({ type: "error", code: event.data });
+            sent = true;
+          },
+        },
+      });
+    };
+    loadApi();
+    return;
+  }
   if (!/^[A-Za-z0-9_-]{11}$/.test(id)) {
     send({ type: "error", code: "invalid" });
     return;
@@ -131,10 +215,7 @@ const PLAYER_SCRIPT: &str = r#"(() => {
       player.setVolume(Math.min(100, Math.max(0, player.getVolume() + command.step * 100)));
     }
   });
-  const api = document.createElement("script");
-  api.src = "https://www.youtube.com/iframe_api";
-  api.onerror = () => send({ type: "error", code: "offline" });
-  document.head.appendChild(api);
+  loadApi();
 })();"#;
 
 /// Origins of Zeron's own pages, the only ones allowed to frame the player.
@@ -184,6 +265,226 @@ pub(crate) fn player_url(page_url: &str, video: &VideoId) -> String {
     format!("{page_url}#v={}", video.as_str())
 }
 
+/// The page URL that lists a playlist's videos.
+pub(crate) fn playlist_url(page_url: &str, playlist: &PlaylistId) -> String {
+    format!("{page_url}#list={}", playlist.as_str())
+}
+
+/// YouTube work in progress: the page listing a playlist, and the playlist
+/// being added, which the learner can cancel. One at a time.
+#[derive(Default)]
+pub(crate) struct YouTubeState {
+    list_page: Mutex<Option<String>>,
+    adding: Mutex<Option<CancellationFlag>>,
+}
+
+impl YouTubeState {
+    /// Forget the playlist page, revoking its capability URL.
+    fn release_list_page(&self, gateway: &MediaGateway) {
+        if let Some(page) = self.list_page.lock().ok().and_then(|mut page| page.take()) {
+            gateway.revoke(&page);
+        }
+    }
+}
+
+/// What a pasted link is. For a playlist, the page that lists its videos.
+#[derive(Debug, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum YouTubeLinkDto {
+    Video {},
+    Playlist {
+        playlist_id: String,
+        page_url: String,
+    },
+}
+
+/// A playlist added to the library.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PlaylistReceiptDto {
+    #[serde(flatten)]
+    receipt: ImportReceiptDto,
+    /// Videos left out because they are private, removed, or not embeddable.
+    skipped: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaylistProgressDto {
+    playlist_id: String,
+    done: usize,
+    total: usize,
+}
+
+/// Say whether a pasted link is a video or a playlist, fetching nothing. A
+/// playlist gets a gateway page whose YouTube player lists its videos, for
+/// the app to frame out of sight and pass to [`add_youtube_playlist`].
+#[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri injects owned command arguments"
+)]
+pub(crate) fn inspect_youtube_link(
+    link: String,
+    state: State<'_, AppState>,
+) -> Result<YouTubeLinkDto, CommandError> {
+    if link.len() > MAX_YOUTUBE_LINK_BYTES {
+        return Err(add_error(&YouTubeLinkError::NotYouTube.into()));
+    }
+    match YouTubeLink::parse(&link).map_err(|error| add_error(&error.into()))? {
+        YouTubeLink::Video(_) => Ok(YouTubeLinkDto::Video {}),
+        YouTubeLink::Playlist(playlist) => {
+            state.youtube.release_list_page(&state.media_gateway);
+            let page = state
+                .media_gateway
+                .register_page(player_page())
+                .map_err(|error| command_error("media_registration_failed", error))?;
+            if let Ok(mut current) = state.youtube.list_page.lock() {
+                *current = Some(page.url.clone());
+            }
+            Ok(YouTubeLinkDto::Playlist {
+                page_url: playlist_url(&page.url, &playlist),
+                playlist_id: playlist.as_str().to_owned(),
+            })
+        }
+    }
+}
+
+/// Add a YouTube video from a pasted link as an online-only course, or
+/// refresh one added before (ADR 0018). The link is parsed before anything
+/// is fetched; YouTube is asked only for the video's title and channel.
+#[tauri::command]
+pub(crate) async fn add_youtube_video(
+    link: String,
+    state: State<'_, AppState>,
+) -> Result<ImportReceiptDto, CommandError> {
+    if link.len() > MAX_YOUTUBE_LINK_BYTES {
+        return Err(add_error(&YouTubeLinkError::NotYouTube.into()));
+    }
+    let course = look_up_youtube_video(&OEmbed::new(), &link)
+        .await
+        .map_err(|error| add_error(&error))?;
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .add_youtube_video(&course)
+            .map(ImportReceiptDto::from)
+            .map_err(|error| add_error(&error))
+    })
+    .await
+}
+
+/// Add a playlist, or refresh it, from the video IDs its YouTube player
+/// listed. Every ID is checked again and every video is looked up, a few at
+/// a time, with progress events; [`cancel_youtube_playlist`] stops it.
+#[tauri::command]
+pub(crate) async fn add_youtube_playlist(
+    playlist_id: String,
+    video_ids: Vec<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<PlaylistReceiptDto, CommandError> {
+    state.youtube.release_list_page(&state.media_gateway);
+    let playlist = PlaylistId::parse(&playlist_id)
+        .ok_or_else(|| add_error(&YouTubeLinkError::NotYouTube.into()))?;
+    if video_ids.len() > MAX_LISTED_IDS || video_ids.iter().any(|id| id.len() > 64) {
+        return Err(command_error(
+            "invalid_input",
+            "the playlist's video list is not valid",
+        ));
+    }
+    let cancel = CancellationFlag::default();
+    {
+        let mut adding = state
+            .youtube
+            .adding
+            .lock()
+            .map_err(|_| command_error("youtube_busy", "another playlist is being added"))?;
+        if adding.is_some() {
+            return Err(command_error(
+                "youtube_busy",
+                "another playlist is being added",
+            ));
+        }
+        *adding = Some(cancel.clone());
+    }
+    let found = look_up_youtube_playlist(
+        &OEmbed::new(),
+        &playlist,
+        &video_ids,
+        &cancel,
+        |done, total| {
+            let _ = app.emit(
+                PLAYLIST_PROGRESS_EVENT,
+                PlaylistProgressDto {
+                    playlist_id: playlist_id.clone(),
+                    done,
+                    total,
+                },
+            );
+        },
+    )
+    .await;
+    if let Ok(mut adding) = state.youtube.adding.lock() {
+        *adding = None;
+    }
+    let course = found.map_err(|error| add_error(&error))?;
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .add_youtube_playlist(&course)
+            .map(|receipt: CourseImportReceipt| PlaylistReceiptDto {
+                receipt: receipt.into(),
+                skipped: course.skipped,
+            })
+            .map_err(|error| add_error(&error))
+    })
+    .await
+}
+
+/// Stop adding a playlist, and drop the page listing one. Returns whether a
+/// playlist was being added.
+#[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri injects owned command arguments"
+)]
+pub(crate) fn cancel_youtube_playlist(state: State<'_, AppState>) -> bool {
+    state.youtube.release_list_page(&state.media_gateway);
+    state
+        .youtube
+        .adding
+        .lock()
+        .ok()
+        .and_then(|adding| adding.as_ref().map(CancellationFlag::cancel))
+        .is_some()
+}
+
+fn add_error(error: &YouTubeAddError) -> CommandError {
+    let code = match error {
+        YouTubeAddError::Link(_) => "youtube_link_invalid",
+        YouTubeAddError::Playlist => "youtube_playlist_link",
+        YouTubeAddError::EmptyPlaylist => "youtube_playlist_empty",
+        YouTubeAddError::Cancelled => "cancelled",
+        YouTubeAddError::Lookup(VideoLookupError::NotEmbeddable) => "youtube_not_embeddable",
+        YouTubeAddError::Lookup(VideoLookupError::Unavailable) => "youtube_unavailable",
+        YouTubeAddError::Lookup(VideoLookupError::Unreachable) => "youtube_unreachable",
+        YouTubeAddError::CourseIdTaken => "course_id_taken",
+        // Storage errors can name the database location; keep them in Rust.
+        YouTubeAddError::Library(_) => {
+            return CommandError {
+                code: "library_unavailable",
+                message: "the YouTube course could not be saved to the library".to_owned(),
+            };
+        }
+    };
+    command_error(code, error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,10 +523,12 @@ mod tests {
     #[ignore = "needs the internet"]
     async fn oembed_describes_a_public_video() {
         let video = VideoId::parse("M7lc1UVf-VE").unwrap();
-        let details = OEmbed.video(&video).await.unwrap();
+        let details = OEmbed::new().video(&video).await.unwrap();
         assert!(details.title.contains("Embedded Web Player"));
         assert!(matches!(
-            OEmbed.video(&VideoId::parse("aaaaaaaaaaa").unwrap()).await,
+            OEmbed::new()
+                .video(&VideoId::parse("aaaaaaaaaaa").unwrap())
+                .await,
             Err(VideoLookupError::Unavailable | VideoLookupError::NotEmbeddable)
         ));
     }
@@ -249,11 +552,50 @@ mod tests {
     }
 
     #[test]
+    fn link_answers_and_errors_are_path_free_and_coded() {
+        let playlist = serde_json::to_value(YouTubeLinkDto::Playlist {
+            playlist_id: "PL123".to_owned(),
+            page_url: "https://127.0.0.1:1/v1/media/h/s#list=PL123".to_owned(),
+        })
+        .unwrap();
+        assert_eq!(playlist["kind"], "playlist");
+        assert_eq!(playlist["playlistId"], "PL123");
+        assert_eq!(
+            playlist["pageUrl"],
+            "https://127.0.0.1:1/v1/media/h/s#list=PL123"
+        );
+        assert_eq!(
+            serde_json::to_value(YouTubeLinkDto::Video {}).unwrap()["kind"],
+            "video"
+        );
+        assert_eq!(
+            add_error(&YouTubeAddError::EmptyPlaylist).code,
+            "youtube_playlist_empty"
+        );
+        assert_eq!(add_error(&YouTubeAddError::Cancelled).code, "cancelled");
+        assert_eq!(
+            add_error(&VideoLookupError::NotEmbeddable.into()).code,
+            "youtube_not_embeddable"
+        );
+        let storage = add_error(&YouTubeAddError::Library(
+            learning_application::LibraryError::NoteTarget("x"),
+        ));
+        assert_eq!(storage.code, "library_unavailable");
+    }
+
+    #[test]
     fn the_video_travels_in_the_fragment() {
         let video = VideoId::parse("M7lc1UVf-VE").unwrap();
         assert_eq!(
             player_url("https://127.0.0.1:1/v1/media/h/s", &video),
             "https://127.0.0.1:1/v1/media/h/s#v=M7lc1UVf-VE"
+        );
+        assert_eq!(
+            playlist_url(
+                "https://127.0.0.1:1/v1/media/h/s",
+                &PlaylistId::parse("PL1").unwrap()
+            ),
+            "https://127.0.0.1:1/v1/media/h/s#list=PL1"
         );
     }
 }

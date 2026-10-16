@@ -10,9 +10,8 @@ use learning_application::{
     DrawingFile, DrawingSave, EngineError, ImportError, InfoHash, LibraryError, LocalResource,
     MAX_TEXT_BYTES, MAX_TRANSCRIPT_BYTES, NetworkProfile, Note, NoteChange, PeerReachability,
     RateLimits, SearchKind, SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage,
-    TorrentResource, TorrentSource, TransferState, VideoId, YOUTUBE_MEDIA_TYPE, YouTubeAddError,
-    fits, look_up_youtube_video, parse_transcript, read_local_document, read_torrent_document,
-    set_aside_course_files,
+    TorrentResource, TorrentSource, TransferState, VideoId, YOUTUBE_MEDIA_TYPE, fits,
+    parse_transcript, read_local_document, read_torrent_document, set_aside_course_files,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::{Deserialize, Serialize};
@@ -593,57 +592,6 @@ pub(crate) async fn choose_and_import_course(
     let library = Arc::clone(&state.library);
     tauri::async_runtime::spawn_blocking(move || index_local_texts(&library));
     Ok(receipt)
-}
-
-/// Add a YouTube video from a pasted link as an online-only course, or
-/// refresh one added before (ADR 0018). The link is parsed before anything
-/// is fetched; YouTube is asked only for the video's title and channel.
-#[tauri::command]
-pub(crate) async fn add_youtube_video(
-    link: String,
-    state: State<'_, AppState>,
-) -> Result<ImportReceiptDto, CommandError> {
-    if link.len() > learning_application::MAX_YOUTUBE_LINK_BYTES {
-        return Err(youtube_add_error(&YouTubeAddError::Link(
-            learning_application::YouTubeLinkError::NotYouTube,
-        )));
-    }
-    let course = look_up_youtube_video(&youtube::OEmbed, &link)
-        .await
-        .map_err(|error| youtube_add_error(&error))?;
-    let library = Arc::clone(&state.library);
-    run_blocking(move || {
-        lock_library(&library)?
-            .add_youtube_video(&course)
-            .map(ImportReceiptDto::from)
-            .map_err(|error| youtube_add_error(&error))
-    })
-    .await
-}
-
-fn youtube_add_error(error: &YouTubeAddError) -> CommandError {
-    let code = match error {
-        YouTubeAddError::Link(_) => "youtube_link_invalid",
-        YouTubeAddError::Playlist => "youtube_playlist_unsupported",
-        YouTubeAddError::Lookup(learning_application::VideoLookupError::NotEmbeddable) => {
-            "youtube_not_embeddable"
-        }
-        YouTubeAddError::Lookup(learning_application::VideoLookupError::Unavailable) => {
-            "youtube_unavailable"
-        }
-        YouTubeAddError::Lookup(learning_application::VideoLookupError::Unreachable) => {
-            "youtube_unreachable"
-        }
-        YouTubeAddError::CourseIdTaken => "course_id_taken",
-        // Storage errors can name the database location; keep them in Rust.
-        YouTubeAddError::Library(_) => {
-            return CommandError {
-                code: "library_unavailable",
-                message: "the video could not be saved to the library".to_owned(),
-            };
-        }
-    };
-    command_error(code, error)
 }
 
 /// Index the text of local courses' transcripts and documents that are not
@@ -2375,7 +2323,7 @@ pub(crate) async fn run_blocking<T: Send + 'static>(
         })?
 }
 
-fn lock_library(
+pub(crate) fn lock_library(
     library: &Arc<Mutex<CourseLibrary>>,
 ) -> Result<std::sync::MutexGuard<'_, CourseLibrary>, CommandError> {
     library.lock().map_err(|_| CommandError {

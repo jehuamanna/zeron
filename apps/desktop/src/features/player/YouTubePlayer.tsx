@@ -3,7 +3,7 @@ import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } f
 
 import { Button } from "../../components/ui/button";
 import { usePlayerPrefs } from "../../stores/player";
-import { formatClock, type PlayerHandle, type TimelineMarker } from "./LessonPlayer";
+import { AUTOPLAY_SECONDS, formatClock, type PlayerHandle, type TimelineMarker } from "./LessonPlayer";
 
 /** Resume only from a meaningful point. */
 const RESUME_AFTER_SECONDS = 5;
@@ -66,6 +66,7 @@ export function YouTubePlayer({ handle, url, onRetry, startAt = null, onPosition
   const [error, setError] = useState<number | string | null>(null);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [countdown, setCountdown] = useState<number | null>(null);
   const latest = useRef({ position: 0, duration: 0 });
   const lastSaved = useRef(0);
   const report = useRef(onPosition);
@@ -153,6 +154,23 @@ export function YouTubePlayer({ handle, url, onRetry, startAt = null, onPosition
     };
   }, [origin]);
 
+  // At the end, "Up next" counts down to the next lesson when autoplay is on.
+  const hasNext = upNext !== null;
+  useEffect(() => {
+    if (status === "ended" && hasNext && usePlayerPrefs.getState().autoplayNext) setCountdown(AUTOPLAY_SECONDS);
+    else if (status !== "ended") setCountdown(null);
+  }, [status, hasNext]);
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      setCountdown(null);
+      onNext?.();
+      return;
+    }
+    const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [countdown, onNext]);
+
   // The learner's mute choice carries over; YouTube keeps its own volume.
   useEffect(() => {
     if (status === "playing" && usePlayerPrefs.getState().muted) send({ type: "mute" });
@@ -183,6 +201,18 @@ export function YouTubePlayer({ handle, url, onRetry, startAt = null, onPosition
           </div>
         ) : null}
       </div>
+
+      {status === "ended" && upNext ? (
+        <div role="dialog" aria-label="Up next" className="mt-2 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2 text-sm">
+          <span className="min-w-0 flex-1 truncate">
+            <span className="text-xs uppercase tracking-wider text-subtle">Up next · </span>
+            <span className="font-medium">{upNext.title}</span>
+            {countdown !== null ? <span aria-live="polite" className="text-muted"> · Starting in {countdown}…</span> : null}
+          </span>
+          <Button size="sm" onClick={() => onNext?.()}><SkipForward size={14} /> Play now</Button>
+          {countdown !== null ? <Button variant="ghost" size="sm" onClick={() => setCountdown(null)}>Cancel</Button> : null}
+        </div>
+      ) : null}
 
       {known && markers.length ? (
         <div aria-label="Notes on this video" role="group" className="relative mt-2 h-3 rounded-full bg-white/10">

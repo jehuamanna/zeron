@@ -35,8 +35,8 @@ pub use drawings::{Drawing, DrawingSave};
 pub use learning_domain::{
     Anchor, CourseProgress, Cue, DrawingError, DrawingFile, HighlightColor, HighlightStyle,
     LessonStatus, MAX_LINK_BYTES as MAX_YOUTUBE_LINK_BYTES, MAX_TRANSCRIPT_BYTES, MatchReason,
-    NoteError, Region, TextHighlight, TranscriptError, VideoId, YouTubeLink, YouTubeLinkError,
-    parse_transcript,
+    NoteError, PlaylistId, Region, TextHighlight, TranscriptError, VideoId, YouTubeLink,
+    YouTubeLinkError, parse_transcript,
 };
 pub use library::{
     CourseImportReceipt, CourseLibrary, LibraryError, LocalResource, TorrentResource,
@@ -60,7 +60,9 @@ pub use torrent_port::{
 };
 pub use trust::CoursePublisher;
 pub use youtube::{
-    MAX_YOUTUBE_TEXT_CHARS, VideoDetails, VideoLookupError, VideoMetadataSource,
-    YOUTUBE_MEDIA_TYPE, YouTubeAddError, YouTubeVideoCourse, look_up_youtube_video,
-    youtube_resource_id, youtube_video_course_id, youtube_video_manifest,
+    MAX_PLAYLIST_VIDEOS, MAX_YOUTUBE_TEXT_CHARS, VideoDetails, VideoLookupError,
+    VideoMetadataSource, YOUTUBE_MEDIA_TYPE, YouTubeAddError, YouTubePlaylistCourse,
+    YouTubeVideoCourse, look_up_youtube_playlist, look_up_youtube_video,
+    youtube_playlist_course_id, youtube_playlist_manifest, youtube_resource_id,
+    youtube_video_course_id, youtube_video_manifest,
 };

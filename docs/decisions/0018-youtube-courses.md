@@ -42,7 +42,7 @@ The decision has to balance Zeron's existing rules:
 3. **Links are parsed strictly in `learning-domain`** (`YouTubeLink::parse`).
    - Accepted: `https` (or schemeless) `youtube.com/watch?v=`, `m.`/`music.`/`www.` hosts, `youtu.be/<id>`, `/shorts/<id>`, `/live/<id>`, `/embed/<id>`, and the `-nocookie` embed host.
    - Video IDs are exactly 11 characters of `A–Z a–z 0–9 _ -`.
-   - Playlist links are recognised but refused in this slice ("playlists come next").
+   - Playlist IDs are 2–64 characters of the same alphabet (`PlaylistId`).
    - Anything else is refused before any network request.
 4. **Metadata through a port.**
    - `learning-application` defines `VideoMetadataSource`. The desktop adapter calls `https://www.youtube.com/oembed` with `reqwest`/rustls, a 10 s timeout, and a 64 KiB body cap.
@@ -73,6 +73,31 @@ The decision has to balance Zeron's existing rules:
    - The player says when YouTube cannot be reached or refuses a video.
    - Nothing from YouTube is downloaded or cached by Zeron.
 
+7. **Playlists, keyless** (added 2026-10-16, slice 2).
+   - **No other keyless source lists a playlist's videos:**
+     - oEmbed returns only the playlist's title;
+     - the RSS feed stops at 15 entries;
+     - scraping YouTube's pages is fragile.
+   - **So YouTube's own player lists them, out of sight:**
+     1. `inspect_youtube_link` registers the same gateway page.
+     2. The app frames the page with `#list=<id>` and hides it.
+     3. YouTube's player cues the playlist, and the page posts `getPlaylist()`, at most 200 IDs, once.
+     4. The app passes the IDs to `add_youtube_playlist`.
+   - **The IDs are untrusted. Rust:**
+     - re-parses each ID;
+     - drops repeats, keeping each video's first place;
+     - keeps at most 200;
+     - looks each video up through oEmbed, 8 at a time, with progress events and a learner-cancellable flag.
+   - **What is kept.** Private, removed, and non-embeddable videos are skipped and counted. An unreachable YouTube aborts the add. A playlist with nothing playable is refused.
+   - **The course.**
+     - Course ID `youtube-playlist-<listId>`, with one lesson per video in playlist order. Lesson IDs are `lesson-<videoId>`, so a video's notes follow it wherever it moves in the playlist.
+     - The reference is the playlist page. The publisher is the playlist's channel.
+   - **Refreshing.** Adding the playlist again refreshes it. When its set or order of lessons changed, the version goes up a patch.
+     - The previous manifest goes into the manifest history.
+     - The course page's existing "After an update" list (Phase 7 annotation moves) then shows notes whose video left the playlist, under the video's old title.
+     - Nothing is deleted.
+   - **One playlist add runs at a time.** Adding, cancelling, and starting another listing all revoke the listing page.
+
 ## Consequences
 
 - The learner's notes on a YouTube video live in the same notebook and search as their other courses, and survive removing and re-adding the video.
@@ -80,4 +105,4 @@ The decision has to balance Zeron's existing rules:
 - Video durations are unknown until a lesson first plays, so overviews show no duration for YouTube lessons.
 - YouTube can change its embed rules. The spike app (`spikes/youtube-embed`) re-checks them.
 - Untested platforms: Windows (origin `http://tauri.localhost`) and macOS. Their origins are listed in the player page's `frame-ancestors`, but they need manual verification.
-- Playlists (one lesson per video, keyless list capped at 200) are the next slice and reuse this model with `course_youtube_videos` rows per lesson.
+- Playlists use the same model, as decision 7 describes.

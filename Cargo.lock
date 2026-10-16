@@ -2693,6 +2693,7 @@ version = "0.1.0"
 dependencies = [
  "course-format",
  "course-signing",
+ "futures-util",
  "getrandom 0.4.3",
  "learning-domain",
  "learning-storage",

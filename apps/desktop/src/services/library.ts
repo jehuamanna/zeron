@@ -146,6 +146,20 @@ export interface ImportReceipt {
   totalResourceBytes: number;
 }
 
+/** What a pasted YouTube link is; a playlist comes with the page that lists its videos. */
+export type YouTubeLinkKind = { kind: "video" } | { kind: "playlist"; playlistId: string; pageUrl: string };
+
+export interface PlaylistReceipt extends ImportReceipt {
+  /** Videos left out because they are private, removed, or not embeddable. */
+  skipped: number;
+}
+
+export interface PlaylistProgress {
+  playlistId: string;
+  done: number;
+  total: number;
+}
+
 export interface Readiness {
   state: "ready";
   torrentImport: "ready" | "unavailable";
@@ -348,7 +362,13 @@ export const libraryApi = {
   registerMedia: (courseId: string, resourceId: string) =>
     invoke<MediaRegistration>("register_media", { courseId, resourceId }),
   chooseAndImport: () => invoke<ImportReceipt | null>("choose_and_import_course"),
+  inspectYouTubeLink: (link: string) => invoke<YouTubeLinkKind>("inspect_youtube_link", { link }),
   addYouTubeVideo: (link: string) => invoke<ImportReceipt>("add_youtube_video", { link }),
+  addYouTubePlaylist: (playlistId: string, videoIds: string[]) =>
+    invoke<PlaylistReceipt>("add_youtube_playlist", { playlistId, videoIds }),
+  cancelYouTubePlaylist: () => invoke<boolean>("cancel_youtube_playlist"),
+  onYouTubePlaylistProgress: (handler: (progress: PlaylistProgress) => void) =>
+    listen<PlaylistProgress>("youtube-playlist-progress", (event) => handler(event.payload)),
   chooseTorrentFile: () => invoke<TorrentImport | null>("choose_torrent_file_and_import"),
   importMagnet: (uri: string) => invoke<TorrentImport>("import_magnet", { uri }),
   getTorrentImport: (jobId: string) => invoke<TorrentImport | null>("get_torrent_import", { jobId }),

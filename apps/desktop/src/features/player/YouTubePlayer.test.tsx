@@ -95,4 +95,20 @@ describe("YouTube player", () => {
     expect(describeYouTubeError("offline")).toContain("could not be reached");
     expect(describeYouTubeError(100)).toContain("unavailable");
   });
+
+  it("counts down to the next lesson when a video ends", () => {
+    vi.useFakeTimers();
+    try {
+      const onNext = vi.fn();
+      const view = render(<YouTubePlayer url={URL} onRetry={vi.fn()} upNext={{ title: "Part 2" }} onNext={onNext} />);
+      const frame = view.getByTitle("YouTube video player") as HTMLIFrameElement;
+      from(frame, { zeron: "youtube", type: "time", position: 99, duration: 100, state: 0 });
+      expect(view.getByRole("dialog", { name: "Up next" }).textContent).toContain("Part 2");
+      expect(view.getByRole("dialog", { name: "Up next" }).textContent).toContain("Starting in 5");
+      for (let second = 0; second < 6; second += 1) act(() => vi.advanceTimersByTime(1000));
+      expect(onNext).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

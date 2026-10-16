@@ -35,13 +35,41 @@ impl VideoId {
     }
 }
 
+/// A YouTube playlist ID: 2–64 characters of `A–Z a–z 0–9 _ -`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlaylistId(String);
+
+impl PlaylistId {
+    /// Accept a playlist ID of safe characters.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        ((2..=64).contains(&value.len())
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')))
+        .then(|| Self(value.to_owned()))
+    }
+
+    /// The ID as YouTube writes it.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The canonical playlist page, as a link back to the source.
+    #[must_use]
+    pub fn playlist_url(&self) -> String {
+        format!("https://www.youtube.com/playlist?list={}", self.0)
+    }
+}
+
 /// What a pasted link points at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum YouTubeLink {
     /// One video.
     Video(VideoId),
-    /// A playlist, by its list ID.
-    Playlist(String),
+    /// A playlist.
+    Playlist(PlaylistId),
 }
 
 /// Why a link was refused.
@@ -122,27 +150,19 @@ impl YouTubeLink {
         match segments.as_slice() {
             ["watch"] => match query("v") {
                 Some(id) => video(&id),
-                None => playlist(query("list")),
+                None => playlist(query("list").as_deref()),
             },
-            ["playlist"] => playlist(query("list")),
+            ["playlist"] => playlist(query("list").as_deref()),
             ["shorts" | "live" | "embed" | "v", id] => video(id),
             _ => Err(YouTubeLinkError::NotYouTube),
         }
     }
 }
 
-fn playlist(list: Option<String>) -> Result<YouTubeLink, YouTubeLinkError> {
-    match list {
-        Some(list)
-            if (2..=64).contains(&list.len())
-                && list
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')) =>
-        {
-            Ok(YouTubeLink::Playlist(list))
-        }
-        _ => Err(YouTubeLinkError::NotYouTube),
-    }
+fn playlist(list: Option<&str>) -> Result<YouTubeLink, YouTubeLinkError> {
+    list.and_then(PlaylistId::parse)
+        .map(YouTubeLink::Playlist)
+        .ok_or(YouTubeLinkError::NotYouTube)
 }
 
 /// Make untrusted text from YouTube safe to show and store: no control
@@ -202,7 +222,9 @@ mod tests {
         ] {
             assert_eq!(
                 YouTubeLink::parse(link),
-                Ok(YouTubeLink::Playlist("UU_x5XG1OV2P6uZZ5FSM9Ttw".to_owned())),
+                Ok(YouTubeLink::Playlist(
+                    PlaylistId::parse("UU_x5XG1OV2P6uZZ5FSM9Ttw").unwrap()
+                )),
                 "{link}"
             );
         }
@@ -254,6 +276,19 @@ mod tests {
         assert_eq!(
             VideoId::parse(ID).unwrap().watch_url(),
             "https://www.youtube.com/watch?v=M7lc1UVf-VE"
+        );
+    }
+
+    #[test]
+    fn playlist_ids_are_short_safe_strings() {
+        assert!(PlaylistId::parse("PL").is_some());
+        assert!(PlaylistId::parse("P").is_none());
+        assert!(PlaylistId::parse(&"a".repeat(64)).is_some());
+        assert!(PlaylistId::parse(&"a".repeat(65)).is_none());
+        assert!(PlaylistId::parse("PL a").is_none());
+        assert_eq!(
+            PlaylistId::parse("PL123").unwrap().playlist_url(),
+            "https://www.youtube.com/playlist?list=PL123"
         );
     }
 
