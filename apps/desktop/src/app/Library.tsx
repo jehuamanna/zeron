@@ -9,6 +9,7 @@ import { DrawingPanel } from "../features/drawings/DrawingPanel";
 import { LibrarySearch } from "../features/search/LibrarySearch";
 import { TranscriptPanel } from "../features/transcripts/TranscriptPanel";
 import { AnnotationMovesCard } from "../features/migration/AnnotationMovesCard";
+import { PublisherBadge } from "../features/publisher/PublisherBadge";
 import { NotesPanel } from "../features/notes/NotesPanel";
 import { LessonPlayer, type PlayerHandle } from "../features/player/LessonPlayer";
 import { LessonStatusIcon, MarkCompleteButton, ProgressBar, useCourseProgress } from "../features/progress/progress";
@@ -216,6 +217,7 @@ export function Library() {
                       </div>
                     ) : null}
                     <p className="mt-3 max-w-2xl text-slate-400">{detail.data.description ?? `Published by ${detail.data.publisherName}`}</p>
+                    <PublisherBadge courseId={detail.data.courseId} publisher={detail.data.publisher} />
                     {torrentCourse ? (
                       <p className="mt-5 max-w-2xl rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
                         This course streams from a torrent. Lessons download while you watch, and only data verified against the torrent is played. Each lesson shows how much of it is on this computer.

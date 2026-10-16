@@ -163,10 +163,15 @@ impl CourseLibrary {
             return Ok(None);
         };
         let committed = self.committed_resources(course_id)?;
+        // course.json and its signature, which learners sharing the course
+        // must serve to others importing it.
         let mut selection: BTreeSet<usize> = files
             .iter()
-            .position(|file| file.path == MANIFEST_PATH)
-            .into_iter()
+            .enumerate()
+            .filter(|(_, file)| {
+                file.path == MANIFEST_PATH || file.path == course_signing::RELEASE_SIGNATURE_FILE
+            })
+            .map(|(index, _)| index)
             .collect();
         selection.extend(
             self.torrent_resources(course_id)?

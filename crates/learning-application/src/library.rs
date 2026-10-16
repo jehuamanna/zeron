@@ -84,6 +84,21 @@ pub enum LibraryError {
     /// A playback position or duration is not a usable number of seconds.
     #[error("{0} must be a finite number of seconds within the lesson")]
     InvalidPlaybackTime(&'static str),
+    /// The course's publisher signature does not verify or was revoked.
+    #[error("the course's publisher signature cannot be trusted: {0}")]
+    Signature(String),
+    /// The course is pinned to a publisher, and this version is signed by
+    /// another one or not signed.
+    #[error(
+        "this course comes from the publisher {pinned}, but this version is {}; your copy was kept",
+        found.as_deref().map_or_else(|| "not signed".to_owned(), |found| format!("signed by {found}"))
+    )]
+    PublisherChanged {
+        /// Fingerprint of the pinned publisher.
+        pinned: String,
+        /// Fingerprint of the signer, if the version is signed.
+        found: Option<String>,
+    },
 }
 
 /// Longest lesson a playback position is recorded for.
@@ -140,6 +155,11 @@ impl CourseLibrary {
         cancellation: &CancellationFlag,
     ) -> Result<CourseImportReceipt, LibraryError> {
         let imported = import_local_course(root, self.import_limits, cancellation)?;
+        let trust = self.course_trust(
+            &imported.manifest,
+            &imported.manifest_sha256,
+            imported.signature.as_deref(),
+        )?;
         let package_root = std::fs::canonicalize(root).map_err(LibraryError::PackageLocation)?;
         let receipt = CourseImportReceipt {
             course_id: imported.manifest.course_id.clone(),
@@ -148,34 +168,40 @@ impl CourseLibrary {
             verified_resource_count: imported.resources.len(),
             total_resource_bytes: imported.total_resource_bytes,
         };
-        self.storage.save_imported_course(
+        self.storage.save_imported_course_trusted(
             &imported.manifest,
             imported.total_resource_bytes,
             &package_root,
+            &trust,
         )?;
         Ok(receipt)
     }
 
     /// Persist a course whose manifest was validated from a torrent. Only
-    /// `course.json` is verified; resources stay unavailable to playback.
+    /// `course.json` and its signature are verified; resources stay
+    /// unavailable to playback until their pieces verify.
     ///
     /// # Errors
     ///
-    /// Returns [`LibraryError::Storage`] when persistence fails.
+    /// Returns [`LibraryError::Signature`] or
+    /// [`LibraryError::PublisherChanged`] when the publisher cannot be
+    /// trusted, or [`LibraryError::Storage`] when persistence fails.
     pub fn save_torrent_course(
         &mut self,
         manifest: &CourseManifest,
         total_resource_bytes: u64,
         content_root: &Path,
-        info_hash: &str,
-        metainfo: &[u8],
+        torrent: (&str, &[u8]),
+        manifest_sha256: &str,
+        signature: Option<&[u8]>,
     ) -> Result<StoredCourseSummary, LibraryError> {
-        Ok(self.storage.save_torrent_course(
+        let trust = self.course_trust(manifest, manifest_sha256, signature)?;
+        Ok(self.storage.save_torrent_course_trusted(
             manifest,
             total_resource_bytes,
             content_root,
-            info_hash,
-            metainfo,
+            torrent,
+            &trust,
         )?)
     }
 

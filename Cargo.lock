@@ -2659,11 +2659,13 @@ name = "learning-application"
 version = "0.1.0"
 dependencies = [
  "course-format",
+ "course-signing",
  "getrandom 0.4.3",
  "learning-domain",
  "learning-storage",
  "nix",
  "publisher-application",
+ "publisher-identity",
  "serde_json",
  "sha2 0.11.1",
  "thiserror 2.0.21",

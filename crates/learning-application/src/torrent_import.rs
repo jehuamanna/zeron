@@ -9,13 +9,15 @@ use std::{
 };
 
 use course_format::{CourseManifest, parse_and_validate};
+use course_signing::{MAX_RELEASE_SIGNATURE_BYTES, RELEASE_SIGNATURE_FILE};
+use sha2::Digest as _;
 use thiserror::Error;
 use torrent_port::{
     EngineError, FetchRequest, InfoHash, ResolveRequest, ResolvedTorrent, TorrentEngine,
     TorrentSource, TransferState,
 };
 
-use crate::{CancellationFlag, CourseLibrary, ImportLimits};
+use crate::{CancellationFlag, CourseLibrary, ImportLimits, LibraryError};
 
 pub(crate) const MANIFEST_PATH: &str = "course.json";
 const RETAINED_FINISHED_IMPORTS: usize = 16;
@@ -340,7 +342,8 @@ impl<E: TorrentEngine> TorrentImports<E> {
                 )
             })?
             .map_err(engine_failure)?;
-        let (manifest_index, manifest_length) = check_inventory(&resolved, self.limits)?;
+        let (manifest_index, manifest_length, signature_file) =
+            check_inventory(&resolved, self.limits)?;
         let info_hash = resolved.info_hash.clone();
         self.update(job_id, notify, |snapshot| {
             snapshot.stage = TorrentImportStage::FetchingManifest;
@@ -355,7 +358,10 @@ impl<E: TorrentEngine> TorrentImports<E> {
             .fetch(FetchRequest {
                 metainfo: resolved.metainfo.clone(),
                 content_root: content_root.clone(),
-                files: vec![manifest_index],
+                files: [manifest_index]
+                    .into_iter()
+                    .chain(signature_file.map(|(index, _)| index))
+                    .collect(),
                 initial_peers: fetch_peers(initial_peers, &resolved.peers),
             })
             .await
@@ -370,12 +376,19 @@ impl<E: TorrentEngine> TorrentImports<E> {
             notify,
         )
         .await?;
+        if let Some((index, length)) = signature_file {
+            self.wait_for_manifest(job_id, &fetched, index, length, cancellation, &mut |_| {})
+                .await?;
+        }
 
         self.update(job_id, notify, |snapshot| {
             snapshot.stage = TorrentImportStage::Validating;
             snapshot.manifest_bytes = Some((manifest_length, manifest_length));
         });
-        let manifest = read_manifest(&content_root, manifest_length)?;
+        let (manifest, manifest_sha256) = read_manifest(&content_root, manifest_length)?;
+        let signature = signature_file
+            .map(|(_, length)| read_signature(&content_root, length))
+            .transpose()?;
         let total_resource_bytes = cross_check(&manifest, &resolved)?;
         if cancellation.is_cancelled() {
             return Err(Stop::Cancelled);
@@ -385,10 +398,17 @@ impl<E: TorrentEngine> TorrentImports<E> {
                 &manifest,
                 total_resource_bytes,
                 &content_root,
-                info_hash.as_str(),
-                &resolved.metainfo,
+                (info_hash.as_str(), &resolved.metainfo),
+                &manifest_sha256,
+                signature.as_deref(),
             )
-            .map_err(|error| failure("storage_failed", error.to_string()))?;
+            .map_err(|error| match error {
+                LibraryError::Signature(_) => failure("signature_invalid", error.to_string()),
+                LibraryError::PublisherChanged { .. } => {
+                    failure("publisher_changed", error.to_string())
+                }
+                _ => failure("storage_failed", error.to_string()),
+            })?;
         Ok(manifest)
     }
 
@@ -538,10 +558,14 @@ impl<E: TorrentEngine> TorrentImports<E> {
     }
 }
 
+/// The `course.json` file and the optional signature file, as
+/// `(index, length)`.
+type Inventory = (usize, u64, Option<(usize, u64)>);
+
 fn check_inventory(
     resolved: &ResolvedTorrent,
     limits: ImportLimits,
-) -> Result<(usize, u64), TorrentImportFailure> {
+) -> Result<Inventory, TorrentImportFailure> {
     if resolved.files.iter().any(|file| !safe_path(&file.path)) {
         return Err(failure(
             "unsafe_inventory",
@@ -564,11 +588,28 @@ fn check_inventory(
             "The course.json in this torrent is larger than allowed.".to_owned(),
         ));
     }
+    let mut signatures = resolved
+        .files
+        .iter()
+        .filter(|file| file.path == RELEASE_SIGNATURE_FILE);
+    let signature = match (signatures.next(), signatures.next()) {
+        (None, _) => None,
+        (Some(file), None) if file.length <= MAX_RELEASE_SIGNATURE_BYTES as u64 => {
+            Some((file.index, file.length))
+        }
+        _ => {
+            return Err(failure(
+                "signature_invalid",
+                "The torrent's signature file is too large or appears twice.".to_owned(),
+            ));
+        }
+    };
     let total = resolved
         .files
         .iter()
         .try_fold(0_u64, |total, file| total.checked_add(file.length));
-    if resolved.files.len() - 1 > limits.max_resource_count
+    let resources = resolved.files.len() - 1 - usize::from(signature.is_some());
+    if resources > limits.max_resource_count
         || total.is_none_or(|total| total > limits.max_total_resource_bytes)
     {
         return Err(failure(
@@ -576,10 +617,29 @@ fn check_inventory(
             "This course is larger than this library allows.".to_owned(),
         ));
     }
-    Ok((manifest.index, manifest.length))
+    Ok((manifest.index, manifest.length, signature))
 }
 
-fn read_manifest(content_root: &Path, length: u64) -> Result<CourseManifest, TorrentImportFailure> {
+fn read_signature(content_root: &Path, length: u64) -> Result<Vec<u8>, TorrentImportFailure> {
+    let bytes = std::fs::read(content_root.join(RELEASE_SIGNATURE_FILE)).map_err(|_| {
+        failure(
+            "signature_invalid",
+            "The downloaded signature file could not be read.".to_owned(),
+        )
+    })?;
+    if bytes.len() as u64 != length {
+        return Err(failure(
+            "signature_invalid",
+            "The downloaded signature file has an unexpected length.".to_owned(),
+        ));
+    }
+    Ok(bytes)
+}
+
+fn read_manifest(
+    content_root: &Path,
+    length: u64,
+) -> Result<(CourseManifest, String), TorrentImportFailure> {
     let bytes = std::fs::read(content_root.join(MANIFEST_PATH)).map_err(|_| {
         failure(
             "manifest_invalid",
@@ -592,12 +652,19 @@ fn read_manifest(content_root: &Path, length: u64) -> Result<CourseManifest, Tor
             "The downloaded course.json has an unexpected length.".to_owned(),
         ));
     }
-    parse_and_validate(&bytes).map_err(|error| {
+    let manifest = parse_and_validate(&bytes).map_err(|error| {
         failure(
             "manifest_invalid",
             format!("The course.json in this torrent is invalid: {error}."),
         )
-    })
+    })?;
+    let digest = sha2::Sha256::digest(&bytes);
+    let mut sha256 = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(sha256, "{byte:02x}");
+    }
+    Ok((manifest, sha256))
 }
 
 fn cross_check(
@@ -614,7 +681,7 @@ fn cross_check(
     let inventory: BTreeSet<(&str, u64)> = resolved
         .files
         .iter()
-        .filter(|file| file.path != MANIFEST_PATH)
+        .filter(|file| file.path != MANIFEST_PATH && file.path != RELEASE_SIGNATURE_FILE)
         .map(|file| (file.path.as_str(), file.length))
         .collect();
     if declared != inventory {

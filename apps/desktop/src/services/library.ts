@@ -229,6 +229,17 @@ export interface MediaRegistration {
   byteLength: number;
 }
 
+/**
+ * `verified`: signed by the publisher this course is pinned to. `signed`: signed,
+ * but no longer pinned. `unsigned`: no publisher signature.
+ */
+export interface CoursePublisher {
+  status: "verified" | "signed" | "pinned_unsigned" | "unsigned";
+  fingerprint: string | null;
+  publisherId: string | null;
+  signedAtUnixSeconds: number | null;
+}
+
 export interface CourseDetail {
   courseId: string;
   courseVersion: string;
@@ -237,6 +248,8 @@ export interface CourseDetail {
   publisherName: string;
   source: CourseSource;
   torrentInfoHash: string | null;
+  /** Who published the course, as far as the Library can verify. */
+  publisher: CoursePublisher;
   modules: Array<{
     id: string;
     title: string;
@@ -319,6 +332,8 @@ export const libraryApi = {
   /** Verified bytes of a PDF resource. */
   readDocument: (courseId: string, resourceId: string) => invoke<ArrayBuffer>("read_document", { courseId, resourceId }),
   notes: (courseId: string, lessonId: string | null) => invoke<Note[]>("list_notes", { courseId, lessonId }),
+  /** Stop requiring the pinned publisher; the next signed import pins again. */
+  forgetCoursePublisher: (courseId: string) => invoke<CoursePublisher>("forget_course_publisher", { courseId }),
   annotationMoves: (courseId: string) => invoke<AnnotationMove[]>("get_annotation_moves", { courseId }),
   moveAnnotations: (courseId: string, fromLessonId: string, toLessonId: string) =>
     invoke<AnnotationMoveReport>("move_annotations", { courseId, fromLessonId, toLessonId }),

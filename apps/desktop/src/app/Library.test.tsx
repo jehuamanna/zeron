@@ -116,6 +116,7 @@ describe("learner library", () => {
       publisherName: "Zeron Tests",
       source: "local",
       torrentInfoHash: null,
+      publisher: { status: "verified", fingerprint: "7F3A-91C2-0B44-E8D1", publisherId: `ed25519-${"a".repeat(64)}`, signedAtUnixSeconds: 1 },
       modules: [
         {
           id: "module_one",
@@ -149,6 +150,8 @@ describe("learner library", () => {
     });
     fireEvent.click(course);
     await waitFor(() => expect(view.container.textContent).toContain("Foundations"));
+    expect(view.container.textContent).toContain("Verified publisher");
+    expect(view.container.textContent).toContain("7F3A-91C2-0B44-E8D1");
     expect(view.container.textContent).toContain("Introduction");
     expect(view.container.textContent).not.toContain("/course/");
   });
@@ -159,7 +162,7 @@ describe("learner library", () => {
     vi.mocked(libraryApi.list).mockResolvedValue([]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
       courseId: "course_one", courseVersion: "1.0.0", title: "Media Course", description: null,
-      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, modules: [{ id: "module", title: "Module", lessons: [{
+      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null }, modules: [{ id: "module", title: "Module", lessons: [{
         id: "lesson", title: "Lesson", resources: [{ id: "video", kind: "video", mediaType: "video/mp4", byteLength: 10, durationSeconds: null }],
       }] }],
     });
@@ -184,7 +187,7 @@ describe("learner library", () => {
     vi.mocked(libraryApi.list).mockResolvedValue([]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
       courseId: "course_one", courseVersion: "1.0.0", title: "Media Course", description: null,
-      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, modules: [{ id: "module", title: "Module", lessons: [{
+      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null }, modules: [{ id: "module", title: "Module", lessons: [{
         id: "lesson", title: "Lesson", resources: [{ id: "video", kind: "video", mediaType: "video/mp4", byteLength: 10, durationSeconds: null }],
       }] }],
     });
@@ -211,7 +214,7 @@ describe("learner library", () => {
     vi.mocked(libraryApi.list).mockResolvedValue([]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
       courseId: "course_torrent", courseVersion: "1.0.0", title: "Torrent Course", description: null,
-      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), modules: [{ id: "module", title: "Module", lessons: [{
+      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null }, modules: [{ id: "module", title: "Module", lessons: [{
         id: "lesson", title: "Lesson", resources: [{ id: "video", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }],
       }] }],
     });
@@ -238,7 +241,7 @@ describe("learner library", () => {
     vi.mocked(libraryApi.list).mockResolvedValue([]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
       courseId: "course_torrent", courseVersion: "1.0.0", title: "Torrent Course", description: null,
-      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), modules: [{ id: "module", title: "Module", lessons: [
+      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null }, modules: [{ id: "module", title: "Module", lessons: [
         { id: "lesson_a", title: "First", resources: [{ id: "video_a", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }] },
         { id: "lesson_b", title: "Second", resources: [{ id: "video_b", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }] },
       ] }],
@@ -264,7 +267,7 @@ describe("learner library", () => {
     vi.mocked(libraryApi.list).mockResolvedValue([]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
       courseId: "course_torrent", courseVersion: "1.0.0", title: "Torrent Course", description: null,
-      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), modules: [],
+      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null }, modules: [],
     });
     vi.mocked(libraryApi.storage).mockResolvedValue({ streamedBytes: 0, cacheLimitBytes: null, availableBytes: 200 * 1024 ** 2, lowDisk: true });
     const view = renderApp();
@@ -277,7 +280,7 @@ describe("learner library", () => {
     vi.mocked(libraryApi.list).mockResolvedValue([]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
       courseId: "course_torrent", courseVersion: "1.0.0", title: "Torrent Course", description: null,
-      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), modules: [{ id: "module", title: "Module", lessons: [
+      publisherName: "Zeron Tests", source: "torrent", torrentInfoHash: "ab".repeat(20), publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null }, modules: [{ id: "module", title: "Module", lessons: [
         { id: "lesson_a", title: "First", resources: [{ id: "video_a", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }] },
         { id: "lesson_b", title: "Second", resources: [{ id: "video_b", kind: "video", mediaType: "video/mp4", byteLength: 200, durationSeconds: null }] },
       ] }],
@@ -351,7 +354,7 @@ describe("learner library", () => {
     vi.mocked(libraryApi.list).mockResolvedValue([]);
     vi.mocked(libraryApi.detail).mockResolvedValue({
       courseId: "course_one", courseVersion: "1.0.0", title: "Course", description: null,
-      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, modules: [{ id: "module", title: "Module", lessons: [
+      publisherName: "Zeron Tests", source: "local", torrentInfoHash: null, publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null }, modules: [{ id: "module", title: "Module", lessons: [
         { id: "lesson_a", title: "First", resources: [] },
         { id: "lesson_b", title: "Second", resources: [] },
       ] }],

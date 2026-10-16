@@ -72,6 +72,11 @@ pub struct ImportedCourse {
     pub resources: Vec<VerifiedResource>,
     /// Sum of verified resource lengths.
     pub total_resource_bytes: u64,
+    /// Lowercase hex SHA-256 of the exact `course.json` bytes.
+    pub manifest_sha256: String,
+    /// The bytes of `zeron-signature.json`, when the package has one. They
+    /// are untrusted until verified against the manifest.
+    pub signature: Option<Vec<u8>>,
 }
 
 /// Verification evidence that is safe to expose without an OS path.
@@ -192,6 +197,8 @@ pub fn import_local_course(
 
     let manifest_bytes = read_manifest(&canonical_root, limits, cancellation)?;
     let manifest = parse_and_validate(&manifest_bytes)?;
+    let manifest_sha256 = hex(&Sha256::digest(&manifest_bytes));
+    let signature = read_signature(&canonical_root)?;
     let resource_count = manifest
         .modules
         .iter()
@@ -245,7 +252,44 @@ pub fn import_local_course(
         manifest,
         resources,
         total_resource_bytes: total_declared_bytes,
+        manifest_sha256,
+        signature,
     })
+}
+
+/// The package's `zeron-signature.json`, if it has one: a regular file, not
+/// a symbolic link, within the signature size bound.
+fn read_signature(root: &Path) -> Result<Option<Vec<u8>>, ImportError> {
+    let path = root.join(course_signing::RELEASE_SIGNATURE_FILE);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ImportError::Io {
+                operation: "reading the signature file metadata",
+                source,
+            });
+        }
+    };
+    let limit = course_signing::MAX_RELEASE_SIGNATURE_BYTES as u64;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > limit {
+        return Err(ImportError::InvalidManifestFile(
+            "zeron-signature.json must be a small regular file, not a symbolic link".to_owned(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    File::open(&path)
+        .and_then(|file| file.take(limit + 1).read_to_end(&mut bytes))
+        .map_err(|source| ImportError::Io {
+            operation: "reading the signature file",
+            source,
+        })?;
+    if bytes.len() as u64 > limit {
+        return Err(ImportError::InvalidManifestFile(
+            "zeron-signature.json is too large".to_owned(),
+        ));
+    }
+    Ok(Some(bytes))
 }
 
 fn read_manifest(
@@ -463,12 +507,15 @@ fn hash_file(file: File, cancellation: &CancellationFlag) -> Result<String, Impo
         }
         hasher.update(&buffer[..read]);
     }
-    let digest = hasher.finalize();
-    let mut encoded = String::with_capacity(digest.len() * 2);
-    for byte in digest {
+    Ok(hex(&hasher.finalize()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
         write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
     }
-    Ok(encoded)
+    encoded
 }
 
 fn metadata_changed(before: &Metadata, after: &Metadata) -> bool {

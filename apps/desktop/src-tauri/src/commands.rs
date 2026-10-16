@@ -172,7 +172,64 @@ pub(crate) struct CourseDetailDto {
     publisher_name: String,
     source: &'static str,
     torrent_info_hash: Option<String>,
+    /// Who published the course, as far as the Library can verify.
+    publisher: CoursePublisherDto,
     modules: Vec<ModuleDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CoursePublisherDto {
+    /// `verified` (signed by the pinned publisher), `signed` (signed, no
+    /// longer pinned), `pinned_unsigned` (a damaged record), or `unsigned`.
+    status: &'static str,
+    fingerprint: Option<String>,
+    publisher_id: Option<String>,
+    signed_at_unix_seconds: Option<u64>,
+}
+
+impl From<learning_application::CoursePublisher> for CoursePublisherDto {
+    fn from(publisher: learning_application::CoursePublisher) -> Self {
+        let fingerprint = publisher.fingerprint();
+        let status = match (&publisher.signature, &publisher.pinned) {
+            (Some(signature), Some(pinned)) if signature.publisher_id == *pinned => "verified",
+            (Some(_), _) => "signed",
+            (None, Some(_)) => "pinned_unsigned",
+            (None, None) => "unsigned",
+        };
+        Self {
+            status,
+            fingerprint,
+            publisher_id: publisher
+                .signature
+                .as_ref()
+                .map(|signature| signature.publisher_id.clone())
+                .or(publisher.pinned),
+            signed_at_unix_seconds: publisher.signature.map(|signature| signature.signed_at),
+        }
+    }
+}
+
+/// Stop requiring the course's pinned publisher; its next signed import
+/// pins again. Notes and progress are untouched.
+#[tauri::command]
+pub(crate) async fn forget_course_publisher(
+    course_id: String,
+    state: State<'_, AppState>,
+) -> Result<CoursePublisherDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        let mut library = lock_library(&library)?;
+        let failed = |error| command_error("library_unavailable", error);
+        library
+            .forget_course_publisher(&course_id)
+            .map_err(failed)?;
+        library
+            .course_publisher(&course_id)
+            .map(CoursePublisherDto::from)
+            .map_err(failed)
+    })
+    .await
 }
 
 #[derive(Serialize)]
@@ -493,7 +550,12 @@ pub(crate) async fn get_course_detail(
             return Ok(None);
         };
         let info_hash = library.torrent_info_hash(&course_id).map_err(failed)?;
-        Ok(Some(CourseDetailDto::new(manifest, info_hash)))
+        let publisher = library.course_publisher(&course_id).map_err(failed)?;
+        Ok(Some(CourseDetailDto::new(
+            manifest,
+            info_hash,
+            publisher.into(),
+        )))
     })
     .await
 }
@@ -655,6 +717,8 @@ fn local_import_error(error: LibraryError) -> CommandError {
             command_error("invalid_input", error)
         }
         LibraryError::NoteTarget(_) => command_error("note_target_invalid", error),
+        LibraryError::Signature(_) => command_error("signature_invalid", error),
+        LibraryError::PublisherChanged { .. } => command_error("publisher_changed", error),
     }
 }
 
@@ -1929,7 +1993,11 @@ impl From<CourseImportReceipt> for ImportReceiptDto {
 }
 
 impl CourseDetailDto {
-    fn new(manifest: course_format::CourseManifest, torrent_info_hash: Option<String>) -> Self {
+    fn new(
+        manifest: course_format::CourseManifest,
+        torrent_info_hash: Option<String>,
+        publisher: CoursePublisherDto,
+    ) -> Self {
         Self {
             course_id: manifest.course_id,
             course_version: manifest.version,
@@ -1938,6 +2006,7 @@ impl CourseDetailDto {
             publisher_name: manifest.publisher.name,
             source: source_name(torrent_info_hash.as_deref()),
             torrent_info_hash,
+            publisher,
             modules: manifest
                 .modules
                 .into_iter()

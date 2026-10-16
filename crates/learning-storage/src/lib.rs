@@ -13,10 +13,30 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 12;
+const CURRENT_SCHEMA_VERSION: i64 = 13;
 /// Previous versions of one course whose manifests are kept for moving annotations.
 pub const KEPT_PREVIOUS_MANIFESTS: u32 = 5;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
+
+/// A verified publisher signature of a course version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CourseSignature {
+    /// The publisher's identity (root key).
+    pub publisher_id: String,
+    /// The key that signed this version.
+    pub signing_key: String,
+    /// When it was signed, in Unix seconds.
+    pub signed_at: u64,
+}
+
+/// What a save records about who published the course.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CourseTrust {
+    /// The verified signature of the version being saved, if it is signed.
+    pub signature: Option<CourseSignature>,
+    /// Pin the course to this publisher if it has no pin yet.
+    pub pin: Option<String>,
+}
 
 /// Annotations to move from one lesson to another of the same course.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -304,6 +324,137 @@ impl Storage {
             imported_at,
             None,
         )
+    }
+
+    /// [`Self::save_imported_course`], also recording who published it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::save_imported_course`].
+    pub fn save_imported_course_trusted(
+        &mut self,
+        manifest: &CourseManifest,
+        total_resource_bytes: u64,
+        package_root: &Path,
+        trust: &CourseTrust,
+    ) -> Result<StoredCourseSummary, StorageError> {
+        let imported_at = unix_now_u64()?;
+        self.save_course(
+            manifest,
+            total_resource_bytes,
+            package_root,
+            imported_at,
+            None,
+            trust,
+        )
+    }
+
+    /// [`Self::save_torrent_course`], also recording who published it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::save_torrent_course`].
+    pub fn save_torrent_course_trusted(
+        &mut self,
+        manifest: &CourseManifest,
+        total_resource_bytes: u64,
+        content_root: &Path,
+        torrent: (&str, &[u8]),
+        trust: &CourseTrust,
+    ) -> Result<StoredCourseSummary, StorageError> {
+        let imported_at = unix_now_u64()?;
+        self.save_course(
+            manifest,
+            total_resource_bytes,
+            content_root,
+            imported_at,
+            Some(torrent),
+            trust,
+        )
+    }
+
+    /// The publisher a course is pinned to, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn course_pin(&self, course_id: &str) -> Result<Option<String>, StorageError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT publisher_id FROM course_pins WHERE course_id = ?1",
+                [course_id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Forget a course's pinned publisher, so its next signed import pins
+    /// again. Returns whether there was a pin.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for write failures.
+    pub fn forget_course_pin(&mut self, course_id: &str) -> Result<bool, StorageError> {
+        Ok(self
+            .connection
+            .execute("DELETE FROM course_pins WHERE course_id = ?1", [course_id])?
+            > 0)
+    }
+
+    /// Signed key revocations, as JSON statements, oldest first. Callers
+    /// verify them; storage only keeps them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn revocation_statements(&self) -> Result<Vec<String>, StorageError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT statement_json FROM key_revocations ORDER BY recorded_at, rowid")?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect::<Result<_, _>>().map_err(StorageError::from)
+    }
+
+    /// Keep a signed key revocation; an identical one is kept once.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock or write failures.
+    pub fn add_revocation_statement(&mut self, statement_json: &str) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO key_revocations (statement_json, recorded_at) VALUES (?1, ?2)
+             ON CONFLICT(statement_json) DO NOTHING",
+            params![statement_json, unix_now()?],
+        )?;
+        Ok(())
+    }
+
+    /// The verified signature of a course's current version, if it is signed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query or decoding failures.
+    pub fn course_signature(
+        &self,
+        course_id: &str,
+    ) -> Result<Option<CourseSignature>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT publisher_id, signing_key, signed_at FROM course_signatures WHERE course_id = ?1",
+                [course_id],
+                |row| {
+                    let signed_at: i64 = row.get(2)?;
+                    Ok(CourseSignature {
+                        publisher_id: row.get(0)?,
+                        signing_key: row.get(1)?,
+                        signed_at: u64::try_from(signed_at)
+                            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(2, signed_at))?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StorageError::from)
     }
 
     /// Persist a course whose validated manifest came from a torrent. Only
@@ -1256,6 +1407,25 @@ impl Storage {
         imported_at: u64,
         torrent: Option<(&str, &[u8])>,
     ) -> Result<StoredCourseSummary, StorageError> {
+        self.save_course(
+            manifest,
+            total_resource_bytes,
+            package_root,
+            imported_at,
+            torrent,
+            &CourseTrust::default(),
+        )
+    }
+
+    fn save_course(
+        &mut self,
+        manifest: &CourseManifest,
+        total_resource_bytes: u64,
+        package_root: &Path,
+        imported_at: u64,
+        torrent: Option<(&str, &[u8])>,
+        trust: &CourseTrust,
+    ) -> Result<StoredCourseSummary, StorageError> {
         let total_bytes = sqlite_integer(total_resource_bytes, "total resource bytes")?;
         let imported_at_i64 = sqlite_integer(imported_at, "import timestamp")?;
         let manifest_json = serde_json::to_vec(manifest)?;
@@ -1335,6 +1505,7 @@ impl Storage {
         }
         refresh_search_row(&tx, manifest)?;
         index_course_outline(&tx, manifest)?;
+        record_trust(&tx, &manifest.course_id, trust, imported_at_i64)?;
         tx.commit()?;
 
         Ok(StoredCourseSummary {
@@ -1350,6 +1521,38 @@ impl Storage {
             sharing: false,
         })
     }
+}
+
+/// Replace the course's recorded signature, and pin it when it has no pin.
+fn record_trust(
+    tx: &Transaction<'_>,
+    course_id: &str,
+    trust: &CourseTrust,
+    now: i64,
+) -> Result<(), StorageError> {
+    tx.execute(
+        "DELETE FROM course_signatures WHERE course_id = ?1",
+        [course_id],
+    )?;
+    if let Some(signature) = &trust.signature {
+        tx.execute(
+            "INSERT INTO course_signatures (course_id, publisher_id, signing_key, signed_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                course_id,
+                signature.publisher_id,
+                signature.signing_key,
+                sqlite_integer(signature.signed_at, "signature time")?,
+            ],
+        )?;
+    }
+    if let Some(publisher_id) = &trust.pin {
+        tx.execute(
+            "INSERT INTO course_pins (course_id, publisher_id, pinned_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(course_id) DO NOTHING",
+            params![course_id, publisher_id, now],
+        )?;
+    }
+    Ok(())
 }
 
 /// Before a course is replaced by another version, keep the manifest it had,
@@ -1608,7 +1811,7 @@ fn add_drawings(connection: &mut Connection) -> Result<(), StorageError> {
 }
 
 /// Migrations from schema 4 on, by the version they start from.
-const TABLE_MIGRATIONS: [(i64, Migration); 8] = [
+const TABLE_MIGRATIONS: [(i64, Migration); 9] = [
     (4, add_playback_positions),
     (5, add_download_commitments),
     (6, add_pause_flag),
@@ -1617,7 +1820,35 @@ const TABLE_MIGRATIONS: [(i64, Migration); 8] = [
     (9, add_drawings),
     (10, add_learning_search),
     (11, add_manifest_history),
+    (12, add_course_trust),
 ];
+
+/// Schema 13. The verified signature of each course's current version, the
+/// publisher each course is pinned to after its first signed import, and the
+/// key revocations learned from catalogs (ADR 0014).
+fn add_course_trust(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE course_signatures (
+           course_id TEXT PRIMARY KEY NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+           publisher_id TEXT NOT NULL,
+           signing_key TEXT NOT NULL,
+           signed_at INTEGER NOT NULL CHECK(signed_at >= 0)
+         ) STRICT;
+         CREATE TABLE course_pins (
+           course_id TEXT PRIMARY KEY NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+           publisher_id TEXT NOT NULL,
+           pinned_at INTEGER NOT NULL CHECK(pinned_at >= 0)
+         ) STRICT;
+         CREATE TABLE key_revocations (
+           statement_json TEXT PRIMARY KEY NOT NULL,
+           recorded_at INTEGER NOT NULL CHECK(recorded_at >= 0)
+         ) STRICT;
+         PRAGMA user_version = 13;",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
 
 /// Schema 12. The manifests of the versions a course replaced, so a
 /// learner's annotations on lessons a new version no longer has can still be
@@ -1811,6 +2042,13 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredCourseSum
         torrent_info_hash: row.get(7)?,
         sharing: row.get(8)?,
     })
+}
+
+fn unix_now_u64() -> Result<u64, StorageError> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .map_err(|_| StorageError::InvalidSystemClock)
 }
 
 fn unix_now() -> Result<i64, StorageError> {
@@ -2069,7 +2307,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE course_manifest_history;
+                    "DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;
+                     DROP TABLE course_manifest_history;
                      DROP TABLE learning_search; DROP TABLE indexed_resources;
                      DROP TABLE drawing_files; DROP TABLE lesson_drawings;
                      DROP TABLE notes; DROP TABLE lesson_progress;
@@ -2110,7 +2349,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE course_manifest_history; DROP TRIGGER notes_search_move;
+                    "DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;
+                     DROP TABLE course_manifest_history; DROP TRIGGER notes_search_move;
                      DROP TRIGGER notes_search_insert; DROP TRIGGER notes_search_update;
                      DROP TRIGGER notes_search_delete;
                      DROP TABLE learning_search; DROP TABLE indexed_resources;
@@ -2671,6 +2911,58 @@ mod tests {
             "scene-old"
         );
         assert_eq!(storage.drawing_lessons(&id).unwrap(), ["elsewhere", "new"]);
+    }
+
+    #[test]
+    fn signatures_follow_each_version_and_pins_are_set_once() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Rust", "systems");
+        let id = course.course_id.clone();
+        let root = Path::new("/courses/rust");
+        let signed = |key: &str| CourseTrust {
+            signature: Some(CourseSignature {
+                publisher_id: "ed25519-root".to_owned(),
+                signing_key: key.to_owned(),
+                signed_at: 7,
+            }),
+            pin: Some("ed25519-root".to_owned()),
+        };
+        storage
+            .save_imported_course_trusted(&course, 1, root, &CourseTrust::default())
+            .unwrap();
+        assert_eq!(storage.course_pin(&id).unwrap(), None);
+        assert_eq!(storage.course_signature(&id).unwrap(), None);
+        storage
+            .save_imported_course_trusted(&course, 1, root, &signed("ed25519-a"))
+            .unwrap();
+        assert_eq!(
+            storage.course_pin(&id).unwrap().as_deref(),
+            Some("ed25519-root")
+        );
+        assert_eq!(
+            storage.course_signature(&id).unwrap().unwrap().signing_key,
+            "ed25519-a"
+        );
+        let other_pin = CourseTrust {
+            pin: Some("ed25519-other".to_owned()),
+            ..signed("ed25519-b")
+        };
+        storage
+            .save_torrent_course_trusted(&course, 1, root, ("aa", b"meta"), &other_pin)
+            .unwrap();
+        assert_eq!(
+            storage.course_pin(&id).unwrap().as_deref(),
+            Some("ed25519-root")
+        );
+        assert_eq!(
+            storage.course_signature(&id).unwrap().unwrap().signing_key,
+            "ed25519-b"
+        );
+        assert!(storage.forget_course_pin(&id).unwrap());
+        assert!(!storage.forget_course_pin(&id).unwrap());
+        assert_eq!(storage.course_pin(&id).unwrap(), None);
+        storage.save_imported_course(&course, 1, root).unwrap();
+        assert_eq!(storage.course_signature(&id).unwrap(), None);
     }
 
     #[test]

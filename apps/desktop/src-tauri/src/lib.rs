@@ -181,6 +181,7 @@ pub fn run() {
             commands::search_library,
             commands::list_notes,
             commands::get_annotation_moves,
+            commands::forget_course_publisher,
             commands::move_annotations,
             commands::create_note,
             commands::update_note,

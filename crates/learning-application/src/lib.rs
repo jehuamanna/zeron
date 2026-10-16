@@ -14,6 +14,7 @@ mod search;
 mod sharing;
 mod streaming;
 mod torrent_import;
+mod trust;
 
 pub use annotation_migration::{AnnotationMove, AnnotationMoveReport};
 pub use cache::{CacheError, CourseCache, RemovalReport};
@@ -48,3 +49,4 @@ pub use torrent_port::{
     EngineError, InfoHash, NetworkProfile, PeerReachability, RateLimits, TorrentEngine,
     TorrentSource, TransferState, TransferStats,
 };
+pub use trust::CoursePublisher;
