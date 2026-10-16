@@ -1,0 +1,52 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Encrypted seek spike</title>
+<style>body{font:14px system-ui;margin:16px}video{width:480px;display:block;margin:8px 0}pre{white-space:pre-wrap}</style>
+<button id="run">Run</button>
+<video id="v" muted playsinline preload="auto"></video>
+<pre id="out"></pre>
+<script>
+const sources = {
+  "plain file": "{{PLAIN_FILE}}",
+  "plain stream": "{{PLAIN_STREAM}}",
+  "encrypted 64K": "{{ENCRYPTED}}",
+};
+const targets = [12, 150, 47, 171, 3, 88, 120, 30, 160, 65, 101, 7];
+const v = document.getElementById("v");
+const out = document.getElementById("out");
+const log = (s) => { out.textContent += s + "\n"; };
+const once = (el, ev) => new Promise((ok, fail) => {
+  const t = setTimeout(() => fail(new Error(ev + " timeout")), 20000);
+  el.addEventListener(ev, () => { clearTimeout(t); ok(); }, { once: true });
+});
+const median = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+async function runOne(name, url) {
+  const t0 = performance.now();
+  v.src = url;
+  await once(v, "loadedmetadata");
+  const meta = performance.now() - t0;
+  if (v.readyState < 3) await once(v, "canplay");
+  const start = performance.now() - t0;
+  const seeks = [];
+  for (const at of targets) {
+    const t = performance.now();
+    v.currentTime = at;
+    await once(v, "seeked");
+    if (v.readyState < 3) await once(v, "canplay");
+    seeks.push(performance.now() - t);
+  }
+  const r = { name, meta: Math.round(meta), canPlay: Math.round(start), seekMedian: Math.round(median(seeks)), seekMax: Math.round(Math.max(...seeks)) };
+  log(JSON.stringify(r));
+  return r;
+}
+async function run() {
+  out.textContent = "";
+  const results = [];
+  for (const round of [1, 2]) for (const [n, u] of Object.entries(sources)) {
+    try { results.push({ round, ...(await runOne(n, u)) }); } catch (e) { log(n + ": " + e); }
+  }
+  window.spikeResults = results;
+  log("done");
+}
+document.getElementById("run").onclick = run;
+</script>

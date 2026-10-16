@@ -33,7 +33,7 @@ The user does not want Zeron accounts, meaning no Zeron passwords, profiles, or 
    - This is a manifest schema version bump. Older builds refuse paid packages; free packages are unchanged.
 2. **Encryption format.**
    - Each release has a random 256-bit *content key*. Each resource's file key is derived from it with HKDF-SHA256, using the resource ID as the info string.
-   - Files are split into fixed 64 KiB chunks. Each chunk is sealed with XChaCha20-Poly1305 under:
+   - Files are split into fixed chunks of 65,520 plaintext bytes, so each sealed chunk (with its 16-byte tag) is exactly 64 KiB and never straddles a torrent piece boundary ([spike results](../research/paid-courses-spike-results.md)). Each chunk is sealed with XChaCha20-Poly1305 under:
      - a nonce derived from the file key and the chunk index;
      - associated data of `(resource ID, chunk index, final-chunk flag)`.
 
@@ -54,7 +54,7 @@ The user does not want Zeron accounts, meaning no Zeron passwords, profiles, or 
      { courseId, learnerKey, keys: [{ courseVersion, wrappedContentKey }], issuedAt }
      ```
 
-   - `wrappedContentKey` is the release's content key sealed to the learner's X25519 key with HPKE (RFC 9180; X25519, HKDF-SHA256, ChaCha20-Poly1305).
+   - `wrappedContentKey` is the release's content key sealed to the learner's X25519 key with HPKE (RFC 9180; X25519, HKDF-SHA256, ChaCha20-Poly1305, base mode) through the `hpke` crate 0.14.1. `info` is `zeron.license.v1`, and the associated data is the course ID and version.
    - Licenses are bound to a learner key, never bearer tokens. A copied license file is useless without that machine's secret.
    - The Library verifies licenses offline. It stores them as learner data, outside course directories, so they survive cache removal and course removal (ADR 0015).
 5. **Issuer delegation.**

@@ -69,6 +69,8 @@ Slices, in dependency order:
    - choosing the HPKE crate.
 
    Exit with results in `docs/research/`.
+
+   Done 2026-10-16: see [paid-courses-spike-results.md](research/paid-courses-spike-results.md). The choices are 64 KiB sealed chunks and the `hpke` crate 0.14.1; decryption adds no measurable seek cost, and the issuer-as-relying-party sign-in works in a real browser. Real providers, Windows/macOS, and AppImage browser launch move to slice 7.
 2. **Encrypted packages.**
    - Manifest schema bump with `access` and per-resource `encryption`.
    - Chunked XChaCha20-Poly1305 in `course-access`.
