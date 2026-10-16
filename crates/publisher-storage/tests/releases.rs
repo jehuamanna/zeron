@@ -143,7 +143,7 @@ fn version_one_databases_migrate_without_losing_drafts() {
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
     let reopened = PublisherStorage::open(&database).unwrap();
     assert_eq!(reopened.releases().unwrap().len(), 1);
     fs::remove_file(database).unwrap();
@@ -243,6 +243,7 @@ fn version_three_releases_migrate_with_their_files_present() {
         .execute_batch(
             "ALTER TABLE releases DROP COLUMN files_state;
              DROP TABLE distribution_events;
+             DROP TABLE catalog_releases;
              PRAGMA user_version = 3;",
         )
         .unwrap();
@@ -408,4 +409,27 @@ fn distribution_events_are_listed_newest_first_and_pruned() {
             .len(),
         0
     );
+}
+
+#[test]
+fn releases_are_listed_in_the_catalog_only_once_confirmed() {
+    let mut storage = PublisherStorage::open_in_memory().unwrap();
+    storage
+        .insert_release(release("release_1", "1.0.0"))
+        .unwrap();
+    storage
+        .insert_release(release("release_2", "1.1.0"))
+        .unwrap();
+    assert_eq!(storage.catalog_releases().unwrap().len(), 0);
+    assert!(storage.set_catalog_release("release_2", true).unwrap());
+    assert!(storage.set_catalog_release("release_2", true).unwrap());
+    assert!(storage.set_catalog_release("release_1", true).unwrap());
+    assert!(
+        !storage
+            .set_catalog_release("release_missing", true)
+            .unwrap()
+    );
+    assert_eq!(storage.catalog_releases().unwrap().len(), 2);
+    assert!(storage.set_catalog_release("release_2", false).unwrap());
+    assert_eq!(storage.catalog_releases().unwrap(), ["release_1"]);
 }

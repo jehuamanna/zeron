@@ -9,6 +9,7 @@ import { useLibraryUi } from "../stores/library";
 vi.mock("../services/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/library")>()),
   libraryApi: {
+    listCatalogs: vi.fn(() => Promise.resolve([])),
     readiness: vi.fn(),
     list: vi.fn(),
     chooseAndImport: vi.fn(),

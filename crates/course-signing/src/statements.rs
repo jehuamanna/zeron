@@ -46,6 +46,70 @@ pub struct RevocationStatement {
     pub reason: String,
 }
 
+/// A revocation kept together with the publisher's rotation chain that
+/// shows who may sign it. Releases signed with a stolen retired key need not
+/// carry the rotations that follow it, so revocations are checked against
+/// the chain that arrived with them, from a catalog the publisher signed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RevocationRecord {
+    /// The publisher's identity (root key).
+    pub publisher_id: String,
+    /// Rotations from the root, as the catalog carried them.
+    pub rotations: Vec<Signed<RotationStatement>>,
+    /// The revocation.
+    pub revocation: Signed<RevocationStatement>,
+}
+
+/// The reason, when `records` hold a valid revocation of `signing_key` for
+/// a signature made at `signed_at` by `root`'s publisher. A record counts
+/// only when its chain verifies from `root` and the revocation is signed by
+/// the revoked key or a key after it in that chain.
+#[must_use]
+pub fn revoked_by_records(
+    root: &PublicKey,
+    records: &[RevocationRecord],
+    signing_key: &PublicKey,
+    signed_at: u64,
+) -> Option<String> {
+    records_revoking(root, records, signing_key, |revoked_at| {
+        signed_at >= revoked_at
+    })
+}
+
+/// Whether a rotation made by `key` at `rotated_at` came after `key` was
+/// revoked. A key revoked from the moment it was retired still hands over
+/// validly at that moment.
+pub(crate) fn rotation_revoked_by_records(
+    root: &PublicKey,
+    records: &[RevocationRecord],
+    key: &PublicKey,
+    rotated_at: u64,
+) -> bool {
+    records_revoking(root, records, key, |revoked_at| rotated_at > revoked_at).is_some()
+}
+
+fn records_revoking(
+    root: &PublicKey,
+    records: &[RevocationRecord],
+    key: &PublicKey,
+    applies: impl Fn(u64) -> bool,
+) -> Option<String> {
+    records
+        .iter()
+        .filter(|record| record.publisher_id == root.to_string())
+        .find_map(|record| {
+            let keys = verify_chain(root, &record.rotations).ok()?;
+            revoked_where(
+                &keys,
+                std::slice::from_ref(&record.revocation),
+                key,
+                &applies,
+            )
+            .map(|revocation| revocation.reason.clone())
+        })
+}
+
 /// The canonical bytes a signature covers: a domain-separation line and
 /// compact JSON with fields in declared order.
 pub(crate) fn canonical<T: Serialize>(domain: &[u8], statement: &T) -> Vec<u8> {
@@ -139,12 +203,23 @@ pub fn revoked<'a>(
     signing_key: &PublicKey,
     signed_at: u64,
 ) -> Option<&'a RevocationStatement> {
+    revoked_where(chain, revocations, signing_key, |revoked_at| {
+        signed_at >= revoked_at
+    })
+}
+
+fn revoked_where<'a>(
+    chain: &[PublicKey],
+    revocations: &'a [Signed<RevocationStatement>],
+    signing_key: &PublicKey,
+    applies: impl Fn(u64) -> bool,
+) -> Option<&'a RevocationStatement> {
     let position = chain.iter().position(|key| key == signing_key)?;
     revocations
         .iter()
         .filter(|revocation| {
             revocation.statement.revoked_key == signing_key.to_string()
-                && signed_at >= revocation.statement.revoked_at
+                && applies(revocation.statement.revoked_at)
         })
         .find(|revocation| {
             let message = canonical(REVOCATION_DOMAIN, &revocation.statement);

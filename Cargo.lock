@@ -2666,6 +2666,7 @@ dependencies = [
  "nix",
  "publisher-application",
  "publisher-identity",
+ "semver",
  "serde_json",
  "sha2 0.11.1",
  "thiserror 2.0.21",
@@ -7047,6 +7048,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tokio",
  "torrent-librqbit",
+ "url",
  "webkit2gtk",
 ]
 

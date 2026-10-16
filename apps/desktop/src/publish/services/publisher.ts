@@ -285,6 +285,14 @@ export interface AppliedConfiguration {
   restartRequired: boolean;
 }
 
+export interface PublisherCatalog {
+  title: string;
+  listings: Array<{ release: Release; listed: boolean }>;
+  revocations: Array<{ revokedKey: string; fingerprint: string; revokedAtUnixSeconds: number; reason: string }>;
+  /** Keys this identity retired and has not revoked. */
+  retiredKeys: Array<{ key: string; fingerprint: string; retiredAtUnixSeconds: number }>;
+}
+
 export interface CommandError {
   code: string;
   message: string;
@@ -360,6 +368,13 @@ export const publisherApi = {
     invoke<DropOutcome>("apply_drop", { draftId, expectedRevision, token, target: { lessonId } }),
   discardDrop: (token: string) => invoke<void>("discard_drop", { token }),
   validateDraft: (draftId: string) => invoke<ValidationIssue[]>("validate_draft", { draftId }),
+  getCatalog: () => invoke<PublisherCatalog>("get_catalog"),
+  setCatalogTitle: (title: string) => invoke<PublisherCatalog>("set_catalog_title", { title }),
+  /** Listing a release is an explicit, per-release confirmation. */
+  setCatalogRelease: (releaseId: string, listed: boolean) => invoke<PublisherCatalog>("set_catalog_release", { releaseId, listed }),
+  revokeRetiredKey: (key: string, reason: string) => invoke<PublisherCatalog>("revoke_retired_key", { key, reason }),
+  /** Opens a native save dialog for the signed catalog; resolves `false` when cancelled. */
+  exportCatalog: () => invoke<boolean>("export_catalog"),
   getIdentity: () => invoke<PublisherIdentity>("get_publisher_identity"),
   createIdentity: () => invoke<PublisherIdentity>("create_publisher_identity"),
   rotateIdentity: () => invoke<PublisherIdentity>("rotate_publisher_identity"),

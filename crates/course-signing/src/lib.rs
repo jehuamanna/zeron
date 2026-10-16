@@ -20,8 +20,8 @@ pub use release::{
     verify_release,
 };
 pub use statements::{
-    MAX_ROTATIONS, RevocationStatement, RotationStatement, Signed, revoke, revoked, rotate,
-    verify_chain,
+    MAX_ROTATIONS, RevocationRecord, RevocationStatement, RotationStatement, Signed, revoke,
+    revoked, revoked_by_records, rotate, verify_chain,
 };
 
 use thiserror::Error;

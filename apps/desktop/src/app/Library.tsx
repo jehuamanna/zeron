@@ -8,6 +8,7 @@ import { DocumentViewer } from "../features/documents/DocumentViewer";
 import { DrawingPanel } from "../features/drawings/DrawingPanel";
 import { LibrarySearch } from "../features/search/LibrarySearch";
 import { TranscriptPanel } from "../features/transcripts/TranscriptPanel";
+import { CatalogsSection } from "../features/catalogs/CatalogsSection";
 import { AnnotationMovesCard } from "../features/migration/AnnotationMovesCard";
 import { PublisherBadge } from "../features/publisher/PublisherBadge";
 import { NotesPanel } from "../features/notes/NotesPanel";
@@ -464,6 +465,7 @@ export function Library() {
           </div>
 
           <TorrentImportPanel engine={readiness.data?.torrentImport ?? "pending"} />
+          <CatalogsSection torrentsAvailable={readiness.data?.torrentImport === "ready"} />
 
           {readiness.isError || courses.isError ? (
             <div role="alert" className="rounded-2xl border border-red-400/30 bg-red-400/10 p-5 text-red-100">

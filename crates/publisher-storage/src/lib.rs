@@ -9,7 +9,7 @@ use course_publisher::DraftCourse;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 /// Distribution events kept; older ones are pruned as new ones arrive.
 pub const MAX_DISTRIBUTION_EVENTS: u64 = 2_000;
 
@@ -715,6 +715,47 @@ impl PublisherStorage {
         Ok(())
     }
 
+    /// Confirm a release for the publisher's catalog, or take it out.
+    /// Returns `false` for an unknown release.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn set_catalog_release(
+        &mut self,
+        release_id: &str,
+        listed: bool,
+    ) -> Result<bool, PublisherStorageError> {
+        if self.release(release_id)?.is_none() {
+            return Ok(false);
+        }
+        if listed {
+            self.connection.execute(
+                "INSERT INTO catalog_releases (release_id, confirmed_at) VALUES (?1, ?2)
+                 ON CONFLICT (release_id) DO NOTHING",
+                params![release_id, to_i64(now()?, "confirmation timestamp")?],
+            )?;
+        } else {
+            self.connection.execute(
+                "DELETE FROM catalog_releases WHERE release_id=?1",
+                [release_id],
+            )?;
+        }
+        Ok(true)
+    }
+
+    /// Releases confirmed for the catalog, oldest confirmation first.
+    ///
+    /// # Errors
+    /// Returns a storage failure.
+    pub fn catalog_releases(&self) -> Result<Vec<String>, PublisherStorageError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT release_id FROM catalog_releases ORDER BY confirmed_at, release_id")?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(PublisherStorageError::from)
+    }
+
     /// Append a distribution event and prune the oldest beyond
     /// [`MAX_DISTRIBUTION_EVENTS`]. Callers redact `detail` first.
     ///
@@ -875,6 +916,17 @@ fn migrate(connection: &mut Connection) -> Result<(), PublisherStorageError> {
              );
              CREATE INDEX distribution_events_by_release ON distribution_events (release_id, event_id);
              PRAGMA user_version = 5;",
+        )?;
+        transaction.commit()?;
+    }
+    if found < 6 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE catalog_releases (
+                release_id TEXT PRIMARY KEY NOT NULL REFERENCES releases (release_id),
+                confirmed_at INTEGER NOT NULL CHECK (confirmed_at >= 0)
+             );
+             PRAGMA user_version = 6;",
         )?;
         transaction.commit()?;
     }

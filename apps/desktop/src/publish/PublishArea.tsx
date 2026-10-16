@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BookPlus, KeyRound, Radio } from "lucide-react";
+import { ArrowLeft, BookPlus, KeyRound, LibraryBig, Radio } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { Builder } from "./features/builder/Builder";
@@ -7,6 +7,7 @@ import { ReadinessPanel } from "./features/builder/ReadinessPanel";
 import { PublishPanel } from "./features/publish/PublishPanel";
 import { CourseList } from "./features/courses/CourseList";
 import { DistributionPage } from "./features/distribution/DistributionPage";
+import { CatalogPage } from "./features/catalog/CatalogPage";
 import { IdentityPage } from "./features/identity/IdentityPage";
 import { publisherApi, type DraftDetail } from "./services/publisher";
 import { useBuilderUi, type Workspace } from "./stores/builder";
@@ -14,6 +15,7 @@ import { useBuilderUi, type Workspace } from "./stores/builder";
 const tabs: Array<{ value: Workspace; label: string; icon: typeof BookPlus }> = [
   { value: "courses", label: "Courses", icon: BookPlus },
   { value: "distribution", label: "Distribution", icon: Radio },
+  { value: "catalog", label: "Catalog", icon: LibraryBig },
   { value: "identity", label: "Identity", icon: KeyRound },
 ];
 
@@ -53,7 +55,7 @@ export function PublishArea({ onOpenNetwork }: { onOpenNetwork: () => void }) {
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-white/10 pb-6">
         <div>
           <p className="mb-2 text-xs font-bold uppercase tracking-[0.24em] text-amber-300">Publish</p>
-          <h1 className="text-4xl font-semibold tracking-tight">{workspace === "distribution" ? "Distribution" : workspace === "identity" ? "Publisher identity" : selectedDraftId ? "Course builder" : "Your courses"}</h1>
+          <h1 className="text-4xl font-semibold tracking-tight">{workspace === "distribution" ? "Distribution" : workspace === "identity" ? "Publisher identity" : workspace === "catalog" ? "Catalog" : selectedDraftId ? "Course builder" : "Your courses"}</h1>
         </div>
         <div className="flex items-center gap-2">
           <nav aria-label="Publish sections" className="flex gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 text-sm">
@@ -78,7 +80,7 @@ export function PublishArea({ onOpenNetwork }: { onOpenNetwork: () => void }) {
       </header>
 
       <div className="py-8">
-        {workspace === "distribution" ? <DistributionPage onOpenNetwork={onOpenNetwork} /> : workspace === "identity" ? <IdentityPage /> : selectedDraftId ? (
+        {workspace === "distribution" ? <DistributionPage onOpenNetwork={onOpenNetwork} /> : workspace === "identity" ? <IdentityPage /> : workspace === "catalog" ? <CatalogPage onOpenIdentity={() => showWorkspace("identity")} /> : selectedDraftId ? (
           <div>
             <button type="button" onClick={() => selectDraft(null)} className="mb-6 flex items-center gap-2 text-sm text-slate-400"><ArrowLeft size={16} /> Back to courses</button>
             {draft.isPending ? <p className="text-slate-400">Opening draft…</p> : draft.data ? (

@@ -1,6 +1,7 @@
 //! Admin publisher use cases shared by Zeron composition roots.
 
 mod activity;
+mod catalog;
 mod configuration;
 mod disk;
 mod drops;
@@ -16,6 +17,7 @@ mod trackers;
 use std::path::Path;
 
 pub use activity::{ActivityKind, MAX_ACTIVITY_DETAIL_CHARS, redact};
+pub use catalog::CatalogListing;
 pub use configuration::{
     CONFIGURATION_FORMAT, CONFIGURATION_VERSION, MAX_CONFIGURATION_BYTES, NetworkConfiguration,
     PublisherConfiguration,

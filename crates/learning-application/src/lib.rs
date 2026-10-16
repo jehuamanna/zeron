@@ -2,6 +2,7 @@
 
 mod annotation_migration;
 mod cache;
+mod catalogs;
 mod disk;
 mod documents;
 mod downloads;
@@ -18,6 +19,7 @@ mod trust;
 
 pub use annotation_migration::{AnnotationMove, AnnotationMoveReport};
 pub use cache::{CacheError, CourseCache, RemovalReport};
+pub use catalogs::{CatalogEntryView, CatalogView, EntryStatus, MAX_CATALOG_URL_BYTES};
 pub use disk::{DISK_RESERVE_BYTES, DiskGuard, DiskState, available_bytes, fits};
 pub use documents::{
     DocumentError, DocumentSource, MAX_DOCUMENT_BYTES, MAX_TEXT_BYTES, read_local_document,

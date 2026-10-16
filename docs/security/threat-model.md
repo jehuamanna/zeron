@@ -18,7 +18,9 @@ Assets include learner notes/history, publisher source media, immutable releases
 | Arbitrary command execution | no shell interpolation; fixed executable; structured argv; external tools optional | hostile filename tests |
 | Draft/release mutation | staging + verification + atomic activation; release read-only policy | crash/fault injection per stage |
 | Secret exposure | backend-only key store; zero/redact where practical; no frontend DTO/logging | log and IPC contract audit |
-| Unauthorized remote control | disabled by default; TLS; identity verification; scoped revocable credentials | authn/authz/replay tests |
+| Impostor course update (same `courseId`, another publisher) | Ed25519 release signatures; trust on first use per course; refuse a different or missing signature once pinned (ADR 0014) | folder and loopback-torrent impostor tests |
+| Stolen or retired signing key | key rotation chains; revocations carried by signed catalogs and checked against the catalog's chain; catalogs never roll back | stolen-retired-key and revocation tests |
+| Signing key theft from disk | secret only in the OS credential store; passphrase backups with Argon2id and XChaCha20-Poly1305; no secret over IPC or in logs | real-keychain tests on Linux, macOS, and Windows CI; IPC DTO tests |
 | Destructive operator error | distinct remove-job/delete-files actions; explicit target preview and confirmation | UI/E2E tests |
 | Privacy surprise from seeding | opt-in/onboarding disclosure; visible status/rates; pause controls | usability and settings tests |
 
@@ -28,7 +30,7 @@ Each Tauri app gets a minimal allowlist. Dialog selection does not grant the fro
 
 ## Cryptography and authenticity
 
-BitTorrent piece hashes provide transport/content integrity under the info hash but not publisher identity. SHA-1 remains part of v1 torrent identity and is not reused as an authenticity primitive. Manifest resources also carry SHA-256 digests. Future publisher signatures use a reviewed canonical envelope and platform key storage; private keys never enter course packages or frontend state.
+BitTorrent piece hashes provide transport/content integrity under the info hash but not publisher identity. SHA-1 remains part of v1 torrent identity and is not reused as an authenticity primitive. Manifest resources also carry SHA-256 digests. Publisher signatures (ADR 0014) sign a domain-separated canonical statement over the manifest's SHA-256 with Ed25519; secret keys live only in the OS credential store and never enter course packages, IPC, or frontend state. The first signed version of a course pins its publisher (trust on first use); fingerprints let people confirm the first import out of band.
 
 ## Data retention and logs
 
@@ -36,9 +38,7 @@ Logs exclude magnet query parameters where secrets could appear, gateway URLs/to
 
 ## Open security decisions
 
-- Key storage and recovery on each desktop OS.
 - Exact WebView CSP/media behavior for randomized loopback ports.
 - Sandboxing strategy for PDF.js, media probing, and optional FFmpeg.
-- Remote seed-server provisioning and certificate rotation.
-- Canonical serialization, key rotation, and revocation for signed catalog releases.
+- Trust on first use cannot protect a learner's very first import of a course; a pre-shared fingerprint or a future publisher directory would.
 

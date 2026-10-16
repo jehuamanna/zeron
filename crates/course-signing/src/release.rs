@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     PublicKey, SecretKey, SigningError,
     statements::{
-        MAX_ROTATIONS, RevocationStatement, RotationStatement, Signed, canonical, revoked,
-        verify_chain,
+        MAX_ROTATIONS, RevocationRecord, RotationStatement, Signed, canonical, revoked_by_records,
+        rotation_revoked_by_records, verify_chain,
     },
 };
 
@@ -126,6 +126,8 @@ pub fn parse_release_signature(bytes: &[u8]) -> Result<ReleaseSignature, Signing
 /// it may be made by a key revoked by then. A signing key revoked at the
 /// signing time still verifies, with the reason in
 /// [`VerifiedRelease::revoked`], so callers can say why they refuse it.
+/// Revocations are checked against the chains they arrived with
+/// ([`RevocationRecord`]), not only the release's own.
 ///
 /// # Errors
 /// Returns [`SigningError::Mismatch`] when the statement describes another
@@ -137,7 +139,7 @@ pub fn verify_release(
     course_version: &str,
     manifest_sha256: &str,
     publisher_id: &str,
-    revocations: &[Signed<RevocationStatement>],
+    revocations: &[RevocationRecord],
 ) -> Result<VerifiedRelease, SigningError> {
     let statement = &signature.statement;
     if statement.course_id != course_id || statement.course_version != course_version {
@@ -152,15 +154,27 @@ pub fn verify_release(
     if chain.last() != Some(&signing_key) {
         return Err(SigningError::BrokenChain);
     }
+    // A revocation counts through the chain it arrived with or the
+    // release's own chain.
+    let records: Vec<RevocationRecord> = revocations
+        .iter()
+        .flat_map(|record| {
+            [
+                record.clone(),
+                RevocationRecord {
+                    rotations: signature.rotations.clone(),
+                    ..record.clone()
+                },
+            ]
+        })
+        .collect();
     for (index, rotation) in signature.rotations.iter().enumerate() {
-        if revoked(
-            &chain,
-            revocations,
+        if rotation_revoked_by_records(
+            &root,
+            &records,
             &chain[index],
             rotation.statement.rotated_at,
-        )
-        .is_some()
-        {
+        ) {
             return Err(SigningError::BrokenChain);
         }
     }
@@ -171,8 +185,7 @@ pub fn verify_release(
         root,
         signing_key,
         signed_at: statement.signed_at,
-        revoked: revoked(&chain, revocations, &signing_key, statement.signed_at)
-            .map(|revocation| revocation.reason.clone()),
+        revoked: revoked_by_records(&root, &records, &signing_key, statement.signed_at),
     })
 }
 
@@ -182,6 +195,66 @@ mod tests {
     use crate::{revoke, rotate};
 
     const SHA: &str = "ab12";
+
+    fn record(
+        root: &SecretKey,
+        rotations: Vec<Signed<RotationStatement>>,
+        revocation: Signed<crate::RevocationStatement>,
+    ) -> RevocationRecord {
+        RevocationRecord {
+            publisher_id: root.public_key().to_string(),
+            rotations,
+            revocation,
+        }
+    }
+
+    #[test]
+    fn a_stolen_retired_key_cannot_hide_its_revocation_by_leaving_out_the_chain() {
+        let (root, next) = (key(1), key(2));
+        let rotation = rotate(&root, &next.public_key(), 20);
+        let revocation = revoke(&next, &root.public_key(), 20, "laptop stolen");
+        let known = record(&root, vec![rotation], revocation);
+        let forged = sign_release(&root, "course_a", "9.9.9", SHA, 30, Vec::new());
+        let verified = verify_release(
+            &forged,
+            "course_a",
+            "9.9.9",
+            SHA,
+            &root.public_key().to_string(),
+            std::slice::from_ref(&known),
+        )
+        .unwrap();
+        assert_eq!(verified.revoked.as_deref(), Some("laptop stolen"));
+        let before = sign_release(&root, "course_a", "1.0.0", SHA, 10, Vec::new());
+        assert_eq!(
+            verify_release(
+                &before,
+                "course_a",
+                "1.0.0",
+                SHA,
+                &root.public_key().to_string(),
+                std::slice::from_ref(&known)
+            )
+            .unwrap()
+            .revoked,
+            None
+        );
+        let mut broken = known;
+        broken.rotations[0].statement.rotated_at = 21;
+        assert_eq!(
+            verify_release(
+                &forged,
+                "course_a",
+                "9.9.9",
+                SHA,
+                &root.public_key().to_string(),
+                &[broken]
+            )
+            .unwrap()
+            .revoked,
+            None
+        );
+    }
 
     fn key(seed: u8) -> SecretKey {
         SecretKey::from_bytes(&[seed; 32])
@@ -206,7 +279,11 @@ mod tests {
         assert_eq!(verified.signing_key, root.public_key());
         assert_eq!(verified.signed_at, 1_000);
         assert_eq!(verified.revoked, None);
-        let revocation = revoke(&root, &root.public_key(), 900, "key leaked");
+        let revocation = record(
+            &root,
+            Vec::new(),
+            revoke(&root, &root.public_key(), 900, "key leaked"),
+        );
         let flagged = verify_release(
             &parsed,
             "course_a",
@@ -250,7 +327,11 @@ mod tests {
             ),
             Err(SigningError::BrokenChain)
         );
-        let revoked_root = revoke(&root, &root.public_key(), 400, "stolen");
+        let revoked_root = record(
+            &root,
+            Vec::new(),
+            revoke(&root, &root.public_key(), 400, "stolen"),
+        );
         assert_eq!(
             verify_release(
                 &signed,

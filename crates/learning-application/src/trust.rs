@@ -101,8 +101,7 @@ impl CourseLibrary {
     /// parse are skipped; verification decides whether each one counts.
     pub(crate) fn revocations(
         &self,
-    ) -> Result<Vec<course_signing::Signed<course_signing::RevocationStatement>>, LibraryError>
-    {
+    ) -> Result<Vec<course_signing::RevocationRecord>, LibraryError> {
         Ok(self
             .storage
             .revocation_statements()?
@@ -111,15 +110,16 @@ impl CourseLibrary {
             .collect())
     }
 
-    /// Keep a signed key revocation, for example from a catalog. Whether it
-    /// counts is decided when a signature is checked: only revocations made
-    /// by the revoked key or a later key of the same publisher apply.
+    /// Keep a signed key revocation with the rotation chain it arrived with,
+    /// for example from a catalog. Whether it counts is decided when a
+    /// signature is checked: only revocations made by the revoked key or a
+    /// later key of the same publisher's chain apply.
     ///
     /// # Errors
     /// Returns a storage failure.
     pub fn add_key_revocation(
         &mut self,
-        revocation: &course_signing::Signed<course_signing::RevocationStatement>,
+        revocation: &course_signing::RevocationRecord,
     ) -> Result<(), LibraryError> {
         let json = serde_json::to_string(revocation)
             .map_err(|error| LibraryError::Signature(error.to_string()))?;

@@ -239,3 +239,120 @@ fn a_changed_signature_file_stops_activation() {
         Err(DraftServiceError::InvalidAttempt(_))
     ));
 }
+
+fn publish_signed(
+    scratch: &Scratch,
+    drafts: &mut PublisherDrafts,
+    jobs: &PublishJobs,
+    (identity, store): (&publisher_identity::Identity, &MemoryStore),
+    version: &str,
+) -> publisher_application::ReleaseRecord {
+    let course = draft(scratch, drafts, version);
+    let signer =
+        ReleaseSigner::new(identity.clone(), signing_key(store, identity).unwrap(), 10).unwrap();
+    let job = jobs.begin(&course).unwrap();
+    jobs.run_signed(
+        &job.job_id,
+        &course,
+        &DistributionOptions::default(),
+        Some(&signer),
+        &mut |_| {},
+    )
+    .unwrap();
+    jobs.activate(&job.job_id, drafts, &scratch.0.join("releases"))
+        .unwrap()
+        .0
+}
+
+#[test]
+fn the_catalog_lists_confirmed_releases_and_carries_revocations() {
+    let scratch =
+        Scratch(std::env::temp_dir().join(format!("zeron-signing-catalog-{}", std::process::id())));
+    let _ = fs::remove_dir_all(&scratch.0);
+    fs::create_dir_all(&scratch.0).unwrap();
+    let releases = scratch.0.join("releases");
+    let store = MemoryStore::default();
+    let first_identity = create(&store, 1).unwrap();
+    let identity = rotate_key(&store, &first_identity, 5).unwrap();
+    let secret = signing_key(&store, &identity).unwrap();
+    let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+    drafts.set_identity(&identity).unwrap();
+    let jobs = PublishJobs::new(&scratch.0.join("staging"));
+    let publish = |drafts: &mut PublisherDrafts, version: &str| {
+        publish_signed(&scratch, drafts, &jobs, (&identity, &store), version)
+    };
+    let listed = publish(&mut drafts, "1.0.0");
+    let hidden = publish(&mut drafts, "2.0.0");
+    let archived = publish(&mut drafts, "3.0.0");
+
+    assert_eq!(drafts.catalog_title().unwrap(), "My courses");
+    assert_eq!(
+        drafts.set_catalog_title("  Ana's courses ").unwrap(),
+        "Ana's courses"
+    );
+    assert!(drafts.set_catalog_title("").is_err());
+    drafts
+        .set_catalog_release(&listed.release.release_id, true)
+        .unwrap();
+    drafts
+        .set_catalog_release(&archived.release.release_id, true)
+        .unwrap();
+    drafts
+        .archive_release(&archived.release.release_id)
+        .unwrap();
+    assert!(matches!(
+        drafts.set_catalog_release(&archived.release.release_id, true),
+        Err(DraftServiceError::ReleaseArchived)
+    ));
+    let listings = drafts.catalog_listings().unwrap();
+    assert!(
+        listings
+            .iter()
+            .any(
+                |listing| listing.release.release.release_id == hidden.release.release_id
+                    && !listing.listed
+            )
+    );
+
+    let retired = first_identity.current.clone();
+    assert!(
+        drafts
+            .revoke_retired_key(&identity, &secret, &identity.current, 50, "x")
+            .is_err()
+    );
+    assert!(
+        drafts
+            .revoke_retired_key(&identity, &secret, &retired, 50, "")
+            .is_err()
+    );
+    drafts
+        .revoke_retired_key(&identity, &secret, &retired, 50, "old laptop")
+        .unwrap();
+    drafts
+        .revoke_retired_key(&identity, &secret, &retired, 60, "old laptop, sold")
+        .unwrap();
+    assert_eq!(drafts.issued_revocations().unwrap().len(), 1);
+
+    let catalog = drafts
+        .build_catalog(&releases, &identity, &secret, 100)
+        .unwrap();
+    let parsed = course_signing::parse_catalog(&catalog.to_bytes()).unwrap();
+    let verified = course_signing::verify_catalog(&parsed).unwrap();
+    assert_eq!(verified.root, identity.root_key().unwrap());
+    assert_eq!(parsed.statement.title, "Ana's courses");
+    let versions: Vec<&str> = parsed
+        .statement
+        .entries
+        .iter()
+        .map(|entry| entry.course_version.as_str())
+        .collect();
+    assert_eq!(versions, ["1.0.0"]);
+    assert_eq!(parsed.statement.entries[0].magnet, listed.release.magnet);
+    assert_eq!(parsed.statement.revocations[0].statement.revoked_at, 60);
+    let stranger_store = MemoryStore::default();
+    let stranger = signing_key(&stranger_store, &create(&stranger_store, 1).unwrap()).unwrap();
+    assert!(matches!(
+        drafts.build_catalog(&releases, &identity, &stranger, 1),
+        Err(DraftServiceError::InvalidAttempt(_))
+    ));
+}

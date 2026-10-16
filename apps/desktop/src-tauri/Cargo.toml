@@ -24,6 +24,7 @@ port-mapping = { path = "../../../crates/port-mapping" }
 publisher-application = { path = "../../../crates/publisher-application" }
 publisher-identity = { path = "../../../crates/publisher-identity" }
 reqwest.workspace = true
+url.workspace = true
 serde.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true

@@ -35,6 +35,14 @@ impl Credentials {
         credentials
     }
 
+    /// The credential store, opening it on first use.
+    ///
+    /// # Errors
+    /// Returns `keychain_unavailable` when this computer has none.
+    pub(crate) fn store(&self) -> Result<Arc<dyn CredentialStore>, CommandError> {
+        self.get()
+    }
+
     fn get(&self) -> Result<Arc<dyn CredentialStore>, CommandError> {
         self.store
             .get_or_init(|| {

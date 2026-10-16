@@ -13,10 +13,26 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 13;
+const CURRENT_SCHEMA_VERSION: i64 = 14;
 /// Previous versions of one course whose manifests are kept for moving annotations.
 pub const KEPT_PREVIOUS_MANIFESTS: u32 = 5;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
+
+/// A publisher catalog kept by the Library. `document` is the verified
+/// catalog file, kept as it arrived.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredCatalog {
+    /// The publisher's identity.
+    pub publisher_id: String,
+    /// Title shown to learners.
+    pub title: String,
+    /// When the publisher issued it, in Unix seconds.
+    pub issued_at: u64,
+    /// HTTPS address it was fetched from, if any.
+    pub source_url: Option<String>,
+    /// The catalog file.
+    pub document: Vec<u8>,
+}
 
 /// A verified publisher signature of a course version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -400,6 +416,68 @@ impl Storage {
             .connection
             .execute("DELETE FROM course_pins WHERE course_id = ?1", [course_id])?
             > 0)
+    }
+
+    /// Keep a publisher's catalog, replacing the one it had.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock or write failures.
+    pub fn save_catalog(&mut self, catalog: &StoredCatalog) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO catalogs (publisher_id, title, issued_at, source_url, document, imported_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(publisher_id) DO UPDATE SET
+               title = excluded.title, issued_at = excluded.issued_at,
+               source_url = excluded.source_url, document = excluded.document,
+               imported_at = excluded.imported_at",
+            params![
+                catalog.publisher_id,
+                catalog.title,
+                sqlite_integer(catalog.issued_at, "catalog issue time")?,
+                catalog.source_url,
+                catalog.document,
+                unix_now()?,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Every kept catalog, by title.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn catalogs(&self) -> Result<Vec<StoredCatalog>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT publisher_id, title, issued_at, source_url, document FROM catalogs
+             ORDER BY title, publisher_id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let issued_at: i64 = row.get(2)?;
+            Ok(StoredCatalog {
+                publisher_id: row.get(0)?,
+                title: row.get(1)?,
+                issued_at: u64::try_from(issued_at)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(2, issued_at))?,
+                source_url: row.get(3)?,
+                document: row.get(4)?,
+            })
+        })?;
+        rows.collect::<Result<_, _>>().map_err(StorageError::from)
+    }
+
+    /// Forget a catalog. Courses imported from it stay. Returns whether one
+    /// was kept.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for write failures.
+    pub fn remove_catalog(&mut self, publisher_id: &str) -> Result<bool, StorageError> {
+        Ok(self.connection.execute(
+            "DELETE FROM catalogs WHERE publisher_id = ?1",
+            [publisher_id],
+        )? > 0)
     }
 
     /// Signed key revocations, as JSON statements, oldest first. Callers
@@ -1811,7 +1889,7 @@ fn add_drawings(connection: &mut Connection) -> Result<(), StorageError> {
 }
 
 /// Migrations from schema 4 on, by the version they start from.
-const TABLE_MIGRATIONS: [(i64, Migration); 9] = [
+const TABLE_MIGRATIONS: [(i64, Migration); 10] = [
     (4, add_playback_positions),
     (5, add_download_commitments),
     (6, add_pause_flag),
@@ -1821,7 +1899,26 @@ const TABLE_MIGRATIONS: [(i64, Migration); 9] = [
     (10, add_learning_search),
     (11, add_manifest_history),
     (12, add_course_trust),
+    (13, add_catalogs),
 ];
+
+/// Schema 14. Publisher catalogs the learner imported (ADR 0014 decision 8).
+fn add_catalogs(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE catalogs (
+           publisher_id TEXT PRIMARY KEY NOT NULL,
+           title TEXT NOT NULL,
+           issued_at INTEGER NOT NULL CHECK(issued_at >= 0),
+           source_url TEXT,
+           document BLOB NOT NULL,
+           imported_at INTEGER NOT NULL CHECK(imported_at >= 0)
+         ) STRICT;
+         PRAGMA user_version = 14;",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
 
 /// Schema 13. The verified signature of each course's current version, the
 /// publisher each course is pinned to after its first signed import, and the
@@ -2307,7 +2404,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;
+                    "DROP TABLE catalogs;
+                     DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;
                      DROP TABLE course_manifest_history;
                      DROP TABLE learning_search; DROP TABLE indexed_resources;
                      DROP TABLE drawing_files; DROP TABLE lesson_drawings;
@@ -2349,7 +2447,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;
+                    "DROP TABLE catalogs;
+                     DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;
                      DROP TABLE course_manifest_history; DROP TRIGGER notes_search_move;
                      DROP TRIGGER notes_search_insert; DROP TRIGGER notes_search_update;
                      DROP TRIGGER notes_search_delete;

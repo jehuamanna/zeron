@@ -463,8 +463,8 @@ pub(crate) struct CourseSharingDto {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CommandError {
-    code: &'static str,
-    message: String,
+    pub(crate) code: &'static str,
+    pub(crate) message: String,
 }
 
 #[tauri::command]
@@ -2133,7 +2133,7 @@ fn resource_kind(kind: ResourceKind) -> &'static str {
     }
 }
 
-async fn run_blocking<T: Send + 'static>(
+pub(crate) async fn run_blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, CommandError> + Send + 'static,
 ) -> Result<T, CommandError> {
     tauri::async_runtime::spawn_blocking(work)
@@ -2153,7 +2153,7 @@ fn lock_library(
     })
 }
 
-fn command_error(code: &'static str, error: impl std::fmt::Display) -> CommandError {
+pub(crate) fn command_error(code: &'static str, error: impl std::fmt::Display) -> CommandError {
     CommandError {
         code,
         message: error.to_string(),

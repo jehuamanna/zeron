@@ -52,7 +52,7 @@ Library and Publish use the same adapter and persisted session model in one app 
 
 ## Catalog and authenticity
 
-The optional catalog stores discovery metadata, not course payload or learner activity. Torrent hashes identify bytes, not publishers. A future signed release envelope will use deterministic/canonical serialization and Ed25519, with a key ID, validity interval, rotation statement, and revocation channel. This is deliberately deferred until its canonicalization and trust model receive a separate ADR.
+Torrent hashes identify bytes, not publishers. A signed release carries `zeron-signature.json` beside `course.json`: an Ed25519 signature over the manifest digest, plus the rotation chain from the publisher's root key (`publisherId`). The Library pins each course to its first signed publisher and refuses updates signed by anyone else. A catalog is a signed list of releases the publisher explicitly confirmed, with the publisher's key revocations; it is a file hosted anywhere, imported from disk or an HTTPS address, and stores discovery metadata only. Magnet and `.torrent` import never require it. See [ADR 0014](../decisions/0014-publisher-signing.md).
 
 ## Required feasibility spike
 

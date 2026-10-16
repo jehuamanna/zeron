@@ -229,6 +229,27 @@ export interface MediaRegistration {
   byteLength: number;
 }
 
+export interface CatalogEntry {
+  courseId: string;
+  courseVersion: string;
+  title: string;
+  description: string;
+  magnet: string;
+  infoHash: string;
+  status: "available" | "in_library" | "update" | "other_version" | "other_publisher";
+}
+
+/** A verified publisher catalog kept by the Library. */
+export interface Catalog {
+  publisherId: string;
+  fingerprint: string;
+  title: string;
+  issuedAtUnixSeconds: number;
+  /** HTTPS address it refreshes from; `null` when imported from a file. */
+  sourceUrl: string | null;
+  entries: CatalogEntry[];
+}
+
 /**
  * `verified`: signed by the publisher this course is pinned to. `signed`: signed,
  * but no longer pinned. `unsigned`: no publisher signature.
@@ -332,6 +353,13 @@ export const libraryApi = {
   /** Verified bytes of a PDF resource. */
   readDocument: (courseId: string, resourceId: string) => invoke<ArrayBuffer>("read_document", { courseId, resourceId }),
   notes: (courseId: string, lessonId: string | null) => invoke<Note[]>("list_notes", { courseId, lessonId }),
+  listCatalogs: () => invoke<Catalog[]>("list_catalogs"),
+  /** Opens a native picker; resolves `null` when cancelled. */
+  chooseCatalogFile: () => invoke<Catalog | null>("choose_catalog_file"),
+  importCatalogUrl: (url: string) => invoke<Catalog>("import_catalog_url", { url }),
+  refreshCatalog: (publisherId: string) => invoke<Catalog>("refresh_catalog", { publisherId }),
+  /** Courses imported from the catalog stay. */
+  removeCatalog: (publisherId: string) => invoke<boolean>("remove_catalog", { publisherId }),
   /** Stop requiring the pinned publisher; the next signed import pins again. */
   forgetCoursePublisher: (courseId: string) => invoke<CoursePublisher>("forget_course_publisher", { courseId }),
   annotationMoves: (courseId: string) => invoke<AnnotationMove[]>("get_annotation_moves", { courseId }),

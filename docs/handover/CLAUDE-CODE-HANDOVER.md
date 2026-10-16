@@ -328,7 +328,7 @@ The user removed the headless seed server on 2026-10-16 (an earlier attempt, `f1
 
 ### Phase 9 — optional catalog and publisher identity
 
-The user wants signing, working on Windows and macOS without limitation (2026-10-16; ADR 0014). Done so far: the signature formats and key handling (`phase-9-signing-foundation.md`, crates `course-signing` and `publisher-identity`) a three-platform CI matrix (`.github/workflows/ci.yml`), signed publishing with Publish → Identity (`phase-9-signed-releases.md`), and Library verification with trust on first use (`phase-9-library-verification.md`, learner schema v13). Next: catalogs and revocations.
+The user wants signing, working on Windows and macOS without limitation (2026-10-16; ADR 0014). Done so far: the signature formats and key handling (`phase-9-signing-foundation.md`, crates `course-signing` and `publisher-identity`) a three-platform CI matrix (`.github/workflows/ci.yml`), signed publishing with Publish → Identity (`phase-9-signed-releases.md`), Library verification with trust on first use (`phase-9-library-verification.md`, learner schema v13), and signed catalogs with revocations (`phase-9-catalogs.md`, publisher schema v6, learner schema v14). Remaining for Phase 9: confirming the real-keychain tests on macOS and Windows CI, recorded in `phase-9-complete.md`.
 
 - Canonical signed release envelopes and an Ed25519 key lifecycle (key storage is a security trigger).
 - A catalog API, discovery, and an explicit publication confirmation.
@@ -346,7 +346,7 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 
 - `course-format`: manifest wire contract and semantic validation.
 - `course-publisher`: draft and publishing policy, staging, and media inspection, with no SQLite or Tauri.
-- `publisher-storage`: Admin SQLite persistence (schema v5: drafts, releases, seeding intents, settings, distribution events) with compare-and-swap draft saves.
+- `publisher-storage`: Admin SQLite persistence (schema v6: drafts, releases, seeding intents, settings, distribution events, catalog confirmations) with compare-and-swap draft saves.
 - `publisher-application`: Admin use cases: drafts, sources, staging, torrents, publish jobs, releases, seeding, and settings.
 - `torrent-metainfo`: deterministic v1 metainfo writing and inspection.
 - `torrent-port`: engine-neutral contract, including `NetworkProfile` and `PeerReachability`.

@@ -1,6 +1,7 @@
 //! Publish: drafts, the Builder, releases, and seeding them. Releases seed
 //! from the app's public engine, the one that also serves shared courses.
 
+pub(crate) mod catalog;
 pub(crate) mod commands;
 pub(crate) mod configuration;
 pub(crate) mod drops;

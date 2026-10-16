@@ -266,7 +266,13 @@ fn changed_signatures_and_revoked_keys_are_refused() {
         50,
         "laptop stolen",
     );
-    library.add_key_revocation(&revocation).unwrap();
+    library
+        .add_key_revocation(&course_signing::RevocationRecord {
+            publisher_id: identity.root.clone(),
+            rotations: Vec::new(),
+            revocation,
+        })
+        .unwrap();
     match import(&mut library, &release) {
         Err(LibraryError::Signature(message)) => {
             assert!(message.contains("laptop stolen"), "{message}");
@@ -381,4 +387,90 @@ async fn magnet_imports_fetch_and_verify_the_signature_and_refuse_an_impostor() 
             .version,
         "1.0.0"
     );
+}
+
+#[test]
+fn catalogs_list_releases_carry_revocations_and_never_go_back() {
+    use learning_application::EntryStatus;
+    use publisher_identity::rotate_key;
+
+    let scratch = Scratch::new("catalog");
+    let mut publisher = Publisher::new(&scratch.0);
+    let store = MemoryStore::default();
+    let first = create(&store, 1).unwrap();
+    let old_release = publisher.release("1.0.0", Some((&first, &store, 10)));
+    let identity = rotate_key(&store, &first, 20).unwrap();
+    publisher.drafts.set_identity(&identity).unwrap();
+    let late_old_key = publisher.release("1.1.0", Some((&first, &store, 30)));
+    let current = publisher.release("1.2.0", Some((&identity, &store, 40)));
+    for release in publisher.drafts.releases().unwrap() {
+        publisher
+            .drafts
+            .set_catalog_release(&release.release.release_id, true)
+            .unwrap();
+    }
+    let secret = signing_key(&store, &identity).unwrap();
+    publisher
+        .drafts
+        .revoke_retired_key(&identity, &secret, &first.current, 20, "old laptop")
+        .unwrap();
+    let releases_root = scratch.0.join("releases");
+    let catalog = publisher
+        .drafts
+        .build_catalog(&releases_root, &identity, &secret, 100)
+        .unwrap()
+        .to_bytes();
+
+    let mut library = library(&scratch.0);
+    let view = library
+        .import_catalog(&catalog, Some("https://courses.example/catalog.json"))
+        .unwrap();
+    assert_eq!(view.publisher_id, identity.root);
+    assert_eq!(view.fingerprint, identity.fingerprint().unwrap());
+    assert_eq!(view.entries.len(), 3);
+    assert!(
+        view.entries
+            .iter()
+            .all(|entry| entry.status == EntryStatus::Available)
+    );
+
+    assert_eq!(import(&mut library, &old_release).unwrap(), "1.0.0");
+    match import(&mut library, &late_old_key) {
+        Err(LibraryError::Signature(message)) => {
+            assert!(message.contains("old laptop"), "{message}");
+        }
+        other => panic!("expected the revoked key to be refused, got {other:?}"),
+    }
+    let statuses: Vec<(String, EntryStatus)> = library.catalogs().unwrap()[0]
+        .entries
+        .iter()
+        .map(|entry| (entry.entry.course_version.clone(), entry.status))
+        .collect();
+    assert!(statuses.contains(&("1.0.0".to_owned(), EntryStatus::InLibrary)));
+    assert!(statuses.contains(&("1.2.0".to_owned(), EntryStatus::Update)));
+    assert_eq!(import(&mut library, &current).unwrap(), "1.2.0");
+
+    let older = publisher
+        .drafts
+        .build_catalog(&releases_root, &identity, &secret, 50)
+        .unwrap()
+        .to_bytes();
+    assert!(matches!(
+        library.import_catalog(&older, None),
+        Err(LibraryError::Signature(_))
+    ));
+    let mut tampered: serde_json::Value = serde_json::from_slice(&catalog).unwrap();
+    tampered["statement"]["title"] = "Someone else".into();
+    assert!(matches!(
+        library.import_catalog(&serde_json::to_vec(&tampered).unwrap(), None),
+        Err(LibraryError::Signature(_))
+    ));
+    let again = library.import_catalog(&catalog, None).unwrap();
+    assert_eq!(
+        again.source_url.as_deref(),
+        Some("https://courses.example/catalog.json")
+    );
+    assert!(library.remove_catalog(&identity.root).unwrap());
+    assert_eq!(library.catalogs().unwrap().len(), 0);
+    assert_eq!(library.courses().unwrap().len(), 1);
 }
