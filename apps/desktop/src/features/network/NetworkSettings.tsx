@@ -6,6 +6,7 @@ import { asCommandError, libraryApi, type NetworkProfile } from "../../services/
 import { PeerReachabilityForm } from "./PeerReachabilityForm";
 import { routerStatus } from "./routerStatus";
 import { SpeedLimitsForm } from "./SpeedLimitsForm";
+import { BackupSettings } from "./BackupSettings";
 import { StorageSettings } from "./StorageSettings";
 
 const profiles: Array<{ value: NetworkProfile; label: string; description: string }> = [
@@ -102,6 +103,7 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
               onSave={(peerPort, portForwarding) => saveReachability.mutate({ peerPort, portForwarding })}
             />
             <StorageSettings />
+            <BackupSettings />
             <SpeedLimitsForm
               key={`${data.downloadLimitKib}-${data.uploadLimitKib}`}
               downloadKib={data.downloadLimitKib}

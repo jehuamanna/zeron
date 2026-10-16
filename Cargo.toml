@@ -4,6 +4,7 @@ members = [
     "crates/course-format",
     "crates/course-publisher",
     "crates/course-signing",
+    "crates/data-backup",
     "crates/data-import",
     "crates/learning-domain",
     "crates/learning-application",

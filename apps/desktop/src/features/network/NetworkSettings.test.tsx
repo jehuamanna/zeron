@@ -8,6 +8,7 @@ import { NetworkSettings } from "./NetworkSettings";
 vi.mock("../../services/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/library")>()),
   libraryApi: {
+    pendingRestore: vi.fn(() => Promise.resolve(null)),
     getNetworkSettings: vi.fn(),
     setNetworkProfile: vi.fn(),
     setPeerReachability: vi.fn(),

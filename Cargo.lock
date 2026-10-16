@@ -1084,6 +1084,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-backup"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7042,6 +7053,7 @@ dependencies = [
  "course-format",
  "course-publisher",
  "course-signing",
+ "data-backup",
  "data-import",
  "futures-util",
  "learning-application",
@@ -7050,6 +7062,7 @@ dependencies = [
  "port-mapping",
  "publisher-application",
  "publisher-identity",
+ "publisher-storage",
  "reqwest",
  "serde",
  "serde_json",

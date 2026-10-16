@@ -13,7 +13,8 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 14;
+/// Schema version this build creates and understands.
+pub const CURRENT_SCHEMA_VERSION: i64 = 14;
 /// Previous versions of one course whose manifests are kept for moving annotations.
 pub const KEPT_PREVIOUS_MANIFESTS: u32 = 5;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";

@@ -9,7 +9,8 @@ use course_publisher::DraftCourse;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 6;
+/// Schema version this build creates and understands.
+pub const SCHEMA_VERSION: i64 = 6;
 /// Distribution events kept; older ones are pruned as new ones arrive.
 pub const MAX_DISTRIBUTION_EVENTS: u64 = 2_000;
 

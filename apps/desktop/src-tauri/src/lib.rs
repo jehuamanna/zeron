@@ -1,5 +1,6 @@
 //! Thin Tauri composition root for Zeron Desktop.
 
+mod backup;
 mod catalogs;
 mod commands;
 mod media;
@@ -106,6 +107,12 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             return Err(error.into());
         }
     }
+    // A restore staged before the last exit is switched in before any
+    // database opens. A failure stops startup; the next start retries.
+    if let Err(error) = backup::apply_pending(&app_data) {
+        eprintln!("finishing the restore stopped: {error}");
+        return Err(error.into());
+    }
     let library = CourseLibrary::open(&app_data.join("library.sqlite3"), ImportLimits::default())?;
     let profile = library.network_profile()?;
     let reachability = library.peer_reachability()?;
@@ -169,6 +176,11 @@ fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         commands::get_annotation_moves,
         commands::forget_course_publisher,
         catalogs::list_catalogs,
+        backup::export_backup,
+        backup::choose_backup_to_restore,
+        backup::get_pending_restore,
+        backup::cancel_restore,
+        backup::restart_app,
         catalogs::choose_catalog_file,
         catalogs::import_catalog_url,
         catalogs::refresh_catalog,

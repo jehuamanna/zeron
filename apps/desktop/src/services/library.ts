@@ -229,6 +229,13 @@ export interface MediaRegistration {
   byteLength: number;
 }
 
+/** What a backup holds; `contents` lists `library` and `publish`. */
+export interface Backup {
+  createdAtUnixSeconds: number | null;
+  contents: Array<"library" | "publish">;
+  totalBytes: number;
+}
+
 export interface CatalogEntry {
   courseId: string;
   courseVersion: string;
@@ -353,6 +360,13 @@ export const libraryApi = {
   /** Verified bytes of a PDF resource. */
   readDocument: (courseId: string, resourceId: string) => invoke<ArrayBuffer>("read_document", { courseId, resourceId }),
   notes: (courseId: string, lessonId: string | null) => invoke<Note[]>("list_notes", { courseId, lessonId }),
+  /** Opens a native save dialog; resolves `null` when cancelled. */
+  exportBackup: () => invoke<Backup | null>("export_backup"),
+  /** Opens a native picker, checks the backup, and stages it for the next start; `null` when cancelled. */
+  chooseBackupToRestore: () => invoke<Backup | null>("choose_backup_to_restore"),
+  pendingRestore: () => invoke<Backup | null>("get_pending_restore"),
+  cancelRestore: () => invoke<void>("cancel_restore"),
+  restartApp: () => invoke<void>("restart_app"),
   listCatalogs: () => invoke<Catalog[]>("list_catalogs"),
   /** Opens a native picker; resolves `null` when cancelled. */
   chooseCatalogFile: () => invoke<Catalog | null>("choose_catalog_file"),
