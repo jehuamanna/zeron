@@ -32,6 +32,8 @@ Add progress, Tiptap notes, typed video/PDF anchors, PDF.js annotation workflow,
 
 Add version history, supersession/archive, retry/rollback UX, distribution details/logs, publisher configuration import/export, and annotation migration suggestions.
 
+Status: complete (2026-10-16); see the `phase-7-*` notes in `docs/releases/`.
+
 ## Phase 8 — removed
 
 The user removed the headless seed server from the roadmap on 2026-10-16. Publishers seed from the desktop app; the later phases keep their numbers.
@@ -40,9 +42,13 @@ The user removed the headless seed server from the roadmap on 2026-10-16. Publis
 
 Specify canonical signed release envelopes, Ed25519 key lifecycle, catalog API, discovery, and explicit publication confirmation. Learner torrent import remains independent.
 
+Status: complete (2026-10-16); see ADR 0014 and `docs/releases/phase-9-complete.md`.
+
 ## Phase 10 — hardening and release
 
 Complete fuzzing, threat-model review, dependency/license audit, cross-platform media matrix, performance/soak/fault tests, accessibility, updater signing, reproducible CI packaging, backup/restore, and operator/user documentation.
+
+Status: complete (2026-10-16), apart from the steps that need the maintainer's credentials or hardware; see `docs/releases/phase-10-complete.md`.
 
 ## First milestone
 
@@ -50,9 +56,9 @@ The first meaningful milestone spans Phases 0–4: Admin publishes and seeds a f
 
 ## Approval questions
 
-1. Are Windows, macOS, and Linux all launch targets for the first streaming milestone, or may Linux be the spike platform with cross-platform gating before beta?
+1. ~~Are Windows, macOS, and Linux all launch targets?~~ Answered 2026-10-16: yes. Signing must work on Windows and macOS without limitation, and all three platforms build and test in CI.
 2. Is BitTorrent v1-only acceptable for the first release despite SHA-1 being part of its content identity, with SHA-256 retained for resource validation?
-3. May Phase 0 adopt a narrow maintained metainfo writer if librqbit has no supported creation API?
-4. Should publisher signing wait for Phase 9, or is authenticity required in the first private beta?
+3. ~~May Phase 0 adopt a narrow maintained metainfo writer?~~ Settled by ADR 0002: Zeron writes v1 metainfo itself (`torrent-metainfo`).
+4. ~~Should publisher signing wait for Phase 9?~~ Answered 2026-10-16: the user wants signing now (ADR 0014).
 5. What license and maximum package/manifest/file-count policies should the default validator enforce?
 

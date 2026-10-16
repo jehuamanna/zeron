@@ -146,6 +146,8 @@ fn version_one_databases_migrate_without_losing_drafts() {
     assert_eq!(version, 6);
     let reopened = PublisherStorage::open(&database).unwrap();
     assert_eq!(reopened.releases().unwrap().len(), 1);
+    // Windows cannot remove a file that is still open.
+    drop(reopened);
     fs::remove_file(database).unwrap();
 }
 

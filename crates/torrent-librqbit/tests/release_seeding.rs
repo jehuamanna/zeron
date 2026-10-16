@@ -80,6 +80,8 @@ async fn seeding_survives_an_application_restart() {
     let status = restored.statuses().unwrap().remove(0);
     assert!(!status.enabled && status.transfer.is_none());
     second_engine.shutdown().await;
+    // Windows cannot remove files that are still open.
+    drop((restored, drafts, second_engine, first_engine));
 
     make_writable(&root);
     std::fs::remove_dir_all(&root).unwrap();

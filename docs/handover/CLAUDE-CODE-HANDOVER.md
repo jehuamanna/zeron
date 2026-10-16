@@ -284,7 +284,7 @@ Delivered; see `docs/releases/phase-3-port-mapper.md` and ADR 0013. The user app
 - **Hole punching (BEP 55, `ut_holepunch`) and protocol encryption (MSE/PE):** Deluge has both; librqbit 9.0.1 has neither. Each is a substantial engine change; propose it as an upstream contribution or a fork, and ask the user first.
 - **Paid or private courses:** parked by the user; needs encryption, key delivery, accounts, and payments. See the conversation summary in `phase-3-trackers.md` limitations.
 
-## Remaining phases (7, 9, 10)
+## Phases 7, 9, and 10 (all complete)
 
 Each phase is broken into slices in the same style, ordered by dependency.
 
@@ -328,13 +328,15 @@ The user removed the headless seed server on 2026-10-16 (an earlier attempt, `f1
 
 ### Phase 9 — optional catalog and publisher identity
 
-The user wants signing, working on Windows and macOS without limitation (2026-10-16; ADR 0014). Done so far: the signature formats and key handling (`phase-9-signing-foundation.md`, crates `course-signing` and `publisher-identity`) a three-platform CI matrix (`.github/workflows/ci.yml`), signed publishing with Publish → Identity (`phase-9-signed-releases.md`), Library verification with trust on first use (`phase-9-library-verification.md`, learner schema v13), and signed catalogs with revocations (`phase-9-catalogs.md`, publisher schema v6, learner schema v14). Remaining for Phase 9: confirming the real-keychain tests on macOS and Windows CI, recorded in `phase-9-complete.md`.
+The user wants signing, working on Windows and macOS without limitation (2026-10-16; ADR 0014). Done so far: the signature formats and key handling (`phase-9-signing-foundation.md`, crates `course-signing` and `publisher-identity`) a three-platform CI matrix (`.github/workflows/ci.yml`), signed publishing with Publish → Identity (`phase-9-signed-releases.md`), Library verification with trust on first use (`phase-9-library-verification.md`, learner schema v13), and signed catalogs with revocations (`phase-9-catalogs.md`, publisher schema v6, learner schema v14). **Phase 9 is complete**; see `phase-9-complete.md`.
 
 - Canonical signed release envelopes and an Ed25519 key lifecycle (key storage is a security trigger).
 - A catalog API, discovery, and an explicit publication confirmation.
 - Learner torrent and magnet import must keep working without the catalog.
 
 ### Phase 10 — hardening and release
+
+**Phase 10 is complete** apart from maintainer-only steps; see `phase-10-complete.md`.
 
 Done so far: parser fuzzing (`phase-10-fuzzing.md`: `fuzz/` cargo-fuzz targets on nightly CI, `mutation-testing` robustness tests on stable) backup and restore (`phase-10-backup-and-restore.md`, crate `data-backup`), the dependency and license audit (`phase-10-dependency-audit.md`, `deny.toml`, `pnpm licenses:check`), the automated accessibility pass (`phase-10-accessibility.md`, axe-core in Vitest; manual screen-reader and contrast checks pending), gateway soak and fault tests (`phase-10-soak-and-fault-tests.md`), and release packaging with signed on-request updates plus user and operator docs (`phase-10-release-packaging-and-updates.md`; `rust-toolchain.toml` pins Rust 1.99.1; the updater key is in `~/.config/zeron-release/`, and the release secrets still need adding by the user).
 

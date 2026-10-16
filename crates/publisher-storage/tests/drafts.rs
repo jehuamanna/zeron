@@ -42,6 +42,8 @@ fn draft_survives_restart_and_lists_without_source_paths() {
     let summaries = storage.list_drafts().unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].title, "Original title");
+    // Windows cannot remove a file that is still open.
+    drop(storage);
     fs::remove_file(database).unwrap();
 }
 

@@ -42,3 +42,22 @@ Logs exclude magnet query parameters where secrets could appear, gateway URLs/to
 - Sandboxing strategy for PDF.js, media probing, and optional FFmpeg.
 - Trust on first use cannot protect a learner's very first import of a course; a pre-shared fingerprint or a future publisher directory would.
 
+
+## Review of 2026-10-16
+
+The Phase 7, 9, and 10 work added new inputs and outputs. Each is listed with its controls and the tests behind them.
+
+| Surface | Threat | Controls | Tests |
+|---|---|---|---|
+| Catalog files and HTTPS catalog addresses | A forged or stale catalog, a server sending huge or slow bodies, credentials in addresses | Signature and chain verified; a catalog older than the one kept is refused; plain `https://` only, no user information, at most 2 KiB address, 15 s timeout, three redirects, 1 MiB body; entries are pointers, and each release still needs its own signature | `catalogs_list_releases_carry_revocations_and_never_go_back`, `only_plain_https_addresses_are_followed`, catalog robustness and fuzz tests |
+| Key revocations | A stolen retired key signing releases without the later rotations | Revocations are kept with the chain they arrived with and checked against it; rotations made after a revocation break the chain | `a_stolen_retired_key_cannot_hide_its_revocation_by_leaving_out_the_chain` |
+| Signing key at rest | Theft from disk, exposure over IPC or in logs | OS credential store only; backups use Argon2id (64 MiB, 3 passes) with XChaCha20-Poly1305, the identity bound as associated data, and the restore cost capped; DTOs carry public keys only | identity command tests, real-keychain CI tests on all three platforms |
+| Backup files | A crafted backup that corrupts data or blocks startup | Strict format, per-database SHA-256, `quick_check`, schema no newer than this build, nothing after the last database; restore staged and switched in at startup with the old data kept aside | `data-backup` tests |
+| Publisher configuration files | Hostile trackers or settings | The same validators as the settings screens; strict JSON; 256 KiB bound; reviewed before applying | configuration unit, robustness, and fuzz tests |
+| Distribution activity log | Paths, addresses, or private tracker passkeys stored or exported | `redact()` before storage; bounded to 2,000 events | redaction unit tests and the activity command test |
+| Updater | A malicious update | Minisign signature against the public key compiled into the app; checks only on request; the private key is outside the repository | update command error mapping, UI test |
+| Annotation moves | Overwriting a learner's drawing or progress | Moves only where the target has none; note revisions increase so open editors reload | storage and application migration tests |
+
+Still open, in addition to the decisions listed above:
+- The first import of a course is trusted as it comes (trust on first use).
+- macOS and Windows builds are not yet signed by their platform vendors.

@@ -180,6 +180,8 @@ fn file_backed_drafts_survive_reopen() {
     let recovered = drafts.draft(&draft_id).unwrap().unwrap();
     assert_eq!(recovered.draft.metadata.title, "Durable");
     assert_eq!(recovered.draft.revision, 1);
+    // Windows cannot remove a file that is still open.
+    drop(drafts);
     std::fs::remove_file(database).unwrap();
 }
 
