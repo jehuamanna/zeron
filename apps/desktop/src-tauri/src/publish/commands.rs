@@ -470,6 +470,25 @@ pub(crate) fn cancel_publish_job(job_id: String, state: State<'_, PublishState>)
     state.publish_jobs.cancel(&job_id)
 }
 
+/// Roll back a prepared release without publishing it. Its staged files are
+/// removed and the job becomes cancelled, so the draft can be prepared again.
+#[tauri::command]
+pub(crate) async fn discard_publish_job(
+    app: AppHandle,
+    job_id: String,
+    state: State<'_, PublishState>,
+) -> Result<PublishJobDto, CommandError> {
+    let jobs = Arc::clone(&state.publish_jobs);
+    let snapshot = run_blocking(move || discard_job(&jobs, &job_id)).await?;
+    let _ = app.emit(PUBLISH_JOB_EVENT, PublishJobDto::from(&snapshot));
+    Ok(PublishJobDto::from(&snapshot))
+}
+
+fn discard_job(jobs: &PublishJobs, job_id: &str) -> Result<PublishJobSnapshot, CommandError> {
+    jobs.discard(job_id)
+        .map_err(|error| service_error("preparation_discard_failed", error))
+}
+
 #[tauri::command]
 pub(crate) async fn activate_release(
     app: AppHandle,
@@ -1754,6 +1773,31 @@ mod tests {
         assert!(list(&drafts).unwrap().is_empty());
         let missing = delete(&mut drafts, &jobs, &draft.draft_id, draft.revision).unwrap_err();
         assert_eq!(missing.code, "draft_not_found");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn discarding_a_prepared_release_removes_its_staging_and_reports_codes() {
+        let (directory, _drafts, draft) = publishable_draft("discard");
+        let staging = directory.join("staging");
+        let jobs = publisher_application::PublishJobs::new(&staging);
+        let job = jobs.begin(&draft).unwrap();
+        jobs.run(
+            &job.job_id,
+            &draft,
+            &DistributionOptions::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+        let discarded = serde_json::to_value(PublishJobDto::from(
+            &discard_job(&jobs, &job.job_id).unwrap(),
+        ))
+        .unwrap();
+        assert_eq!(discarded["stage"], "CANCELLED");
+        assert!(discarded["prepared"].is_null());
+        assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
+        let again = discard_job(&jobs, &job.job_id).unwrap_err();
+        assert_eq!(again.code, "preparation_discard_failed");
         std::fs::remove_dir_all(directory).unwrap();
     }
 

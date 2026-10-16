@@ -315,7 +315,7 @@ Done so far: lesson and course progress (`phase-6-progress.md`, new `learning-do
 Partly pulled forward by the active slice. Remaining:
 
 - ~~version history per course, and supersession/archive UX~~ done (`phase-7-version-history.md`: make current, new draft from a release);
-- retry and rollback of failed preparations;
+- ~~retry and rollback of failed preparations~~ done (`phase-7-preparation-retry-and-rollback.md`);
 - distribution details and logs, with redaction;
 - import and export of publisher configuration;
 - suggestions for migrating annotations between course versions.

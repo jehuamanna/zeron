@@ -91,6 +91,9 @@ struct Entry {
     snapshot: PublishJobSnapshot,
     cancellation: PackagingCancellation,
     finished_order: Option<u64>,
+    /// Set while a ready job is being activated or discarded, so the two
+    /// can never act on the same staged attempt at once.
+    claimed: bool,
 }
 
 #[derive(Default)]
@@ -138,28 +141,26 @@ impl PublishJobs {
         drafts: &mut PublisherDrafts,
         releases_root: &Path,
     ) -> Result<(ReleaseRecord, PublishJobSnapshot), DraftServiceError> {
-        let snapshot = self
-            .snapshot(job_id)
-            .ok_or(DraftServiceError::InvalidAttempt(
-                "unknown release preparation",
-            ))?;
-        let (PublishStage::ReadyToPublish, Some(prepared)) = (snapshot.stage, &snapshot.prepared)
-        else {
+        let snapshot = self.claim_ready(job_id)?;
+        let Some(prepared) = &snapshot.prepared else {
+            self.release_claim(job_id);
             return Err(DraftServiceError::InvalidAttempt(
                 "the release preparation is not ready to publish",
             ));
         };
-        let mut workflow = PublishingWorkflow::restore(snapshot.stage);
-        workflow
-            .transition(PublishStage::Published)
-            .map_err(|_| DraftServiceError::InvalidAttempt("the release cannot be published"))?;
-        let record = drafts.activate_release(
+        let record = match drafts.activate_release(
             &self.staging_root,
             releases_root,
             prepared,
             &snapshot.draft_id,
             snapshot.draft_revision,
-        )?;
+        ) {
+            Ok(record) => record,
+            Err(error) => {
+                self.release_claim(job_id);
+                return Err(error);
+            }
+        };
         let published = self
             .update(job_id, |snapshot| {
                 snapshot.stage = PublishStage::Published;
@@ -168,7 +169,68 @@ impl PublishJobs {
             .ok_or(DraftServiceError::InvalidAttempt(
                 "unknown release preparation",
             ))?;
+        self.release_claim(job_id);
         Ok((record, published))
+    }
+
+    /// Roll back a `ReadyToPublish` job without publishing it: its staged
+    /// package and torrent are removed and the job becomes `Cancelled`, so
+    /// the draft can be edited and prepared again. Nothing is recorded.
+    ///
+    /// # Errors
+    /// Rejects unknown or unready jobs, jobs being activated, and I/O
+    /// failures, which leave the job ready.
+    pub fn discard(&self, job_id: &str) -> Result<PublishJobSnapshot, DraftServiceError> {
+        let snapshot = self.claim_ready(job_id)?;
+        if let Some(prepared) = &snapshot.prepared
+            && let Err(error) = discard_attempt(&self.staging_root, &prepared.staging.attempt_id)
+        {
+            self.release_claim(job_id);
+            return Err(error);
+        }
+        let discarded = self
+            .update(job_id, |snapshot| {
+                snapshot.stage = PublishStage::Cancelled;
+                snapshot.prepared = None;
+            })
+            .ok_or(DraftServiceError::InvalidAttempt(
+                "unknown release preparation",
+            ))?;
+        self.release_claim(job_id);
+        Ok(discarded)
+    }
+
+    /// Take exclusive use of a ready job for activation or discarding.
+    fn claim_ready(&self, job_id: &str) -> Result<PublishJobSnapshot, DraftServiceError> {
+        let mut registry = self.lock();
+        let entry = registry
+            .jobs
+            .get_mut(job_id)
+            .ok_or(DraftServiceError::InvalidAttempt(
+                "unknown release preparation",
+            ))?;
+        if entry.snapshot.stage != PublishStage::ReadyToPublish {
+            return Err(DraftServiceError::InvalidAttempt(
+                "the release preparation is not ready to publish",
+            ));
+        }
+        if entry.claimed {
+            return Err(DraftServiceError::InvalidAttempt(
+                "the release preparation is already being published or discarded",
+            ));
+        }
+        let mut workflow = PublishingWorkflow::restore(entry.snapshot.stage);
+        workflow
+            .transition(PublishStage::Published)
+            .map_err(|_| DraftServiceError::InvalidAttempt("the release cannot be published"))?;
+        entry.claimed = true;
+        Ok(entry.snapshot.clone())
+    }
+
+    fn release_claim(&self, job_id: &str) {
+        if let Some(entry) = self.lock().jobs.get_mut(job_id) {
+            entry.claimed = false;
+        }
     }
 
     /// Register a new job for a frozen draft snapshot. Refuses when copying
@@ -208,6 +270,7 @@ impl PublishJobs {
                 snapshot: snapshot.clone(),
                 cancellation: PackagingCancellation::default(),
                 finished_order: None,
+                claimed: false,
             },
         );
         registry.active = Some(job_id);

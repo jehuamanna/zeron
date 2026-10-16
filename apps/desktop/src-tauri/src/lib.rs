@@ -203,6 +203,7 @@ pub fn run() {
             publish::commands::start_publish_preparation,
             publish::commands::get_publish_job,
             publish::commands::cancel_publish_job,
+            publish::commands::discard_publish_job,
             publish::commands::activate_release,
             publish::commands::list_releases,
             publish::commands::archive_release,

@@ -247,6 +247,8 @@ export const publisherApi = {
   startPublishPreparation: (draftId: string) => invoke<PublishJob>("start_publish_preparation", { draftId }),
   getPublishJob: (jobId: string) => invoke<PublishJob | null>("get_publish_job", { jobId }),
   cancelPublishJob: (jobId: string) => invoke<boolean>("cancel_publish_job", { jobId }),
+  /** Rolls back a READY_TO_PUBLISH job: its staged files are removed and it becomes CANCELLED. */
+  discardPublishJob: (jobId: string) => invoke<PublishJob>("discard_publish_job", { jobId }),
   onPublishJob: (handler: (job: PublishJob) => void) => listen<PublishJob>("publish-job", (event) => handler(event.payload)),
   activateRelease: (jobId: string) => invoke<Release>("activate_release", { jobId }),
   listReleases: () => invoke<Release[]>("list_releases"),

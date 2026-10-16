@@ -322,3 +322,71 @@ fn preparation_refuses_to_fill_the_disk() {
         "preparing this release needs about 0.5 GB of free disk space, but only 1.2 GB is free and 1.0 GB is kept free"
     );
 }
+
+fn prepare(jobs: &PublishJobs, draft: &course_publisher::DraftCourse) -> PublishJobSnapshot {
+    let job = jobs.begin(draft).unwrap();
+    jobs.run(
+        &job.job_id,
+        draft,
+        &DistributionOptions::default(),
+        &mut |_| {},
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_ready_preparation_can_be_discarded_and_prepared_again() {
+    let scratch = Scratch::new("discard");
+    let jobs = PublishJobs::new(&scratch.staging());
+    let draft = publishable(&scratch, 64 * 1024);
+    let ready = prepare(&jobs, &draft);
+    assert_eq!(ready.stage, PublishStage::ReadyToPublish);
+    assert_eq!(scratch.staging_entries().len(), 2);
+
+    let discarded = jobs.discard(&ready.job_id).unwrap();
+    assert_eq!(discarded.stage, PublishStage::Cancelled);
+    assert!(discarded.prepared.is_none());
+    assert!(discarded.sequence > ready.sequence);
+    assert_eq!(scratch.staging_entries(), Vec::<String>::new());
+    assert!(!jobs.draft_in_progress(&draft.draft_id));
+    assert!(matches!(
+        jobs.discard(&ready.job_id),
+        Err(DraftServiceError::InvalidAttempt(_))
+    ));
+    let mut drafts = PublisherDrafts::open_in_memory().unwrap();
+    assert!(matches!(
+        jobs.activate(&ready.job_id, &mut drafts, &scratch.0.join("releases")),
+        Err(DraftServiceError::InvalidAttempt(_))
+    ));
+    assert!(matches!(
+        jobs.discard("job_unknown"),
+        Err(DraftServiceError::InvalidAttempt(_))
+    ));
+
+    let again = prepare(&jobs, &draft);
+    assert_eq!(again.stage, PublishStage::ReadyToPublish);
+    assert_ne!(again.job_id, ready.job_id);
+}
+
+#[test]
+fn a_failed_preparation_can_be_retried_once_its_cause_is_fixed() {
+    let scratch = Scratch::new("retry");
+    let jobs = PublishJobs::new(&scratch.staging());
+    let draft = publishable(&scratch, 64 * 1024);
+    let source = scratch.0.join("lecture.pdf");
+    let original = fs::read(&source).unwrap();
+    fs::remove_file(&source).unwrap();
+
+    let failed = prepare(&jobs, &draft);
+    assert_eq!(failed.stage, PublishStage::Failed);
+    assert_eq!(failed.failure.as_ref().unwrap().code, "draft_invalid");
+    assert_eq!(scratch.staging_entries(), Vec::<String>::new());
+    assert!(matches!(
+        jobs.discard(&failed.job_id),
+        Err(DraftServiceError::InvalidAttempt(_))
+    ));
+
+    fs::write(&source, original).unwrap();
+    let retried = prepare(&jobs, &draft);
+    assert_eq!(retried.stage, PublishStage::ReadyToPublish);
+}

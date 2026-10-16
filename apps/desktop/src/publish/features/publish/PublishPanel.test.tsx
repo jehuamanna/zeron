@@ -15,6 +15,7 @@ vi.mock("../../services/publisher", async (importOriginal) => ({
     cancelPublishJob: vi.fn(),
     onPublishJob: vi.fn(),
     activateRelease: vi.fn(),
+    discardPublishJob: vi.fn(),
   },
 }));
 
@@ -127,6 +128,35 @@ describe("release preparation", () => {
 
     push(job({ sequence: 6, stage: "FAILED", failure: { code: "source_changed", message: "the source for resource `r1` changed while it was copied" } }));
     await waitFor(() => expect(view.getByRole("alert").textContent).toContain("changed while it was copied"));
+    expect(view.container.textContent).toContain("Check the lesson files, then retry.");
+    expect(view.getByRole("button", { name: /retry/i })).toBeTruthy();
+  });
+
+  it("discards a prepared release so the draft can be prepared again", async () => {
+    const prepared = { attemptId: "stage_x", courseVersion: "1.0.0", resourceCount: 1, manifestSha256: "f".repeat(64), infoHash: "d".repeat(40), magnet: "magnet:?xt=urn:btih:d", trackerCount: 0, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10 };
+    server = job({ sequence: 4, stage: "READY_TO_PUBLISH", prepared });
+    useBuilderUi.setState({ publishJobIds: { draft_one: "job_one" } });
+    vi.mocked(publisherApi.discardPublishJob).mockImplementation(async () => {
+      server = job({ sequence: 5, stage: "CANCELLED" });
+      return server;
+    });
+    const view = renderPanel();
+    fireEvent.click(await waitFor(() => view.getByRole("button", { name: "Discard" })));
+    await waitFor(() => expect(publisherApi.discardPublishJob).toHaveBeenCalledWith("job_one"));
+    await waitFor(() => expect(view.container.textContent).toContain("The draft can be prepared again"));
+    expect(view.queryByRole("button", { name: /publish release/i })).toBeNull();
+    expect(view.getByRole("button", { name: /prepare again/i })).toBeTruthy();
+  });
+
+  it("explains how to recover from a reused version", async () => {
+    const prepared = { attemptId: "stage_x", courseVersion: "1.0.0", resourceCount: 1, manifestSha256: "f".repeat(64), infoHash: "e".repeat(40), magnet: "magnet:?xt=urn:btih:e", trackerCount: 0, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10 };
+    server = job({ sequence: 4, stage: "READY_TO_PUBLISH", prepared });
+    useBuilderUi.setState({ publishJobIds: { draft_one: "job_one" } });
+    vi.mocked(publisherApi.activateRelease).mockRejectedValueOnce({ code: "version_already_released", message: "version 1.0.0 was already released; choose a new version" });
+    const view = renderPanel();
+    fireEvent.click(await waitFor(() => view.getByRole("button", { name: /publish release/i })));
+    fireEvent.click(view.getByRole("button", { name: "Publish permanently" }));
+    await waitFor(() => expect(view.container.textContent).toContain("change the version in the draft"));
   });
 
   it("publishes only after explicit confirmation and reports reused versions", async () => {

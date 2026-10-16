@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CircleDashed, Loader2, PackageCheck, Rocket, XCircle } from "lucide-react";
+import { CheckCircle2, CircleDashed, Loader2, PackageCheck, RotateCcw, Rocket, Undo2, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { formatBytes } from "../../lib/format";
@@ -21,6 +21,36 @@ const steps: Array<{ stage: PublishStage; label: string }> = [
 ];
 
 const stageOrder: PublishStage[] = steps.map((step) => step.stage);
+
+/** What the publisher can do about a failed preparation, by failure code. */
+export function failureAdvice(code: string): string {
+  switch (code) {
+    case "draft_invalid":
+      return "Fix the issues listed above, then retry.";
+    case "manifest_invalid":
+      return "The course details could not be written as a valid course.json. Check the title, version, and tags, then retry.";
+    case "source_changed":
+      return "A source file changed or disappeared while it was being copied. Check the lesson files, then retry.";
+    case "limit_exceeded":
+      return "The course is over a package limit. Remove files or split the course, then retry.";
+    case "verification_failed":
+      return "The independent check did not match the files just written. Retry; if it fails again, check the disk.";
+    default:
+      return "Partial files were removed. Retry when ready.";
+  }
+}
+
+/** What the publisher can do when publishing a prepared release fails, by error code. */
+export function activationAdvice(code: string | undefined): string | null {
+  switch (code) {
+    case "version_already_released":
+      return "Discard this preparation, change the version in the draft, and prepare again.";
+    case "release_activation_failed":
+      return "Nothing was published. Discard this preparation and prepare again.";
+    default:
+      return null;
+  }
+}
 
 export function PublishPanel({ draftId, revision }: PublishPanelProps) {
   const queryClient = useQueryClient();
@@ -84,7 +114,7 @@ export function PublishPanel({ draftId, revision }: PublishPanelProps) {
             disabled={blocked || start.isPending || validation.isPending}
             className="flex items-center gap-1.5 rounded-lg bg-amber-300 px-2.5 py-1 text-xs font-semibold text-slate-950 disabled:opacity-40"
           >
-            <PackageCheck size={14} /> {current ? "Prepare again" : "Prepare release"}
+            {current?.stage === "FAILED" ? <RotateCcw size={14} /> : <PackageCheck size={14} />} {current?.stage === "FAILED" ? "Retry" : current ? "Prepare again" : "Prepare release"}
           </button>
         )}
       </div>
@@ -102,6 +132,13 @@ export function PublishPanel({ draftId, revision }: PublishPanelProps) {
 function JobView({ job, draftRevision, onPublished }: { job: PublishJob; draftRevision: number; onPublished: () => void }) {
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
+  const discard = useMutation({
+    mutationFn: () => publisherApi.discardPublishJob(job.jobId),
+    onSuccess: (discarded) => {
+      setConfirming(false);
+      queryClient.setQueryData<PublishJob | null>(["publish-job", job.jobId], (current) => (current && current.sequence >= discarded.sequence ? current : discarded));
+    },
+  });
   const activate = useMutation({
     mutationFn: () => publisherApi.activateRelease(job.jobId),
     onSuccess: async () => {
@@ -114,6 +151,8 @@ function JobView({ job, draftRevision, onPublished }: { job: PublishJob; draftRe
   const settled = job.stage === "READY_TO_PUBLISH" || job.stage === "PUBLISHED";
   const percent = job.progress && job.progress.totalBytes > 0 ? Math.floor((job.progress.completedBytes / job.progress.totalBytes) * 100) : null;
   const activationError = activate.isError ? (asCommandError(activate.error)?.message ?? "The release could not be published.") : null;
+  const activationHelp = activate.isError ? activationAdvice(asCommandError(activate.error)?.code) : null;
+  const discardError = discard.isError ? (asCommandError(discard.error)?.message ?? "The preparation could not be discarded.") : null;
   return (
     <div className="mt-4 space-y-4 text-sm">
       <ol aria-label="Preparation steps" className="space-y-2">
@@ -134,9 +173,12 @@ function JobView({ job, draftRevision, onPublished }: { job: PublishJob; draftRe
           <div className="h-full bg-amber-300" style={{ width: `${percent}%` }} />
         </div>
       ) : null}
-      {job.stage === "CANCELLED" ? <p className="text-slate-400">Cancelled. Partial files were removed.</p> : null}
+      {job.stage === "CANCELLED" ? <p className="text-slate-400">Cancelled. Partial files were removed. The draft can be prepared again.</p> : null}
       {job.failure ? (
-        <p role="alert" className="flex gap-2 text-red-200"><XCircle size={16} className="mt-0.5 shrink-0" />{job.failure.message}</p>
+        <div className="space-y-1">
+          <p role="alert" className="flex gap-2 text-red-200"><XCircle size={16} className="mt-0.5 shrink-0" />{job.failure.message}</p>
+          <p className="pl-6 text-xs text-slate-400">{failureAdvice(job.failure.code)}</p>
+        </div>
       ) : null}
       {job.prepared ? (
         <div className="space-y-3 rounded-2xl border border-emerald-300/20 bg-emerald-300/5 p-4">
@@ -170,12 +212,19 @@ function JobView({ job, draftRevision, onPublished }: { job: PublishJob; draftRe
                 </div>
               </div>
             ) : (
-              <button type="button" onClick={() => setConfirming(true)} className="flex items-center gap-1.5 rounded-lg bg-emerald-300 px-3 py-1.5 text-xs font-semibold text-slate-950">
-                <Rocket size={14} /> Publish release
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => setConfirming(true)} disabled={discard.isPending} className="flex items-center gap-1.5 rounded-lg bg-emerald-300 px-3 py-1.5 text-xs font-semibold text-slate-950 disabled:opacity-50">
+                  <Rocket size={14} /> Publish release
+                </button>
+                <button type="button" onClick={() => discard.mutate()} disabled={discard.isPending} className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15 disabled:opacity-50">
+                  <Undo2 size={14} /> {discard.isPending ? "Discarding…" : "Discard"}
+                </button>
+              </div>
             )
           ) : null}
           {activationError ? <p role="alert" className="text-red-200">{activationError}</p> : null}
+          {activationHelp ? <p className="text-xs text-slate-400">{activationHelp}</p> : null}
+          {discardError ? <p role="alert" className="text-red-200">{discardError}</p> : null}
         </div>
       ) : null}
     </div>
