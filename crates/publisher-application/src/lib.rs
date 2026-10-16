@@ -7,6 +7,7 @@ mod content_keys;
 mod course_deletion;
 mod disk;
 mod drops;
+mod licensing;
 mod publish_jobs;
 mod releases;
 mod seeding;
@@ -41,6 +42,7 @@ pub use drops::{
     DropInbox, DropLimits, DropOutcome, DropPlan, PlannedFile, PlannedModule, SkipReason,
     SkippedEntry, clean_title, natural_cmp, plan_drop,
 };
+pub use licensing::issue_license;
 pub use publish_jobs::{JobFailure, JobProgress, PreparedRelease, PublishJobSnapshot, PublishJobs};
 use publisher_storage::PublisherStorage;
 pub use publisher_storage::{

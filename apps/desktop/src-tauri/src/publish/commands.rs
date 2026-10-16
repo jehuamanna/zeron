@@ -185,6 +185,8 @@ pub(crate) struct ReleaseDetailsDto {
     files: Vec<ReleaseFileDto>,
     /// The publisher signature, or `null` for an unsigned release.
     signature: Option<ReleaseSignatureDto>,
+    /// The release has paid lessons, so learners can be licensed for it.
+    paid: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -467,6 +469,14 @@ pub(crate) async fn start_publish_preparation(
             super::tracker_lists::now_unix_seconds(),
         )?;
         let content_key = super::identity::release_content_key(&credentials, &draft)?;
+        if content_key.is_some() && signer.is_none() {
+            // Licenses are checked against the course's pinned publisher, so
+            // a paid course must be signed (ADR 0017).
+            return Err(CommandError::new(
+                "signing_required",
+                "paid lessons need a signing identity, so learners' licenses can be checked: create one in Publish → Identity and turn on signing",
+            ));
+        }
         let started = jobs
             .begin(&draft)
             .map_err(|error| service_error("publish_start_failed", error))?;
@@ -789,7 +799,13 @@ pub(crate) async fn get_release_details(
         let signature = drafts
             .release_signature(&releases_root, &release_id)
             .map_err(|error| service_error("release_unavailable", error))?;
-        Ok(ReleaseDetailsDto::signed(torrent, signature.as_ref()))
+        let paid = drafts
+            .release_is_paid(&releases_root, &release_id)
+            .map_err(|error| service_error("release_unavailable", error))?;
+        Ok(ReleaseDetailsDto {
+            paid,
+            ..ReleaseDetailsDto::signed(torrent, signature.as_ref())
+        })
     })
     .await
 }
@@ -1463,6 +1479,7 @@ impl From<ReleaseTorrent> for ReleaseDetailsDto {
     fn from(torrent: ReleaseTorrent) -> Self {
         Self {
             signature: None,
+            paid: false,
             release: ReleaseDto::from(torrent.record),
             files: torrent
                 .files

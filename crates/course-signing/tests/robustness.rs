@@ -2,8 +2,9 @@
 //! mutation changes verifies as the publisher's statement.
 
 use course_signing::{
-    CatalogEntry, SecretKey, parse_catalog, parse_release_signature, revoke, rotate, sign_catalog,
-    sign_release, verify_catalog, verify_release,
+    CatalogEntry, LicensedKey, SecretKey, license_file, parse_catalog, parse_license,
+    parse_release_signature, revoke, rotate, sign_catalog, sign_delegation, sign_license,
+    sign_release, verify_catalog, verify_license, verify_release,
 };
 use mutation_testing::mutations;
 
@@ -70,6 +71,46 @@ fn mutated_catalogs_never_verify_as_something_else() {
             assert_eq!(
                 parsed.statement, catalog.statement,
                 "mutation {index} verified a changed catalog"
+            );
+        }
+    }
+}
+
+#[test]
+fn mutated_licenses_never_verify_as_something_else() {
+    let (publisher, issuer) = (
+        SecretKey::from_bytes(&[5; 32]),
+        SecretKey::from_bytes(&[6; 32]),
+    );
+    let learner = SecretKey::from_bytes(&[7; 32]).public_key();
+    let keys = vec![LicensedKey {
+        course_version: "1.0.0".to_owned(),
+        wrapped_content_key: "e".repeat(160),
+    }];
+    let file = license_file(
+        &publisher.public_key(),
+        Vec::new(),
+        Some(sign_delegation(
+            &publisher,
+            &issuer.public_key(),
+            "https://licenses.example",
+            1,
+        )),
+        sign_license(&issuer, "course_a", &learner, keys, 5),
+    );
+    let original = file.to_bytes();
+    let publisher_id = publisher.public_key().to_string();
+    for (index, input) in mutations(&[&original], 0x5161_0003, 4_000, 128 * 1024)
+        .iter()
+        .enumerate()
+    {
+        let Ok(parsed) = parse_license(input) else {
+            continue;
+        };
+        if verify_license(&parsed, &publisher_id, &learner, &[]).is_ok() {
+            assert_eq!(
+                parsed.license.statement, file.license.statement,
+                "mutation {index} verified a changed license"
             );
         }
     }

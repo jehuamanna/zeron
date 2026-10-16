@@ -5,8 +5,8 @@
 
 use std::sync::{Arc, OnceLock};
 
-use learning_application::{ContentKey, ContentKeys};
-use publisher_application::{PublisherDrafts, ReleaseSigner, stored_content_key};
+use learning_application::ContentKey;
+use publisher_application::{PublisherDrafts, ReleaseSigner};
 use publisher_identity::{
     CredentialStore, Identity, IdentityError, MAX_BACKUP_BYTES, OsStore, create, export_backup,
     forget_key, restore_backup, rotate_key, signing_key,
@@ -19,21 +19,6 @@ use super::{
     PublishState,
     commands::{CommandError, lock_drafts, run_blocking, service_error},
 };
-
-/// The Library's content keys before licenses exist (ADR 0017, Phase 11
-/// slice 2): the keys this computer's Publish area sealed releases with, so a
-/// publisher can preview their own paid course. A keychain that is missing or
-/// fails reads as "no key", and paid lessons stay locked.
-pub(crate) struct PublishedContentKeys(pub(crate) Arc<Credentials>);
-
-impl ContentKeys for PublishedContentKeys {
-    fn content_key(&self, course_id: &str, version: &str) -> Option<ContentKey> {
-        let store = self.0.store().ok()?;
-        stored_content_key(store.as_ref(), course_id, version)
-            .ok()
-            .flatten()
-    }
-}
 
 /// The credential store, opened on first use so a missing keychain never
 /// delays or blocks startup.
@@ -374,6 +359,28 @@ fn restore(
         .set_identity(&restored)
         .map_err(|error| service_error("identity_failed", error))?;
     Ok(restored)
+}
+
+/// A signer with the publisher's current key, for licenses: unlike
+/// [`release_signer`] it ignores the "sign new releases" setting.
+///
+/// # Errors
+/// Returns `identity_missing`, or the keychain failure.
+pub(crate) fn publisher_signer(
+    drafts: &PublisherDrafts,
+    credentials: &Credentials,
+    now: u64,
+) -> Result<ReleaseSigner, CommandError> {
+    let identity = identity(drafts)?.ok_or_else(|| {
+        CommandError::new(
+            "identity_missing",
+            "create a signing identity in Publish → Identity first",
+        )
+    })?;
+    let store = credentials.get()?;
+    let secret = signing_key(store.as_ref(), &identity).map_err(identity_error)?;
+    ReleaseSigner::new(identity, secret, now)
+        .map_err(|error| service_error("signing_unavailable", error))
 }
 
 fn identity(drafts: &PublisherDrafts) -> Result<Option<Identity>, CommandError> {

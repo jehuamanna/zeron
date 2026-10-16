@@ -39,6 +39,8 @@ const DERIVATION_SALT: &[u8] = b"zeron.learner-key.v1";
 const SIGNING_INFO: &[u8] = b"signing";
 const ENCRYPTION_INFO: &[u8] = b"encryption";
 const ENCRYPTION_PREFIX: &str = "x25519-";
+/// Prefix of a learner ID, the public keys a learner shares to be licensed.
+pub const LEARNER_ID_PREFIX: &str = "zeron-learner:v1:";
 
 /// Why a learner key operation failed. Messages never contain secrets.
 #[derive(Debug, Error)]
@@ -120,6 +122,17 @@ impl LearnerIdentity {
             .ok_or(LearnerKeyError::WrongKey)
     }
 
+    /// The learner ID to share with a publisher or issuer:
+    /// `zeron-learner:v1:<signing key hex>:<encryption key hex>`. Public.
+    #[must_use]
+    pub fn learner_id(&self) -> String {
+        format!(
+            "{LEARNER_ID_PREFIX}{}:{}",
+            self.signing_key.trim_start_matches("ed25519-"),
+            self.encryption_key.trim_start_matches(ENCRYPTION_PREFIX)
+        )
+    }
+
     fn matches(&self, keys: &LearnerKeys) -> bool {
         let derived = keys.identity(self.created_at);
         derived.signing_key == self.signing_key && derived.encryption_key == self.encryption_key
@@ -167,6 +180,12 @@ impl LearnerKeys {
     #[must_use]
     pub const fn encryption(&self) -> &x25519_dalek::StaticSecret {
         &self.encryption
+    }
+
+    /// The X25519 secret's bytes, for opening wrapped content keys.
+    #[must_use]
+    pub fn encryption_secret_bytes(&self) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(self.encryption.to_bytes())
     }
 
     fn identity(&self, created_at: u64) -> LearnerIdentity {
@@ -219,6 +238,46 @@ pub fn stored_identity(
     created_at: u64,
 ) -> Result<Option<LearnerIdentity>, LearnerKeyError> {
     Ok(load_seed(store)?.map(|seed| LearnerKeys::from_seed(&seed).identity(created_at)))
+}
+
+/// The keys of whatever learner key `store` holds, if any. For opening
+/// licenses, which name the learner key they are for.
+///
+/// # Errors
+/// Returns a credential-store failure or [`LearnerKeyError::WrongKey`] for a
+/// malformed entry.
+pub fn stored_keys(store: &dyn CredentialStore) -> Result<Option<LearnerKeys>, LearnerKeyError> {
+    Ok(load_seed(store)?.map(|seed| LearnerKeys::from_seed(&seed)))
+}
+
+/// A learner's public keys, read from a shared learner ID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LearnerId {
+    /// The signing key licenses are bound to.
+    pub signing_key: PublicKey,
+    /// The X25519 key content keys are sealed to.
+    pub encryption_key: [u8; 32],
+}
+
+/// Parse a learner ID as [`LearnerIdentity::learner_id`] writes it.
+/// Surrounding whitespace is ignored.
+///
+/// # Errors
+/// Returns [`LearnerKeyError::WrongKey`] for anything else.
+pub fn parse_learner_id(text: &str) -> Result<LearnerId, LearnerKeyError> {
+    let rest = text
+        .trim()
+        .strip_prefix(LEARNER_ID_PREFIX)
+        .ok_or(LearnerKeyError::WrongKey)?;
+    let (signing, encryption) = rest.split_once(':').ok_or(LearnerKeyError::WrongKey)?;
+    let signing_key: PublicKey = format!("ed25519-{signing}")
+        .parse()
+        .map_err(|_| LearnerKeyError::WrongKey)?;
+    let encryption_key = unhex32(encryption).ok_or(LearnerKeyError::WrongKey)?;
+    Ok(LearnerId {
+        signing_key,
+        encryption_key,
+    })
 }
 
 /// The secret keys of `identity`, read from `store` and checked against it.
@@ -401,6 +460,42 @@ mod tests {
             identity.encryption_key,
             "x25519-304ebcb034f6c42814d9d4c3a1c53fadd50c00fcfb97998656697ae08c26d773"
         );
+    }
+
+    #[test]
+    fn learner_ids_round_trip_and_reject_anything_else() {
+        let store = MemoryStore::default();
+        let identity = create(&store, 1).unwrap();
+        let id = identity.learner_id();
+        assert!(id.starts_with(LEARNER_ID_PREFIX));
+        let parsed = parse_learner_id(&format!("  {id}\n")).unwrap();
+        assert_eq!(parsed.signing_key.to_string(), identity.signing_key);
+        assert_eq!(
+            parsed.encryption_key,
+            identity.encryption_public_key().unwrap()
+        );
+        for bad in [
+            "",
+            "zeron-learner:v2:aa:bb",
+            &id.replace(':', "-"),
+            &id[..id.len() - 2],
+            &id.to_uppercase(),
+        ] {
+            assert!(parse_learner_id(bad).is_err(), "accepted {bad:?}");
+        }
+        let keys = stored_keys(&store).unwrap().unwrap();
+        assert_eq!(
+            keys.signing().public_key().to_string(),
+            identity.signing_key
+        );
+        assert_eq!(
+            *x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(
+                *keys.encryption_secret_bytes()
+            ))
+            .as_bytes(),
+            identity.encryption_public_key().unwrap()
+        );
+        assert!(stored_keys(&MemoryStore::default()).unwrap().is_none());
     }
 
     #[test]

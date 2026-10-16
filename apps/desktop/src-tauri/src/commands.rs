@@ -573,7 +573,9 @@ pub(crate) async fn get_course_detail(
         let info_hash = library.torrent_info_hash(&course_id).map_err(failed)?;
         let publisher = library.course_publisher(&course_id).map_err(failed)?;
         let youtube = library.is_youtube_course(&course_id).map_err(failed)?;
-        let locked = learning_application::locked_resources(&manifest, &*keys);
+        let locked = library
+            .locked_resources(&manifest, &*keys)
+            .map_err(failed)?;
         Ok(Some(CourseDetailDto::new(
             manifest,
             info_hash,
@@ -756,6 +758,7 @@ fn local_import_error(error: LibraryError) -> CommandError {
         }
         LibraryError::NoteTarget(_) => command_error("note_target_invalid", error),
         LibraryError::Signature(_) => command_error("signature_invalid", error),
+        LibraryError::License(_) => command_error("license_invalid", error),
         LibraryError::PublisherChanged { .. } => command_error("publisher_changed", error),
     }
 }

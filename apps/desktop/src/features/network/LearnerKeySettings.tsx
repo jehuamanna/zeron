@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileDown, FileUp, KeyRound, ShieldAlert, ShieldCheck } from "lucide-react";
-import { useState } from "react";
+import { Check, Copy, FileDown, FileUp, KeyRound, ShieldAlert, ShieldCheck } from "lucide-react";
+import { useRef, useState } from "react";
 
+import { copyText } from "../../publish/lib/clipboard";
 import { Button } from "../../components/ui/button";
 import { asCommandError, libraryApi, type LearnerKey } from "../../services/library";
 
@@ -60,8 +61,27 @@ function KeyDetails({ learnerKey, onChanged }: { learnerKey: LearnerKey; onChang
           <dd className="text-slate-300">{learnerKey.createdAtUnixSeconds ? new Date(learnerKey.createdAtUnixSeconds * 1000).toLocaleString() : ""}</dd>
         </dl>
       ) : null}
+      {learnerKey.learnerId ? <LearnerId value={learnerKey.learnerId} /> : null}
       <BackupKey disabled={!ready} />
       <RestoreKey onRestored={onChanged} />
+    </div>
+  );
+}
+
+/** The learner ID to send a publisher, who makes a license for it. */
+function LearnerId({ value }: { value: string }) {
+  const field = useRef<HTMLInputElement>(null);
+  const [copy, setCopy] = useState<"idle" | "copied" | "manual">("idle");
+  return (
+    <div className="space-y-1">
+      <label htmlFor="learner-id" className="text-xs font-semibold text-slate-400">Learner ID</label>
+      <div className="flex gap-2">
+        <input id="learner-id" ref={field} readOnly value={value} className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-2 py-1 font-mono text-xs text-slate-300" />
+        <button type="button" onClick={async () => setCopy((await copyText(value, field.current)) ? "copied" : "manual")} className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1 text-xs font-semibold hover:bg-white/15">
+          {copy === "copied" ? <Check size={14} /> : <Copy size={14} />} {copy === "copied" ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <p className="text-xs text-slate-400">{copy === "manual" ? "Press Ctrl+C to copy the selected ID. " : ""}Send it to a publisher to be licensed. It holds only public keys.</p>
     </div>
   );
 }

@@ -41,6 +41,7 @@ vi.mock("../services/library", async (importOriginal) => ({
     storage: vi.fn(() => Promise.resolve({ streamedBytes: 0, cacheLimitBytes: null, availableBytes: 50 * 1024 ** 3, lowDisk: false })),
     savePlaybackPosition: vi.fn(() => Promise.resolve(true)),
     search: vi.fn(),
+    importLicense: vi.fn(),
   },
 }));
 
@@ -116,6 +117,32 @@ describe("paid lessons", () => {
     expect(view.container.textContent).toContain("free preview lessons stay open");
     expect(libraryApi.registerMedia).not.toHaveBeenCalled();
     expect(await accessibilityViolations(view.container)).toEqual([]);
+  });
+
+  it("imports a license from the locked lesson and reloads the course", async () => {
+    const unlocked = {
+      ...lockedCourse,
+      paidUnlocked: true,
+      modules: lockedCourse.modules.map((module) => ({
+        ...module,
+        lessons: module.lessons.map((lesson) => ({ ...lesson, locked: false, resources: lesson.resources.map((resource) => ({ ...resource, locked: false })) })),
+      })),
+    };
+    vi.mocked(libraryApi.importLicense)
+      .mockRejectedValueOnce({ code: "license_invalid", message: "this license cannot be used: the signature is for another learner" })
+      .mockImplementationOnce(async () => {
+        vi.mocked(libraryApi.detail).mockResolvedValue(unlocked);
+        return { courseId: "course_paid", courseTitle: "Paid Course", versions: ["1.0.0"], unlocksCurrent: true, alreadyImported: false };
+      });
+    const view = renderApp();
+    await waitFor(() => expect(view.container.textContent).toContain("Deep dive"));
+    const lesson = Array.from(view.container.querySelectorAll("button")).find((button) => button.getAttribute("title") === "Deep dive");
+    fireEvent.click(lesson!);
+    fireEvent.click(await view.findByRole("button", { name: /Import license/ }));
+    expect((await view.findByRole("alert")).textContent).toContain("another learner");
+    fireEvent.click(view.getByRole("button", { name: /Import license/ }));
+    await waitFor(() => expect(view.queryAllByText("Paid lesson, locked")).toHaveLength(0));
+    expect(view.getAllByText("Play video")).toHaveLength(2);
   });
 
   it("still plays the free preview", async () => {

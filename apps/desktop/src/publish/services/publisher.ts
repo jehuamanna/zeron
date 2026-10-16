@@ -143,6 +143,8 @@ export interface ReleaseDetails {
   files: ReleaseFile[];
   /** `null` for an unsigned release. */
   signature: ReleaseSignature | null;
+  /** The release has paid lessons, so learners can be licensed for it. Absent means false. */
+  paid?: boolean;
 }
 
 export interface PublisherIdentity {
@@ -336,6 +338,8 @@ export const publisherApi = {
   discardPublishJob: (jobId: string) => invoke<PublishJob>("discard_publish_job", { jobId }),
   onPublishJob: (handler: (job: PublishJob) => void) => listen<PublishJob>("publish-job", (event) => handler(event.payload)),
   activateRelease: (jobId: string) => invoke<Release>("activate_release", { jobId }),
+  /** Saves a license for `learnerId` through a save dialog; `false` when cancelled. */
+  issueLearnerLicense: (courseId: string, learnerId: string) => invoke<boolean>("issue_learner_license", { courseId, learnerId }),
   listReleases: () => invoke<Release[]>("list_releases"),
   /** Stops seeding and marks the release archived; its files stay on disk. */
   archiveRelease: (releaseId: string) => invoke<Release>("archive_release", { releaseId }),

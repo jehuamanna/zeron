@@ -349,7 +349,7 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 ## Module boundaries
 
 - `course-format`: manifest wire contract and semantic validation (schema 1 for free courses, 2 for paid ones).
-- `course-access`: paid-lesson encryption (ADR 0017): content keys, chunk sealing, and the decrypting reader. No I/O of its own.
+- `course-access`: paid-lesson encryption (ADR 0017): content keys, chunk sealing, the decrypting reader, and HPKE wrapping of content keys for licenses. No I/O of its own.
 - `course-publisher`: draft and publishing policy, staging, and media inspection, with no SQLite or Tauri.
 - `publisher-storage`: Admin SQLite persistence (schema v6: drafts, releases, seeding intents, settings, distribution events, catalog confirmations) with compare-and-swap draft saves.
 - `publisher-application`: Admin use cases: drafts, sources, staging, torrents, publish jobs, releases, seeding, and settings.
@@ -359,7 +359,7 @@ Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v
 - `learning-domain`: pure learner rules (progress now, annotations next).
 - `learning-application` / `learning-storage`: learner import, library, torrent imports, sharing, and routing.
 - `media-gateway`: authenticated loopback HTTP(S) delivery, with no dependency on Tauri or torrents.
-- `course-signing`: pure Ed25519 keys, canonical statements, release signatures, rotation chains, revocations, and catalogs (ADR 0014).
+- `course-signing`: pure Ed25519 keys, canonical statements, release signatures, rotation chains, revocations, catalogs (ADR 0014), and licenses with issuer delegations (ADR 0017).
 - `publisher-identity`: the publisher's signing key in the OS credential store, rotation, and passphrase backups. Its `passphrase` module and `OsStore::open_service` are shared with learner keys.
 - `learner-identity`: the learner key (ADR 0017): one keychain seed, derived Ed25519 and X25519 keys, and passphrase backups.
 - `port-mapping`: PCP, NAT-PMP, and `UPnP` IGD mapping for TCP and UDP, with renewal, removal, and status (ADR 0013).

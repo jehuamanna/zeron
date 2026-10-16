@@ -87,6 +87,9 @@ pub enum LibraryError {
     /// The course's publisher signature does not verify or was revoked.
     #[error("the course's publisher signature cannot be trusted: {0}")]
     Signature(String),
+    /// A license file cannot be used.
+    #[error("this license cannot be used: {0}")]
+    License(String),
     /// The course is pinned to a publisher, and this version is signed by
     /// another one or not signed.
     #[error(

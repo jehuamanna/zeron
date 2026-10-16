@@ -6,6 +6,7 @@
 
 mod catalog;
 mod keys;
+mod license;
 mod release;
 mod statements;
 
@@ -14,14 +15,19 @@ pub use catalog::{
     MAX_CATALOG_ENTRIES, VerifiedCatalog, parse_catalog, sign_catalog, verify_catalog,
 };
 pub use keys::{PublicKey, SecretKey, fingerprint};
+pub use license::{
+    DelegationStatement, LICENSE_FORMAT, LicenseFile, LicenseStatement, LicensedKey,
+    MAX_LICENSE_BYTES, MAX_LICENSE_KEYS, VerifiedLicense, license_file, parse_license,
+    sign_delegation, sign_license, verify_license,
+};
 pub use release::{
     MAX_RELEASE_SIGNATURE_BYTES, RELEASE_SIGNATURE_FILE, RELEASE_SIGNATURE_FORMAT,
     ReleaseSignature, ReleaseStatement, VerifiedRelease, parse_release_signature, sign_release,
     verify_release,
 };
 pub use statements::{
-    MAX_ROTATIONS, RevocationRecord, RevocationStatement, RotationStatement, Signed, revoke,
-    revoked, revoked_by_records, rotate, verify_chain,
+    MAX_ROTATIONS, RevocationRecord, RevocationStatement, RotationStatement, Signed,
+    delegate_revoked_by_records, revoke, revoked, revoked_by_records, rotate, verify_chain,
 };
 
 use thiserror::Error;

@@ -5,7 +5,9 @@ mod appimage;
 mod backup;
 mod catalogs;
 mod commands;
+mod content_keys;
 mod learner_key;
+mod licenses;
 mod media;
 mod navigation;
 mod publish;
@@ -160,9 +162,12 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(sharing) = &torrents.sharing {
         sharing.load()?;
     }
-    let content_keys: Arc<dyn learning_application::ContentKeys> = Arc::new(
-        publish::identity::PublishedContentKeys(Arc::clone(&publish.credentials)),
-    );
+    let learner_credentials = Arc::new(learner_key::LearnerCredentials::default());
+    let content_keys: Arc<dyn learning_application::ContentKeys> =
+        Arc::new(content_keys::LibraryContentKeys {
+            publisher: Arc::clone(&publish.credentials),
+            learner: Arc::clone(&learner_credentials),
+        });
     spawn_background_work(&torrents, &library, &content_keys);
     publish.spawn_background_work(profile);
     app.manage(publish);
@@ -174,7 +179,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         torrents,
         courses_root,
         content_keys,
-        learner_credentials: Arc::default(),
+        learner_credentials,
     });
     Ok(())
 }
@@ -194,6 +199,7 @@ fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         learner_key::create_learner_key,
         learner_key::export_learner_key_backup,
         learner_key::restore_learner_key_backup,
+        licenses::choose_and_import_license,
         commands::choose_and_import_course,
         youtube::inspect_youtube_link,
         youtube::add_youtube_video,
@@ -277,6 +283,7 @@ fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         publish::identity::rotate_publisher_identity,
         publish::identity::set_sign_releases,
         publish::identity::export_identity_backup,
+        publish::licensing::issue_learner_license,
         publish::identity::restore_identity_backup,
         publish::configuration::choose_publisher_configuration,
         publish::configuration::apply_publisher_configuration,

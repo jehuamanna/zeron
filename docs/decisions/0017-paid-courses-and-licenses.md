@@ -70,6 +70,15 @@ The user does not want Zeron accounts, meaning no Zeron passwords, profiles, or 
      - neither key is revoked. Revocations use ADR 0014's statements; a delegation is revoked by revoking the issuer key in the publisher's catalog.
 
    A compromised issuer can therefore hand out licenses for the courses it serves. It can never sign releases or take over a publisher's courses.
+
+   As built in slice 4 (2026-10-17):
+   - **The delegation travels in the license file, not in the manifest.** The file is `{ format: "zeron.license", version: 1, publisherId, rotations, delegation?, license }`. The Library verifies it entirely offline against the course's pinned publisher, so no manifest change is needed. The manifest still gains the issuer URL with the issuer slices, as a hint for where to ask.
+   - **The delegation statement adds `delegatedBy`,** the publisher key that signed it.
+   - **The license statement adds `issuerKey`,** like a release's `publisherKey`.
+   - **A license may also be signed directly by a key of the publisher's own chain,** with no delegation. That is how a publisher licenses a buyer by hand (Publish → release details → "License a learner").
+   - **Revoking a delegated issuer key** uses ADR 0014's revocation statement, accepted when any key of the publisher's verified chain signed it, because an issuer key is not in the chain.
+   - **Licenses are checked again every time they are used,** so a revocation learned later locks the course again.
+   - **Paid courses must be signed:** without a pinned publisher there is nothing to verify a license against. Publish refuses to prepare a draft with paid lessons unless releases are being signed.
 6. **The license issuer.**
    - The issuer is a small HTTPS service, the first server component since the seed server was removed. It:
      - receives each paid release's content key, sealed to the issuer's HPKE key, when the publisher registers the release;

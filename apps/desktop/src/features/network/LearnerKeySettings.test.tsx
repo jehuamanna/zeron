@@ -11,12 +11,13 @@ vi.mock("../../services/library", async (importOriginal) => ({
   libraryApi: { getLearnerKey: vi.fn(), createLearnerKey: vi.fn(), exportLearnerKeyBackup: vi.fn(), restoreLearnerKeyBackup: vi.fn() },
 }));
 
-const none: LearnerKey = { status: "none", signingKey: null, encryptionKey: null, fingerprint: null, createdAtUnixSeconds: null, problem: null };
+const none: LearnerKey = { status: "none", signingKey: null, encryptionKey: null, fingerprint: null, learnerId: null, createdAtUnixSeconds: null, problem: null };
 const ready: LearnerKey = {
   status: "ready",
   signingKey: `ed25519-${"a".repeat(64)}`,
   encryptionKey: `x25519-${"b".repeat(64)}`,
   fingerprint: "7F3A-91C2-0B44-E8D1",
+  learnerId: `zeron-learner:v1:${"a".repeat(64)}:${"b".repeat(64)}`,
   createdAtUnixSeconds: 1_760_000_000,
   problem: null,
 };
@@ -40,6 +41,19 @@ describe("learner key", () => {
     expect(view.container.textContent).toContain("Ready");
     expect(view.container.textContent).toContain("no account or password");
     expect(await accessibilityViolations(view.container)).toEqual([]);
+  });
+
+  it("shows the learner ID to share and copies it", async () => {
+    vi.mocked(libraryApi.getLearnerKey).mockResolvedValue(ready);
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.assign(navigator, { clipboard: { writeText } });
+    const view = renderSettings();
+    const field = (await view.findByLabelText("Learner ID")) as HTMLInputElement;
+    expect(field.value).toBe(ready.learnerId);
+    expect(field.readOnly).toBe(true);
+    fireEvent.click(view.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(ready.learnerId));
+    expect(await view.findByRole("button", { name: "Copied" })).toBeTruthy();
   });
 
   it("backs up only with a long, repeated passphrase", async () => {

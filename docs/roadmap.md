@@ -91,6 +91,9 @@ Slices, in dependency order:
    - HPKE unwrapping.
    - Licenses stored as learner data and imported from a file.
    - A paid course unlocks with no network.
+
+   Done 2026-10-17: see [phase-11-offline-licenses.md](releases/phase-11-offline-licenses.md). Publishers can also license a buyer by hand, with no issuer.
+
 5. **Reference license issuer** (`services/license-issuer`):
    - release registration with sealed content keys;
    - license issuance for requests signed by a learner key;

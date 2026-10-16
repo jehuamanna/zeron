@@ -25,6 +25,7 @@ torrent-port = { path = "../torrent-port" }
 nix.workspace = true
 
 [dev-dependencies]
+learner-identity = { path = "../learner-identity" }
 publisher-application = { path = "../publisher-application" }
 publisher-identity = { path = "../publisher-identity" }
 serde_json.workspace = true

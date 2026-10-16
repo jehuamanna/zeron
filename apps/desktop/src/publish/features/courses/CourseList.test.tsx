@@ -8,7 +8,7 @@ import { accessibilityViolations } from "../../../test/accessibility";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn(), deleteDraft: vi.fn(), deleteCourse: vi.fn(), archiveRelease: vi.fn(), deleteReleaseFiles: vi.fn(), makeReleaseCurrent: vi.fn(), createDraftFromRelease: vi.fn(), getDistributionActivity: vi.fn(), exportDistributionActivity: vi.fn() },
+  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn(), deleteDraft: vi.fn(), deleteCourse: vi.fn(), archiveRelease: vi.fn(), deleteReleaseFiles: vi.fn(), makeReleaseCurrent: vi.fn(), createDraftFromRelease: vi.fn(), getDistributionActivity: vi.fn(), exportDistributionActivity: vi.fn(), issueLearnerLicense: vi.fn() },
 }));
 
 const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=rust-systems";
@@ -96,6 +96,33 @@ describe("course management", () => {
     expect(files.textContent).toContain("1.5 KB");
     expect(publisherApi.getReleaseDetails).toHaveBeenCalledWith("release_2");
     expect(rust.textContent).toContain("Signed · 7F3A-91C2-0B44-E8D1");
+  });
+
+  it("licenses a learner from a paid release, and only from a paid one", async () => {
+    vi.mocked(publisherApi.getReleaseDetails).mockImplementation(async (releaseId) => ({
+      release: releases.find((item) => item.releaseId === releaseId)!,
+      files: [],
+      signature: null,
+      paid: releaseId === "release_2",
+    }));
+    vi.mocked(publisherApi.issueLearnerLicense)
+      .mockRejectedValueOnce({ code: "learner_id_invalid", message: "this is not a learner ID" })
+      .mockResolvedValueOnce(true);
+    const { view } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.0.0/ }));
+    await waitFor(() => expect(publisherApi.getReleaseDetails).toHaveBeenCalledWith("release_1"));
+    expect(within(rust).queryByLabelText("Learner ID")).toBeNull();
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.1.0/ }));
+    const field = await waitFor(() => within(rust).getByLabelText("Learner ID"));
+    fireEvent.change(field, { target: { value: "nonsense" } });
+    fireEvent.click(within(rust).getByRole("button", { name: /Save license/ }));
+    expect((await within(rust).findByRole("alert")).textContent).toContain("not a learner ID");
+    const learnerId = `zeron-learner:v1:${"a".repeat(64)}:${"b".repeat(64)}`;
+    fireEvent.change(field, { target: { value: `  ${learnerId} ` } });
+    fireEvent.click(within(rust).getByRole("button", { name: /Save license/ }));
+    await waitFor(() => expect(publisherApi.issueLearnerLicense).toHaveBeenLastCalledWith("course_rust", learnerId));
+    expect((await within(rust).findByRole("status")).textContent).toContain("License saved");
   });
 
   it("copies the magnet, and selects it for manual copy when the clipboard is refused", async () => {

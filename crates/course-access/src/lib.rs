@@ -17,6 +17,7 @@
 //! that failed authentication.
 
 mod reader;
+mod wrap;
 
 use std::io::{self, Read, Write};
 use std::sync::Arc;
@@ -31,6 +32,7 @@ use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub use reader::DecryptingReader;
+pub use wrap::{unwrap_content_key, wrap_content_key};
 
 /// Manifest `encryption.scheme` of this format.
 pub const ENCRYPTION_SCHEME: &str = "zeron.chunked-xchacha20poly1305.v1";

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookMarked, ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, Lock, Maximize, Minimize, MoreHorizontal, NotebookPen, PanelLeft, PanelRight, Trash2 } from "lucide-react";
+import { BookMarked, ChevronLeft, ChevronRight, Keyboard, KeyRound, LayoutDashboard, Lock, Maximize, Minimize, MoreHorizontal, NotebookPen, PanelLeft, PanelRight, Trash2 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMediaQuery } from "../../lib/useMediaQuery";
@@ -586,7 +586,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
                 onPrevious={() => previous && openLesson(previous.lesson)}
               />
             ) : active?.lesson.locked ? (
-              <LockedLesson title={active.lesson.title} />
+              <LockedLesson courseId={courseId} title={active.lesson.title} />
             ) : (
               <CourseOverview course={course} placed={placed} progress={progress} next={upNext} onStart={(item) => openLesson(item.lesson)} onOpenLesson={openLesson} />
             )}
@@ -659,8 +659,16 @@ function LessonStep({ placed, direction, onOpen }: { placed: PlacedLesson | null
   );
 }
 
-/** A paid lesson this computer holds no key for. */
-function LockedLesson({ title }: { title: string }) {
+/** A paid lesson this computer holds no key for, with a way to import a license. */
+function LockedLesson({ courseId, title }: { courseId: string; title: string }) {
+  const queryClient = useQueryClient();
+  const importLicense = useMutation({
+    mutationFn: libraryApi.importLicense,
+    onSuccess: (imported) => {
+      if (imported) void queryClient.invalidateQueries({ queryKey: ["course-detail", courseId] });
+    },
+  });
+  const imported = importLicense.data;
   return (
     <section aria-labelledby="locked-lesson-title" className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
       <Lock size={28} aria-hidden className="text-amber-300" />
@@ -670,6 +678,15 @@ function LockedLesson({ title }: { title: string }) {
       <p className="max-w-md text-sm text-muted">
         Its files are encrypted, and this computer has no license for them yet. The course&apos;s free preview lessons stay open.
       </p>
+      <button type="button" onClick={() => importLicense.mutate()} disabled={importLicense.isPending} className="flex items-center gap-2 rounded-md bg-white/10 px-3 py-1.5 text-sm font-semibold text-fg hover:bg-white/15 disabled:opacity-50">
+        <KeyRound size={15} aria-hidden /> {importLicense.isPending ? "Checking…" : "Import license…"}
+      </button>
+      {imported && !imported.unlocksCurrent ? (
+        <p role="status" className="max-w-md text-sm text-amber-200">
+          The license for {imported.courseTitle} covers version{imported.versions.length === 1 ? "" : "s"} {imported.versions.join(", ")}, not the version in your library.
+        </p>
+      ) : null}
+      {importLicense.isError ? <p role="alert" className="max-w-md text-sm text-red-300">{asCommandError(importLicense.error)?.message ?? "The license could not be imported."}</p> : null}
     </section>
   );
 }

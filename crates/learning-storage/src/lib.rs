@@ -14,7 +14,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
 /// Schema version this build creates and understands.
-pub const CURRENT_SCHEMA_VERSION: i64 = 16;
+pub const CURRENT_SCHEMA_VERSION: i64 = 17;
 /// Previous versions of one course whose manifests are kept for moving annotations.
 pub const KEPT_PREVIOUS_MANIFESTS: u32 = 5;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0), EXISTS(SELECT 1 FROM course_youtube_videos AS y WHERE y.course_id = c.course_id)";
@@ -526,6 +526,49 @@ impl Storage {
             .connection
             .prepare("SELECT statement_json FROM key_revocations ORDER BY recorded_at, rowid")?;
         let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect::<Result<_, _>>().map_err(StorageError::from)
+    }
+
+    /// Keep a verified license file. Returns `false` when the same file was
+    /// already kept.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock or write failures.
+    pub fn add_license(
+        &mut self,
+        license_sha256: &str,
+        course_id: &str,
+        learner_key: &str,
+        issued_at: u64,
+        document: &[u8],
+    ) -> Result<bool, StorageError> {
+        let inserted = self.connection.execute(
+            "INSERT INTO licenses (license_sha256, course_id, learner_key, issued_at, document, imported_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(license_sha256) DO NOTHING",
+            params![
+                license_sha256,
+                course_id,
+                learner_key,
+                i64::try_from(issued_at).unwrap_or(i64::MAX),
+                document,
+                unix_now()?
+            ],
+        )?;
+        Ok(inserted == 1)
+    }
+
+    /// The kept license files of a course, newest issued first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn licenses(&self, course_id: &str) -> Result<Vec<Vec<u8>>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT document FROM licenses WHERE course_id = ?1 ORDER BY issued_at DESC, rowid DESC",
+        )?;
+        let rows = statement.query_map([course_id], |row| row.get(0))?;
         rows.collect::<Result<_, _>>().map_err(StorageError::from)
     }
 
@@ -2171,7 +2214,7 @@ fn add_drawings(connection: &mut Connection) -> Result<(), StorageError> {
 }
 
 /// Migrations from schema 4 on, by the version they start from.
-const TABLE_MIGRATIONS: [(i64, Migration); 12] = [
+const TABLE_MIGRATIONS: [(i64, Migration); 13] = [
     (4, add_playback_positions),
     (5, add_download_commitments),
     (6, add_pause_flag),
@@ -2184,7 +2227,29 @@ const TABLE_MIGRATIONS: [(i64, Migration); 12] = [
     (13, add_catalogs),
     (14, add_course_removal),
     (15, add_youtube_videos),
+    (16, add_licenses),
 ];
+
+/// Schema 17. Licenses for paid courses the learner imported (ADR 0017),
+/// kept as the verified files. They are learner data: removing a course
+/// keeps them.
+fn add_licenses(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE licenses (
+           license_sha256 TEXT PRIMARY KEY NOT NULL CHECK(length(license_sha256) = 64),
+           course_id TEXT NOT NULL,
+           learner_key TEXT NOT NULL,
+           issued_at INTEGER NOT NULL CHECK(issued_at >= 0),
+           document BLOB NOT NULL,
+           imported_at INTEGER NOT NULL CHECK(imported_at >= 0)
+         ) STRICT;
+         CREATE INDEX licenses_by_course ON licenses(course_id);
+         PRAGMA user_version = 17;",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
 
 /// Schema 16. Which YouTube video each video resource of a YouTube course
 /// plays (ADR 0018).
@@ -2931,7 +2996,7 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE course_youtube_videos;
+                    "DROP TABLE licenses; DROP TABLE course_youtube_videos;
                      ALTER TABLE courses DROP COLUMN removed_at;
                      DROP TABLE catalogs;
                      DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;
@@ -2976,7 +3041,7 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE course_youtube_videos;
+                    "DROP TABLE licenses; DROP TABLE course_youtube_videos;
                      ALTER TABLE courses DROP COLUMN removed_at;
                      DROP TABLE catalogs;
                      DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;

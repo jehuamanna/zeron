@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, Copy, Download, FilePlus2, History, Trash2 } from "lucide-react";
+import { Archive, Check, Copy, Download, FilePlus2, History, KeyRound, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { copyText } from "../../lib/clipboard";
@@ -109,6 +109,8 @@ export function ReleaseDetailsPanel({ id, release, currentVersion, seeding, onOp
         </button>
       )}
 
+      {details.data?.paid ? <LicenseLearner courseId={release.courseId} /> : null}
+
       <ActivityLog releaseId={release.releaseId} limit={10} />
 
       {filesPresent ? <div>
@@ -127,6 +129,41 @@ export function ReleaseDetailsPanel({ id, release, currentVersion, seeding, onOp
         )}
       </div> : null}
     </div>
+  );
+}
+
+/** License a learner by hand: paste their learner ID, save a license file to send them. */
+function LicenseLearner({ courseId }: { courseId: string }) {
+  const [learnerId, setLearnerId] = useState("");
+  const issue = useMutation({
+    mutationFn: () => publisherApi.issueLearnerLicense(courseId, learnerId.trim()),
+    onSuccess: (saved) => {
+      if (saved) setLearnerId("");
+    },
+  });
+  return (
+    <fieldset className="space-y-2 rounded-2xl border border-white/10 p-4">
+      <legend className="flex items-center gap-1.5 px-1 text-xs font-semibold text-slate-300"><KeyRound size={13} /> License a learner</legend>
+      <p className="text-xs text-slate-400">
+        Paste the learner ID a buyer copied from Settings → Learner key. The license unlocks every released paid version of this course on their computer, and only theirs. Send them the file.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <input
+          aria-label="Learner ID"
+          placeholder="zeron-learner:v1:…"
+          value={learnerId}
+          onChange={(event) => setLearnerId(event.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-2 py-1 font-mono text-xs"
+        />
+        <button type="button" onClick={() => issue.mutate()} disabled={!learnerId.trim() || issue.isPending} className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1 text-xs font-semibold hover:bg-white/15 disabled:opacity-40">
+          <Download size={14} /> {issue.isPending ? "Signing…" : "Save license…"}
+        </button>
+      </div>
+      {issue.isSuccess && issue.data ? <p role="status" className="text-xs text-emerald-300">License saved. Send the file to the learner.</p> : null}
+      {issue.isError ? <p role="alert" className="text-xs text-red-300">{asCommandError(issue.error)?.message ?? "The license could not be made."}</p> : null}
+    </fieldset>
   );
 }
 

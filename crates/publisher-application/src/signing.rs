@@ -64,6 +64,20 @@ impl ReleaseSigner {
         &self.identity.root
     }
 
+    pub(crate) fn rotations(
+        &self,
+    ) -> Vec<course_signing::Signed<course_signing::RotationStatement>> {
+        self.identity.rotations.clone()
+    }
+
+    pub(crate) const fn secret(&self) -> &SecretKey {
+        &self.secret
+    }
+
+    pub(crate) const fn signed_at(&self) -> u64 {
+        self.signed_at
+    }
+
     /// The signature file's bytes for a manifest and its digest.
     pub(crate) fn sign(
         &self,

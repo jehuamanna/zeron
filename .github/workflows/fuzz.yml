@@ -41,7 +41,7 @@ jobs:
           SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || (github.event_name == 'schedule' && '600') || '30' }}
         run: |
           cd fuzz
-          for target in manifest metainfo range release_signature catalog transcript configuration; do
+          for target in manifest metainfo range release_signature catalog license transcript configuration; do
             echo "::group::$target"
             cargo +nightly fuzz run "$target" -- -max_total_time="$SECONDS_PER_TARGET" -rss_limit_mb=2048
             echo "::endgroup::"

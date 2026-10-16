@@ -77,6 +77,35 @@ pub fn revoked_by_records(
     })
 }
 
+/// The reason, when `records` hold a valid revocation of a key the publisher
+/// delegated to, such as a license issuer, for a signature made at
+/// `signed_at`. A delegated key is not in the rotation chain, so its
+/// revocation counts when any key of `root`'s verified chain signed it.
+#[must_use]
+pub fn delegate_revoked_by_records(
+    root: &PublicKey,
+    records: &[RevocationRecord],
+    delegate: &PublicKey,
+    signed_at: u64,
+) -> Option<String> {
+    records
+        .iter()
+        .filter(|record| record.publisher_id == root.to_string())
+        .find_map(|record| {
+            let chain = verify_chain(root, &record.rotations).ok()?;
+            let revocation = &record.revocation;
+            let statement = &revocation.statement;
+            let applies =
+                statement.revoked_key == delegate.to_string() && signed_at >= statement.revoked_at;
+            let message = canonical(REVOCATION_DOMAIN, statement);
+            (applies
+                && chain
+                    .iter()
+                    .any(|signer| signer.verify(&message, &revocation.signature)))
+            .then(|| statement.reason.clone())
+        })
+}
+
 /// Whether a rotation made by `key` at `rotated_at` came after `key` was
 /// revoked. A key revoked from the moment it was retired still hands over
 /// validly at that moment.

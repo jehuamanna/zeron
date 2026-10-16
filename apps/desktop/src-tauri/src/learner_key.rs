@@ -35,7 +35,7 @@ impl LearnerCredentials {
         credentials
     }
 
-    fn get(&self) -> Result<Arc<dyn CredentialStore>, CommandError> {
+    pub(crate) fn get(&self) -> Result<Arc<dyn CredentialStore>, CommandError> {
         self.store
             .get_or_init(|| {
                 OsStore::open_service(SERVICE)
@@ -58,6 +58,8 @@ pub(crate) struct LearnerKeyDto {
     signing_key: Option<String>,
     encryption_key: Option<String>,
     fingerprint: Option<String>,
+    /// The public keys to share with a publisher to be licensed.
+    learner_id: Option<String>,
     created_at_unix_seconds: Option<u64>,
     /// Why the keychain or key cannot be used, when it cannot.
     problem: Option<String>,
@@ -157,7 +159,7 @@ fn lock(
     library.lock().map_err(|_| library_failure())
 }
 
-fn record(library: &CourseLibrary) -> Result<Option<LearnerIdentity>, CommandError> {
+pub(crate) fn record(library: &CourseLibrary) -> Result<Option<LearnerIdentity>, CommandError> {
     let json = library
         .learner_identity_record()
         .map_err(|_| library_failure())?;
@@ -227,6 +229,7 @@ fn dto(
         signing_key: identity.map(|identity| identity.signing_key.clone()),
         encryption_key: identity.map(|identity| identity.encryption_key.clone()),
         fingerprint: identity.and_then(|identity| identity.fingerprint().ok()),
+        learner_id: identity.map(LearnerIdentity::learner_id),
         created_at_unix_seconds: identity.map(|identity| identity.created_at),
         problem,
     }

@@ -59,7 +59,11 @@ Mark a lesson, module, or course to keep. Lessons you only streamed are removed 
 
 Each lesson in the Builder has a **Free/Paid** toggle. When you prepare a release, every file of a paid lesson is encrypted with a key for that course version, kept in your computer's keychain. Free lessons stay open as previews. Anyone can still download and share the whole course, but paid lessons are unreadable without the key.
 
-For now, only the computer that published a course can open its paid lessons; learners see them locked. Licenses, which unlock them for buyers, come in a later version. A paid release cannot yet be reopened as a new draft.
+A course with paid lessons must be signed (Publish → Identity), so learners' licenses can be checked.
+
+**Licensing a buyer:** ask them for their learner ID (Library → Settings → Learner key → Copy). Then open the paid release in Publish, paste the ID under "License a learner", and save the license file. Send them the file. It unlocks every released paid version of the course on their computer only; anyone else who gets the file cannot use it. The buyer opens a locked lesson and chooses **Import license…**. Nothing goes over the network.
+
+A paid release cannot yet be reopened as a new draft.
 
 ### Signing
 
@@ -83,6 +87,6 @@ From then on every release is signed.
 ## Settings
 
 - **Backup** saves your library, notes, progress, catalogs, and Publish drafts and release records. Restoring takes effect when Zeron restarts, and the previous data is kept in a `before-restore-…` folder. A backup does not hold course videos, release files, or your keys.
-- **Learner key** is this computer's key for paid lessons: licenses will be made for it. It lives in your keychain; there is no account or password. You can save an encrypted backup with a passphrase of at least 12 characters, and restore it on another computer. Restoring never replaces a different key this computer already has.
+- **Learner key** is this computer's key for paid lessons: licenses are made for it. Copy your **learner ID** to send to a publisher. It lives in your keychain; there is no account or password. You can save an encrypted backup with a passphrase of at least 12 characters, and restore it on another computer. Restoring never replaces a different key this computer already has.
 - **Updates:** Zeron checks for a new version only when you click "Check for updates", and installs only updates signed with Zeron's release key.
 - **Publisher configuration** (Publish → Distribution) moves trackers and Network settings to another computer.

@@ -2,23 +2,36 @@
 //!
 //! A paid course's encrypted resources stay sealed on disk and in the torrent.
 //! They open only through a [`ResourceCipher`] built from the course
-//! version's content key, which a [`ContentKeys`] port supplies: today the
+//! version's content key, which a [`ContentKeys`] port supplies: the
 //! publisher's own credential store on the computer that published the
-//! course, later a learner's verified licenses. Without a key, an encrypted
-//! resource is [`ResourceAccess::Locked`]. Keys never leave the backend.
+//! course, or the learner key opening a content key from a verified license.
+//! Without a key, an encrypted resource is [`ResourceAccess::Locked`]. Keys
+//! never leave the backend.
 
 use std::collections::HashSet;
 
 use course_access::{ContentKey, ResourceCipher};
 use course_format::CourseManifest;
 
-use crate::{CourseLibrary, LibraryError};
+use crate::{CourseLibrary, LibraryError, LicensedContentKey};
 
-/// Supplies content keys for paid course versions.
+/// A request for one paid course version's content key.
+#[derive(Debug, Clone, Copy)]
+pub struct KeyRequest<'a> {
+    /// The course.
+    pub course_id: &'a str,
+    /// The course version.
+    pub version: &'a str,
+    /// Content keys sealed to learners by licenses that verified just now.
+    pub licensed: &'a [LicensedContentKey],
+}
+
+/// Supplies content keys for paid course versions. It is called with the
+/// Library locked and must not use the Library.
 pub trait ContentKeys: Send + Sync {
-    /// The content key of `course_id` at `version`, if this computer holds
-    /// one. Failures of the underlying store read as "no key".
-    fn content_key(&self, course_id: &str, version: &str) -> Option<ContentKey>;
+    /// The content key, if this computer can produce it. Failures of the
+    /// underlying stores read as "no key".
+    fn content_key(&self, request: &KeyRequest<'_>) -> Option<ContentKey>;
 }
 
 /// A [`ContentKeys`] with no keys: every paid lesson stays locked.
@@ -26,7 +39,7 @@ pub trait ContentKeys: Send + Sync {
 pub struct NoContentKeys;
 
 impl ContentKeys for NoContentKeys {
-    fn content_key(&self, _: &str, _: &str) -> Option<ContentKey> {
+    fn content_key(&self, _: &KeyRequest<'_>) -> Option<ContentKey> {
         None
     }
 }
@@ -50,29 +63,42 @@ impl ResourceAccess {
     }
 }
 
-/// Whether the course version's paid lessons open on this computer.
-#[must_use]
-pub fn paid_content_unlocked(manifest: &CourseManifest, keys: &dyn ContentKeys) -> bool {
-    manifest.access.is_none()
-        || keys
-            .content_key(&manifest.course_id, &manifest.version)
-            .is_some()
-}
-
-/// IDs of the course's encrypted resources that stay locked here.
-#[must_use]
-pub fn locked_resources(manifest: &CourseManifest, keys: &dyn ContentKeys) -> HashSet<String> {
-    if paid_content_unlocked(manifest, keys) {
-        return HashSet::new();
-    }
-    manifest
-        .resources()
-        .filter(|resource| resource.encryption.is_some())
-        .map(|resource| resource.id.clone())
-        .collect()
-}
-
 impl CourseLibrary {
+    /// The content key of a paid course version, from `keys` and the
+    /// licenses kept for the course.
+    fn content_key_for(
+        &self,
+        manifest: &CourseManifest,
+        keys: &dyn ContentKeys,
+    ) -> Result<Option<ContentKey>, LibraryError> {
+        let licensed = self.licensed_content_keys(&manifest.course_id, &manifest.version)?;
+        Ok(keys.content_key(&KeyRequest {
+            course_id: &manifest.course_id,
+            version: &manifest.version,
+            licensed: &licensed,
+        }))
+    }
+
+    /// IDs of the course's encrypted resources that stay locked here.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage failure.
+    pub fn locked_resources(
+        &self,
+        manifest: &CourseManifest,
+        keys: &dyn ContentKeys,
+    ) -> Result<HashSet<String>, LibraryError> {
+        if manifest.access.is_none() || self.content_key_for(manifest, keys)?.is_some() {
+            return Ok(HashSet::new());
+        }
+        Ok(manifest
+            .resources()
+            .filter(|resource| resource.encryption.is_some())
+            .map(|resource| resource.id.clone())
+            .collect())
+    }
+
     /// How a resource of a course opens here. `None` for unknown courses or
     /// resources.
     ///
@@ -97,15 +123,15 @@ impl CourseLibrary {
         let Some(encryption) = &resource.encryption else {
             return Ok(Some(ResourceAccess::Free));
         };
-        Ok(Some(
-            keys.content_key(&manifest.course_id, &manifest.version)
-                .map_or(ResourceAccess::Locked, |key| {
-                    ResourceAccess::Unlocked(ResourceCipher::new(
-                        &key,
-                        &resource.id,
-                        encryption.plaintext_length,
-                    ))
-                }),
-        ))
+        Ok(Some(self.content_key_for(&manifest, keys)?.map_or(
+            ResourceAccess::Locked,
+            |key| {
+                ResourceAccess::Unlocked(ResourceCipher::new(
+                    &key,
+                    &resource.id,
+                    encryption.plaintext_length,
+                ))
+            },
+        )))
     }
 }

@@ -11,6 +11,7 @@ mod downloads;
 mod drawings;
 mod learner_key;
 mod library;
+mod licenses;
 mod local_import;
 mod notes;
 mod progress;
@@ -21,9 +22,7 @@ mod torrent_import;
 mod trust;
 mod youtube;
 
-pub use access::{
-    ContentKeys, NoContentKeys, ResourceAccess, locked_resources, paid_content_unlocked,
-};
+pub use access::{ContentKeys, KeyRequest, NoContentKeys, ResourceAccess};
 pub use annotation_migration::{AnnotationMove, AnnotationMoveReport};
 pub use cache::{CacheError, CourseCache, RemovalReport};
 pub use catalogs::{CatalogEntryView, CatalogView, EntryStatus, MAX_CATALOG_URL_BYTES};
@@ -47,6 +46,7 @@ pub use learning_domain::{
 pub use library::{
     CourseImportReceipt, CourseLibrary, LibraryError, LocalResource, TorrentResource,
 };
+pub use licenses::{ImportedLicense, LicensedContentKey};
 pub use local_import::{
     CancellationFlag, ImportError, ImportLimits, ImportedCourse, VerifiedResource,
     import_local_course,

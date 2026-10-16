@@ -237,6 +237,30 @@ impl PublisherDrafts {
         Ok(current)
     }
 
+    /// Whether a release has paid lessons (ADR 0017), read from its verified
+    /// package. `false` when its files were deleted.
+    ///
+    /// # Errors
+    /// Returns [`DraftServiceError::InvalidAttempt`] for unknown releases or
+    /// packages that no longer match their record.
+    pub fn release_is_paid(
+        &self,
+        releases_root: &Path,
+        release_id: &str,
+    ) -> Result<bool, DraftServiceError> {
+        let unknown = || DraftServiceError::InvalidAttempt("unknown release");
+        let directory = release_directory(releases_root, release_id).ok_or_else(unknown)?;
+        let record = self.storage.release(release_id)?.ok_or_else(unknown)?;
+        if record.files != ReleaseFiles::Present {
+            return Ok(false);
+        }
+        let package = StagedAttempt::open_package(
+            directory.join(RELEASE_PACKAGE_DIRECTORY),
+            directory.join(RELEASE_TORRENT_FILE),
+        )?;
+        Ok(package.manifest.access.is_some())
+    }
+
     /// Start a new draft from a recorded release, for the course's next
     /// version.
     ///

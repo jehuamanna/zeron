@@ -6,6 +6,7 @@ pub(crate) mod commands;
 pub(crate) mod configuration;
 pub(crate) mod drops;
 pub(crate) mod identity;
+pub(crate) mod licensing;
 pub(crate) mod tracker_lists;
 
 use std::{

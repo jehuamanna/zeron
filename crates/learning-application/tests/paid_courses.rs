@@ -10,13 +10,13 @@ use std::{
 
 use learning_application::{
     CancellationFlag, ContentKey, ContentKeys, CourseLibrary, DecryptingReader, DocumentError,
-    ImportLimits, InfoHash, NoContentKeys, ResourceAccess, StreamWait, TorrentImportStage,
-    TorrentImportTimeouts, TorrentImports, TorrentSource, open_document, open_lesson_stream,
-    read_local_document,
+    ImportLimits, InfoHash, KeyRequest, LibraryError, NoContentKeys, ResourceAccess, StreamWait,
+    TorrentImportStage, TorrentImportTimeouts, TorrentImports, TorrentSource, open_document,
+    open_lesson_stream, read_local_document,
 };
 use publisher_application::{
-    DistributionOptions, MetadataEdit, PublishJobs, PublisherDrafts, ReleaseSecrets, StructureEdit,
-    release_content_key, stored_content_key,
+    DistributionOptions, MetadataEdit, PublishJobs, PublisherDrafts, ReleaseSecrets, ReleaseSigner,
+    StructureEdit, issue_license, release_content_key, stored_content_key,
 };
 use publisher_identity::MemoryStore;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -66,10 +66,33 @@ fn make_writable(path: &Path) {
 struct StoreKeys(Arc<MemoryStore>);
 
 impl ContentKeys for StoreKeys {
-    fn content_key(&self, course_id: &str, version: &str) -> Option<ContentKey> {
-        stored_content_key(self.0.as_ref(), course_id, version)
+    fn content_key(&self, request: &KeyRequest<'_>) -> Option<ContentKey> {
+        stored_content_key(self.0.as_ref(), request.course_id, request.version)
             .ok()
             .flatten()
+    }
+}
+
+/// A learner's computer: licensed content keys open with its learner key.
+struct LearnerKeys(Arc<MemoryStore>);
+
+impl ContentKeys for LearnerKeys {
+    fn content_key(&self, request: &KeyRequest<'_>) -> Option<ContentKey> {
+        let keys = learner_identity::stored_keys(self.0.as_ref()).ok()??;
+        let me = keys.signing().public_key().to_string();
+        request
+            .licensed
+            .iter()
+            .filter(|licensed| licensed.learner_key == me)
+            .find_map(|licensed| {
+                course_access::unwrap_content_key(
+                    &licensed.wrapped_content_key,
+                    &keys.encryption_secret_bytes(),
+                    request.course_id,
+                    request.version,
+                )
+                .ok()
+            })
     }
 }
 
@@ -80,10 +103,17 @@ struct Published {
     video: Vec<u8>,
     preview: Vec<u8>,
     store: Arc<MemoryStore>,
+    signer: ReleaseSigner,
+    identity: publisher_identity::Identity,
+    course_id: String,
 }
 
 /// A course with a free preview lesson and a paid lesson holding a
 /// multi-chunk "video" and its transcript.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one end-to-end fixture: draft, sign, seal, publish"
+)]
 fn publish(root: &Path) -> Published {
     let mut drafts = PublisherDrafts::open_in_memory().unwrap();
     let draft_id = drafts.create().unwrap().draft.draft_id;
@@ -155,6 +185,16 @@ fn publish(root: &Path) -> Published {
     assert!(draft.has_paid_content());
 
     let store = Arc::new(MemoryStore::default());
+    let identity = publisher_identity::create(store.as_ref(), 1).unwrap();
+    let signer = || {
+        ReleaseSigner::new(
+            identity.clone(),
+            publisher_identity::signing_key(store.as_ref(), &identity).unwrap(),
+            10,
+        )
+        .unwrap()
+    };
+    let release_signer = signer();
     let key = release_content_key(
         store.as_ref(),
         &draft.metadata.course_id,
@@ -169,7 +209,7 @@ fn publish(root: &Path) -> Published {
             &draft,
             &DistributionOptions::default(),
             ReleaseSecrets {
-                signer: None,
+                signer: Some(&release_signer),
                 content_key: Some(&key),
             },
             &mut |_| {},
@@ -185,6 +225,9 @@ fn publish(root: &Path) -> Published {
         info_hash: record.release.info_hash,
         video,
         preview,
+        signer: signer(),
+        identity,
+        course_id: draft.metadata.course_id.clone(),
         store,
     }
 }
@@ -229,10 +272,18 @@ fn a_paid_lesson_is_sealed_locked_without_its_key_and_opens_with_it() {
     assert!(locked(&video_id).is_locked());
     assert!(locked(&transcript_id).is_locked());
     assert_eq!(
-        learning_application::locked_resources(&manifest, &NoContentKeys).len(),
+        library
+            .locked_resources(&manifest, &NoContentKeys)
+            .unwrap()
+            .len(),
         2
     );
-    assert!(learning_application::locked_resources(&manifest, &keys).is_empty());
+    assert!(
+        library
+            .locked_resources(&manifest, &keys)
+            .unwrap()
+            .is_empty()
+    );
 
     let transcript = library
         .local_resource(&course_id, &transcript_id)
@@ -403,4 +454,167 @@ async fn a_paid_lesson_streams_decrypted_from_a_torrent() {
     let mut head = vec![0; 1_000];
     reader.read_exact(&mut head).await.unwrap();
     assert_eq!(head, published.video[..1_000]);
+}
+
+fn import_folder(root: &Path, published: &Published) -> (CourseLibrary, String) {
+    let mut library =
+        CourseLibrary::open(&root.join("library.sqlite3"), ImportLimits::default()).unwrap();
+    library
+        .import_local_folder(&published.package, &CancellationFlag::default())
+        .unwrap();
+    let course_id = library.courses().unwrap()[0].course_id.clone();
+    (library, course_id)
+}
+
+fn license_for(published: &Published, learner: &learner_identity::LearnerIdentity) -> Vec<u8> {
+    let id = learner_identity::parse_learner_id(&learner.learner_id()).unwrap();
+    issue_license(
+        published.store.as_ref(),
+        &published.signer,
+        &published.course_id,
+        &[COURSE_VERSION.to_owned()],
+        &id.signing_key,
+        &id.encryption_key,
+    )
+    .unwrap()
+    .to_bytes()
+}
+
+#[test]
+fn a_license_unlocks_a_paid_course_offline_for_its_learner_only() {
+    let scratch = Scratch::new("license");
+    let published = publish(&scratch.0);
+    let (mut library, course_id) = import_folder(&scratch.0, &published);
+    let manifest = library.manifest(&course_id).unwrap().unwrap();
+    let video_id = resource_id(&library, &course_id, "lecture.bin");
+
+    // This learner's computer has its own key and none of the publisher's.
+    let learner_store = Arc::new(MemoryStore::default());
+    let learner = learner_identity::create(learner_store.as_ref(), 1).unwrap();
+    let learner_key: course_signing::PublicKey = learner.signing_key.parse().unwrap();
+    let keys = LearnerKeys(Arc::clone(&learner_store));
+    assert_eq!(library.locked_resources(&manifest, &keys).unwrap().len(), 2);
+
+    let license = license_for(&published, &learner);
+    let imported = library.import_license(&license, &learner_key).unwrap();
+    assert_eq!(imported.course_id, course_id);
+    assert_eq!(imported.versions, [COURSE_VERSION]);
+    assert!(imported.unlocks_current && imported.new);
+    assert!(!library.import_license(&license, &learner_key).unwrap().new);
+
+    assert!(
+        library
+            .locked_resources(&manifest, &keys)
+            .unwrap()
+            .is_empty()
+    );
+    let ResourceAccess::Unlocked(cipher) = library
+        .resource_access(&course_id, &video_id, &keys)
+        .unwrap()
+        .unwrap()
+    else {
+        panic!("the license unlocks the paid video");
+    };
+    let video = library
+        .local_resource(&course_id, &video_id)
+        .unwrap()
+        .unwrap();
+    let sealed = std::fs::read(video.path).unwrap();
+    assert_eq!(cipher.open_all(&sealed).unwrap(), published.video);
+
+    // Another learner's computer cannot use it, even with the file.
+    let other_store = Arc::new(MemoryStore::default());
+    let other = learner_identity::create(other_store.as_ref(), 1).unwrap();
+    let other_key: course_signing::PublicKey = other.signing_key.parse().unwrap();
+    assert!(matches!(
+        library.import_license(&license, &other_key),
+        Err(LibraryError::License(message)) if message.contains("another learner")
+    ));
+    let other_keys = LearnerKeys(other_store);
+    assert_eq!(
+        library
+            .locked_resources(&manifest, &other_keys)
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn forged_altered_and_revoked_licenses_do_not_unlock() {
+    let scratch = Scratch::new("license-refused");
+    let published = publish(&scratch.0);
+    let (mut library, course_id) = import_folder(&scratch.0, &published);
+    let manifest = library.manifest(&course_id).unwrap().unwrap();
+    let learner_store = Arc::new(MemoryStore::default());
+    let learner = learner_identity::create(learner_store.as_ref(), 1).unwrap();
+    let learner_key: course_signing::PublicKey = learner.signing_key.parse().unwrap();
+    let keys = LearnerKeys(Arc::clone(&learner_store));
+    let license = license_for(&published, &learner);
+
+    // Signed by someone other than the course's publisher.
+    let impostor_store = MemoryStore::default();
+    let impostor = publisher_identity::create(&impostor_store, 1).unwrap();
+    let impostor_signer = ReleaseSigner::new(
+        impostor.clone(),
+        publisher_identity::signing_key(&impostor_store, &impostor).unwrap(),
+        10,
+    )
+    .unwrap();
+    let forged = impostor_signer
+        .license(
+            &course_id,
+            &learner_key,
+            Vec::from([course_signing::LicensedKey {
+                course_version: COURSE_VERSION.to_owned(),
+                wrapped_content_key: "00".repeat(80),
+            }]),
+        )
+        .to_bytes();
+    assert!(matches!(
+        library.import_license(&forged, &learner_key),
+        Err(LibraryError::License(message)) if message.contains("another publisher")
+    ));
+
+    // Altered after signing.
+    let altered = String::from_utf8(license.clone())
+        .unwrap()
+        .replace(COURSE_VERSION, "9.9.9")
+        .into_bytes();
+    assert!(matches!(
+        library.import_license(&altered, &learner_key),
+        Err(LibraryError::License(_))
+    ));
+    assert!(matches!(
+        library.import_license(b"not json", &learner_key),
+        Err(LibraryError::License(_))
+    ));
+
+    // A valid license stops unlocking once its signing key is revoked.
+    library.import_license(&license, &learner_key).unwrap();
+    assert!(
+        library
+            .locked_resources(&manifest, &keys)
+            .unwrap()
+            .is_empty()
+    );
+    let secret =
+        publisher_identity::signing_key(published.store.as_ref(), &published.identity).unwrap();
+    library
+        .add_key_revocation(&course_signing::RevocationRecord {
+            publisher_id: published.identity.root.clone(),
+            rotations: Vec::new(),
+            revocation: course_signing::revoke(
+                &secret,
+                &published.identity.current_key().unwrap(),
+                5,
+                "laptop stolen",
+            ),
+        })
+        .unwrap();
+    assert_eq!(library.locked_resources(&manifest, &keys).unwrap().len(), 2);
+    assert!(matches!(
+        library.import_license(&license, &learner_key),
+        Err(LibraryError::License(message)) if message.contains("laptop stolen")
+    ));
 }

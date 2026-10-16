@@ -371,9 +371,20 @@ export interface LearnerKey {
   signingKey: string | null;
   encryptionKey: string | null;
   fingerprint: string | null;
+  /** The public keys to share with a publisher to be licensed. */
+  learnerId: string | null;
   createdAtUnixSeconds: number | null;
   /** Why the keychain or key cannot be used, when it cannot. */
   problem: string | null;
+}
+
+/** A license file the Library verified and kept. */
+export interface ImportedLicense {
+  courseId: string;
+  courseTitle: string;
+  versions: string[];
+  unlocksCurrent: boolean;
+  alreadyImported: boolean;
 }
 
 export const libraryApi = {
@@ -383,6 +394,8 @@ export const libraryApi = {
   exportLearnerKeyBackup: (passphrase: string) => invoke<boolean>("export_learner_key_backup", { passphrase }),
   /** Restores from a backup chosen in an open dialog; `null` when cancelled. */
   restoreLearnerKeyBackup: (passphrase: string) => invoke<LearnerKey | null>("restore_learner_key_backup", { passphrase }),
+  /** Imports a license chosen in an open dialog; `null` when cancelled. */
+  importLicense: () => invoke<ImportedLicense | null>("choose_and_import_license"),
   readiness: () => invoke<Readiness>("readiness"),
   list: () => invoke<CourseSummary[]>("list_courses"),
   detail: (courseId: string) => invoke<CourseDetail | null>("get_course_detail", { courseId }),
