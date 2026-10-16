@@ -8,6 +8,7 @@ import { routerStatus } from "./routerStatus";
 import { SpeedLimitsForm } from "./SpeedLimitsForm";
 import { BackupSettings } from "./BackupSettings";
 import { StorageSettings } from "./StorageSettings";
+import { UpdateSettings } from "./UpdateSettings";
 
 const profiles: Array<{ value: NetworkProfile; label: string; description: string }> = [
   {
@@ -104,6 +105,7 @@ export function NetworkSettings({ onBack }: { onBack: () => void }) {
             />
             <StorageSettings />
             <BackupSettings />
+            <UpdateSettings />
             <SpeedLimitsForm
               key={`${data.downloadLimitKib}-${data.uploadLimitKib}`}
               downloadKib={data.downloadLimitKib}

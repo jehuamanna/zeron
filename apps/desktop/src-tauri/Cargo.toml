@@ -29,13 +29,14 @@ publisher-storage = { path = "../../../crates/publisher-storage" }
 reqwest.workspace = true
 url.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
+tauri-plugin-updater.workspace = true
 tokio.workspace = true
 torrent-librqbit = { path = "../../../crates/torrent-librqbit" }
 
 [dev-dependencies]
-serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

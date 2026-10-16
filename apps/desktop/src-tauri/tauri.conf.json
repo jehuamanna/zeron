@@ -35,13 +35,24 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "targets": ["appimage"],
+    "targets": [
+      "appimage"
+    ],
     "category": "Education",
     "shortDescription": "Offline-first courses: learn and publish",
     "linux": {
       "appimage": {
         "bundleMediaFramework": true
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhEMDY5QTRCMDJCMzJFNEEKUldSS0xyTUNTNW9Halp0RjRKTnhrTlM2S3RMa0hvaU9KdU1BMTUyYUVKR3ZSOE1yZm9HakFrZ0cK",
+      "endpoints": [
+        "https://github.com/jehuamanna/zeron/releases/latest/download/latest.json"
+      ]
     }
   }
 }

@@ -43,7 +43,7 @@ jobs:
           cd fuzz
           for target in manifest metainfo range release_signature catalog transcript configuration; do
             echo "::group::$target"
-            cargo fuzz run "$target" -- -max_total_time="$SECONDS_PER_TARGET" -rss_limit_mb=2048
+            cargo +nightly fuzz run "$target" -- -max_total_time="$SECONDS_PER_TARGET" -rss_limit_mb=2048
             echo "::endgroup::"
           done
       - name: Keep crash inputs

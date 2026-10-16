@@ -229,6 +229,12 @@ export interface MediaRegistration {
   byteLength: number;
 }
 
+export interface AvailableUpdate {
+  version: string;
+  currentVersion: string;
+  notes: string | null;
+}
+
 /** What a backup holds; `contents` lists `library` and `publish`. */
 export interface Backup {
   createdAtUnixSeconds: number | null;
@@ -367,6 +373,10 @@ export const libraryApi = {
   pendingRestore: () => invoke<Backup | null>("get_pending_restore"),
   cancelRestore: () => invoke<void>("cancel_restore"),
   restartApp: () => invoke<void>("restart_app"),
+  /** Asks the release server only when called; `null` when Zeron is up to date. */
+  checkForUpdate: () => invoke<AvailableUpdate | null>("check_for_update"),
+  /** Downloads, verifies against the release key, installs, and restarts. */
+  installUpdate: () => invoke<void>("install_update"),
   listCatalogs: () => invoke<Catalog[]>("list_catalogs"),
   /** Opens a native picker; resolves `null` when cancelled. */
   chooseCatalogFile: () => invoke<Catalog | null>("choose_catalog_file"),

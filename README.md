@@ -2,22 +2,14 @@
 
 Zeron is an offline-first, torrent-powered course publishing and learning platform. The repository is being implemented as dependency-ordered vertical slices described in [the roadmap](docs/roadmap.md).
 
-## Current implementation
+## What Zeron does
 
-The initial Rust workspace contains `course-format`, the framework-independent owner of the strict version-one `course.json` contract; `learning-application`, which owns safe local-folder import; and `learning-storage`, which owns local persistence. It provides:
+- **Library:** import courses from folders, magnet links, `.torrent` files, or signed catalogs. Stream lessons while they download, playing only verified bytes. Take notes anchored to video moments and PDF pages, draw, track progress, and search offline.
+- **Publish:** build courses by dropping folders, publish immutable versioned releases with reproducible torrents, seed them, sign them with a keychain-held identity, and list them in a signed catalog.
+- **Trust:** the Library pins each course to its first signed publisher and refuses updates from anyone else (ADR 0014).
+- **Platforms:** Linux, macOS, and Windows, all built and tested in CI ([platform matrix](docs/testing/platform-matrix.md)).
 
-- Serde types with unknown-field rejection;
-- semantic validation for stable IDs, ordering, SemVer, relations, hashes, media types, and HTTPS references;
-- portable package-path validation, NFC enforcement, and case-collision detection;
-- generated JSON Schema and a checked-in valid fixture.
-- bounded and cancellable local import with symlink rejection, containment checks, and exact length/SHA-256 verification.
-- bundled SQLite migrations, foreign-key enforcement, WAL negotiation, FTS5 capability checks, transactional course snapshots, and local metadata search.
-- backend-only package-location recovery and a path-free course/module/lesson/resource navigation interface.
-- authenticated loopback playback for complete verified video resources, including strict byte-range responses and bounded streaming.
-- a publisher-domain foundation with revision-safe course drafts, structural validation, and explicit immutable-release workflow transitions.
-- durable publisher autosave snapshots with restart recovery and stale-editor protection.
-
-Zeron is one desktop app with Library and Publish side by side ([ADR 0012](docs/decisions/0012-single-desktop-app.md)). Each completed slice is documented under [docs/releases](docs/releases/); the latest is [One Zeron app](docs/releases/single-zeron-app.md).
+Start with the [user guide](docs/user-guide.md). Maintainers release with [docs/operations/releasing.md](docs/operations/releasing.md). Each completed slice is documented under [docs/releases](docs/releases/), and the roadmap is in [docs/roadmap.md](docs/roadmap.md). Zeron is one desktop app with Library and Publish side by side ([ADR 0012](docs/decisions/0012-single-desktop-app.md)).
 
 ## Development
 
@@ -25,6 +17,18 @@ Zeron is one desktop app with Library and Publish side by side ([ADR 0012](docs/
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
+pnpm test
+pnpm typecheck
+pnpm build
+```
+
+Audits and deeper checks:
+
+```bash
+cargo deny check
+pnpm licenses:check
+ZERON_KEYCHAIN_TESTS=1 cargo test -p publisher-identity --test os_store
+cd fuzz && cargo +nightly fuzz run manifest
 ```
 
 Regenerate the manifest schema after changing its Rust types:

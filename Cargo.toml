@@ -59,6 +59,7 @@ sha2 = "=0.11.1"
 tauri = "=2.12.4"
 tauri-build = "=2.7.3"
 tauri-plugin-dialog = "=2.8.3"
+tauri-plugin-updater = { version = "=2.14.0", default-features = false, features = ["rustls-tls"] }
 thiserror = "=2.0.21"
 tokio = "=1.53.3"
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["aws_lc_rs", "tls12"] }

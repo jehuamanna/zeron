@@ -6,6 +6,7 @@ mod commands;
 mod media;
 mod navigation;
 mod publish;
+mod updates;
 
 use std::{
     path::PathBuf,
@@ -181,6 +182,8 @@ fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         backup::get_pending_restore,
         backup::cancel_restore,
         backup::restart_app,
+        updates::check_for_update,
+        updates::install_update,
         catalogs::choose_catalog_file,
         catalogs::import_catalog_url,
         catalogs::refresh_catalog,
@@ -259,6 +262,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(navigation::guard())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(setup)
         .on_window_event(|window, event| {
             if let WindowEvent::DragDrop(drag) = event {

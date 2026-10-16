@@ -336,7 +336,7 @@ The user wants signing, working on Windows and macOS without limitation (2026-10
 
 ### Phase 10 — hardening and release
 
-Done so far: parser fuzzing (`phase-10-fuzzing.md`: `fuzz/` cargo-fuzz targets on nightly CI, `mutation-testing` robustness tests on stable) backup and restore (`phase-10-backup-and-restore.md`, crate `data-backup`), the dependency and license audit (`phase-10-dependency-audit.md`, `deny.toml`, `pnpm licenses:check`), the automated accessibility pass (`phase-10-accessibility.md`, axe-core in Vitest; manual screen-reader and contrast checks pending), and gateway soak and fault tests (`phase-10-soak-and-fault-tests.md`).
+Done so far: parser fuzzing (`phase-10-fuzzing.md`: `fuzz/` cargo-fuzz targets on nightly CI, `mutation-testing` robustness tests on stable) backup and restore (`phase-10-backup-and-restore.md`, crate `data-backup`), the dependency and license audit (`phase-10-dependency-audit.md`, `deny.toml`, `pnpm licenses:check`), the automated accessibility pass (`phase-10-accessibility.md`, axe-core in Vitest; manual screen-reader and contrast checks pending), gateway soak and fault tests (`phase-10-soak-and-fault-tests.md`), and release packaging with signed on-request updates plus user and operator docs (`phase-10-release-packaging-and-updates.md`; `rust-toolchain.toml` pins Rust 1.99.1; the updater key is in `~/.config/zeron-release/`, and the release secrets still need adding by the user).
 
 - Fuzzing of the manifest, metainfo, and gateway range parsing; a threat-model review; a dependency and license audit.
 - A cross-platform media matrix (Linux, macOS, Windows); performance, soak, and fault tests; an accessibility pass.
