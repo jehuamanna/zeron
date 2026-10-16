@@ -1863,8 +1863,10 @@ fn decode_path(encoding: &str, bytes: &[u8]) -> Result<PathBuf, StorageError> {
         return Err(StorageError::MissingCapability("stored path encoding"));
     }
     let wide = bytes
-        .chunks_exact(2)
-        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_le_bytes(*pair))
         .collect::<Vec<_>>();
     Ok(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
 }

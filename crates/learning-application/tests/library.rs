@@ -106,7 +106,8 @@ fn verified_import_survives_database_restart() {
         library
             .resource_path("course_recovery", "resource_video")
             .unwrap(),
-        Some(course_root.join("lesson.mp4"))
+        // Imports resolve the folder, and macOS keeps temp files behind a link.
+        Some(fs::canonicalize(&course_root).unwrap().join("lesson.mp4"))
     );
     assert_eq!(
         library
