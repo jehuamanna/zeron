@@ -21,6 +21,7 @@ Copyleft licenses need a decision first; that is roadmap approval question 5. Th
 | RUSTSEC-2026-0293, `ringbuf` < 0.5.2 double free when an element's `Drop` panics | librqbit-utp 0.7.0 stores only `u8`, whose `Drop` cannot panic, so the bug cannot trigger. Revisit when librqbit moves to `ringbuf` 0.5. |
 | `khroma` (JavaScript) without a `license` field | Ships an MIT license file. It is pulled in through Excalidraw's Mermaid support. |
 | `dompurify` (MPL-2.0 OR Apache-2.0) | Used under Apache-2.0. |
+| `axe-core` (MPL-2.0, development only) | Used in tests for accessibility checks; not shipped in the app. |
 
 ## Result
 

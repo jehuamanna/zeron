@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { libraryApi } from "../services/library";
 import { Library } from "./Library";
 import { useLibraryUi } from "../stores/library";
+import { accessibilityViolations } from "../test/accessibility";
 
 vi.mock("../services/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/library")>()),
@@ -81,6 +82,7 @@ describe("learner library", () => {
     await waitFor(() => expect(view.container.textContent).toContain("Distributed Systems"));
     expect(view.container.textContent).toContain("Zeron Tests");
     expect(view.container.textContent).not.toContain("/home/");
+    expect(await accessibilityViolations(view.container)).toEqual([]);
   });
 
   it("shows the recoverable empty-library state", async () => {
@@ -155,6 +157,7 @@ describe("learner library", () => {
     expect(view.container.textContent).toContain("7F3A-91C2-0B44-E8D1");
     expect(view.container.textContent).toContain("Introduction");
     expect(view.container.textContent).not.toContain("/course/");
+    expect(await accessibilityViolations(view.container)).toEqual([]);
   });
 
   it("requests an opaque URL when a video is selected", async () => {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { libraryApi, type NetworkSettings as Settings } from "../../services/library";
 import { NetworkSettings } from "./NetworkSettings";
+import { accessibilityViolations } from "../../test/accessibility";
 
 vi.mock("../../services/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/library")>()),
@@ -245,5 +246,12 @@ describe("network settings", () => {
     fireEvent.click(view.getByRole("button", { name: "Save limit" }));
     await waitFor(() => expect(libraryApi.setCacheLimit).toHaveBeenCalledWith(2 * 1024 ** 3));
     await waitFor(() => expect((view.getByLabelText("Limit for streamed lessons (GB)") as HTMLInputElement).value).toBe("2"));
+  });
+
+  it("has no accessibility violations", async () => {
+    vi.mocked(libraryApi.getNetworkSettings).mockResolvedValue(settings({ configuredProfile: "internet", activeProfile: "internet", restartRequired: true }));
+    const { view } = renderSettings();
+    await waitFor(() => expect(radio(view.container, "internet")?.checked).toBe(true));
+    expect(await accessibilityViolations(view.container)).toEqual([]);
   });
 });

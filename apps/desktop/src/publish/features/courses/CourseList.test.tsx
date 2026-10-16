@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { publisherApi, type Distribution, type DraftSummary, type Release, type SeedingStatus } from "../../services/publisher";
 import { CourseList, groupCourses } from "./CourseList";
+import { accessibilityViolations } from "../../../test/accessibility";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
@@ -315,5 +316,13 @@ describe("course management", () => {
     fireEvent.click(within(rust).getByRole("button", { name: /New draft from this version/ }));
     await waitFor(() => expect(within(rust).getByRole("alert").textContent).toContain("differs from its record"));
     expect(onOpenDraft).not.toHaveBeenCalled();
+  });
+
+  it("has no accessibility violations with a release open", async () => {
+    const { view } = renderList();
+    const rust = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(rust).getByRole("button", { name: /Version 1.1.0/ }));
+    await waitFor(() => within(rust).getByRole("list", { name: "Release files" }));
+    expect(await accessibilityViolations(view.container)).toEqual([]);
   });
 });

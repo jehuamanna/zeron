@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { publisherApi, type Distribution, type SeedingStatus } from "../../services/publisher";
 import { DistributionPage } from "./DistributionPage";
+import { accessibilityViolations } from "../../../test/accessibility";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
@@ -183,5 +184,11 @@ describe("distribution workspace", () => {
     const view = renderPage();
     await waitFor(() => expect(view.getByRole("alert").textContent).toContain("the sharing engine did not start"));
     expect((view.getByRole("button", { name: /Start seeding/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("has no accessibility violations", async () => {
+    const view = renderPage();
+    await waitFor(() => view.getByRole("button", { name: "Start seeding Rust Systems 1.0.0" }));
+    expect(await accessibilityViolations(view.container)).toEqual([]);
   });
 });
