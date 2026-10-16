@@ -9,6 +9,7 @@ members = [
     "crates/learning-application",
     "crates/learning-storage",
     "crates/media-gateway",
+    "crates/mutation-testing",
     "crates/port-mapping",
     "crates/publisher-identity",
     "crates/publisher-application",
@@ -19,7 +20,7 @@ members = [
     "tools/course-cli",
     "tools/publisher-cli",
 ]
-exclude = ["spikes"]
+exclude = ["spikes", "fuzz"]
 resolver = "3"
 
 [workspace.package]

@@ -336,6 +336,8 @@ The user wants signing, working on Windows and macOS without limitation (2026-10
 
 ### Phase 10 — hardening and release
 
+Done so far: parser fuzzing (`phase-10-fuzzing.md`: `fuzz/` cargo-fuzz targets on nightly CI, `mutation-testing` robustness tests on stable).
+
 - Fuzzing of the manifest, metainfo, and gateway range parsing; a threat-model review; a dependency and license audit.
 - A cross-platform media matrix (Linux, macOS, Windows); performance, soak, and fault tests; an accessibility pass.
 - Updater signing, reproducible CI packaging, backup and restore, and operator and user documentation.

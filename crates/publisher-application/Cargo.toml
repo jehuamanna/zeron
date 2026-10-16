@@ -25,6 +25,7 @@ url.workspace = true
 nix.workspace = true
 
 [dev-dependencies]
+mutation-testing = { path = "../mutation-testing" }
 learning-application = { path = "../learning-application" }
 sha1.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

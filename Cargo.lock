@@ -874,6 +874,7 @@ dependencies = [
 name = "course-format"
 version = "0.1.0"
 dependencies = [
+ "mutation-testing",
  "schemars 1.2.3",
  "semver",
  "serde",
@@ -900,6 +901,7 @@ name = "course-signing"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
+ "mutation-testing",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -2680,6 +2682,7 @@ dependencies = [
 name = "learning-domain"
 version = "0.1.0"
 dependencies = [
+ "mutation-testing",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3128,6 +3131,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hyper",
  "hyper-util",
+ "mutation-testing",
  "rcgen",
  "rustls",
  "thiserror 2.0.21",
@@ -3251,6 +3255,10 @@ name = "multiversion_no_op"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
+
+[[package]]
+name = "mutation-testing"
+version = "0.1.0"
 
 [[package]]
 name = "ndk"
@@ -4075,6 +4083,7 @@ dependencies = [
  "course-signing",
  "getrandom 0.4.3",
  "learning-application",
+ "mutation-testing",
  "nix",
  "publisher-identity",
  "publisher-storage",
@@ -5887,6 +5896,7 @@ dependencies = [
 name = "torrent-metainfo"
 version = "0.1.0"
 dependencies = [
+ "mutation-testing",
  "sha1",
  "thiserror 2.0.21",
  "url",

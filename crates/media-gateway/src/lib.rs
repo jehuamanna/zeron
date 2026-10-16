@@ -542,7 +542,18 @@ async fn serve_media(
 
 fn parse_range(value: Option<&HeaderValue>, length: u64) -> Result<Option<(u64, u64)>, ()> {
     let Some(value) = value else { return Ok(None) };
-    let value = value.to_str().map_err(|_| ())?;
+    parse_range_header(value.to_str().map_err(|_| ())?, length).map(Some)
+}
+
+/// Parse one `Range: bytes=…` value for a resource of `length` bytes into an
+/// inclusive `(start, end)` with `start <= end < length`. Multiple ranges,
+/// empty resources, and anything unsatisfiable are refused. Public for the
+/// fuzz targets.
+///
+/// # Errors
+/// Returns `Err(())` for any value the gateway answers with 416.
+#[expect(clippy::result_unit_err, reason = "every refusal is the same 416")]
+pub fn parse_range_header(value: &str, length: u64) -> Result<(u64, u64), ()> {
     let spec = value.strip_prefix("bytes=").ok_or(())?;
     if length == 0 || spec.contains(',') {
         return Err(());
@@ -553,7 +564,7 @@ fn parse_range(value: Option<&HeaderValue>, length: u64) -> Result<Option<(u64, 
         if suffix == 0 {
             return Err(());
         }
-        return Ok(Some((length.saturating_sub(suffix), length - 1)));
+        return Ok((length.saturating_sub(suffix), length - 1));
     }
     let start = start.parse::<u64>().map_err(|_| ())?;
     if start >= length {
@@ -567,7 +578,7 @@ fn parse_range(value: Option<&HeaderValue>, length: u64) -> Result<Option<(u64, 
     if end < start {
         return Err(());
     }
-    Ok(Some((start, end)))
+    Ok((start, end))
 }
 
 fn range_not_satisfiable(length: u64) -> Response {
@@ -640,6 +651,31 @@ mod tests {
             assert_eq!(parse(value, 10), Err(()), "{value}");
         }
         assert_eq!(parse("bytes=0-0", 0), Err(()));
+    }
+
+    #[test]
+    fn mutated_range_headers_yield_ranges_inside_the_resource_or_416() {
+        let seeds: &[&[u8]] = &[
+            b"bytes=0-99",
+            b"bytes=-500",
+            b"bytes=100-",
+            b"bytes=5-2",
+            b"bytes=0-0,5-9",
+        ];
+        for (index, input) in mutation_testing::mutations(seeds, 0x6A7E_0001, 8_000, 256)
+            .iter()
+            .enumerate()
+        {
+            let text = String::from_utf8_lossy(input);
+            for length in [0, 1, 99, 1_000, u64::MAX] {
+                if let Ok((start, end)) = parse_range_header(&text, length) {
+                    assert!(
+                        start <= end && end < length,
+                        "mutation {index}: {text:?} for {length}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

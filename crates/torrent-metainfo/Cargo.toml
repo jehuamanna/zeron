@@ -10,5 +10,8 @@ sha1.workspace = true
 thiserror.workspace = true
 url.workspace = true
 
+[dev-dependencies]
+mutation-testing = { path = "../mutation-testing" }
+
 [lints]
 workspace = true

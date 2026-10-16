@@ -7,3 +7,9 @@
 *.swo
 .DS_Store
 spikes/*/target/
+
+# cargo-fuzz
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/

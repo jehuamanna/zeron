@@ -1190,6 +1190,8 @@ async fn streamed_lessons_are_removed_and_the_transfer_goes_on() {
         content,
         lesson_file,
     } = cache_fixture("cache-remove").await;
+    // Only Unix can measure the space a removed file still holds.
+    let _ = &lesson_file;
     // Nothing streamed yet: nothing is removed and the transfer is not restarted.
     let empty = cache.remove(&course_id, None).await.unwrap();
     assert_eq!(empty.removed.len(), 0);
@@ -1314,6 +1316,7 @@ async fn kept_lessons_are_never_removed_and_the_cap_spares_the_playing_course() 
     course.seeder.shutdown().await;
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn links_planted_in_a_course_folder_are_never_followed() {
     let CacheFixture {
@@ -1326,7 +1329,6 @@ async fn links_planted_in_a_course_folder_are_never_followed() {
     } = cache_fixture("cache-links").await;
     let _ = (&content, &resource);
     // A link planted in place of a lesson file is left alone, and so is its target.
-    #[cfg(unix)]
     if let Some(lesson_file) = lesson_file {
         let outside = course.scratch.0.join("outside.bin");
         std::fs::write(&outside, b"keep").unwrap();
@@ -1349,10 +1351,12 @@ async fn links_planted_in_a_course_folder_are_never_followed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn low_disk_space_pauses_downloads_and_recovery_resumes_only_those() {
-    use learning_application::{DISK_RESERVE_BYTES, DiskGuard, available_bytes, fits};
+    use learning_application::{DISK_RESERVE_BYTES, DiskGuard, fits};
 
     #[cfg(unix)]
-    assert!(available_bytes(&std::env::temp_dir()).is_some_and(|bytes| bytes > 0));
+    assert!(
+        learning_application::available_bytes(&std::env::temp_dir()).is_some_and(|bytes| bytes > 0)
+    );
     assert!(fits(None, u64::MAX));
     assert!(fits(Some(2 * DISK_RESERVE_BYTES), DISK_RESERVE_BYTES / 2));
     assert!(!fits(Some(DISK_RESERVE_BYTES + 10), DISK_RESERVE_BYTES / 2));
