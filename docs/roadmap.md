@@ -102,14 +102,16 @@ Slices, in dependency order:
 
    Done 2026-10-17: see [phase-11-license-issuer.md](releases/phase-11-license-issuer.md) and the [operator guide](operations/license-issuer.md). Entitlements are granted by command until slice 6.
 
-6. **Payment.** One provider's checkout and webhook, idempotent purchase recording, and refunds that stop re-issue.
-7. **Sign-in with Google or GitHub.**
+   **Slices 6–8 are pending** (user decision 2026-10-17). Taking payments and running license servers are on hold until the payment provider and who hosts issuers are decided (ADR 0017 open questions 1 and 2). The issuer from slice 5 is built and tested but not deployed, and the app does not talk to it. Until then, paid courses are sold by licensing each buyer by hand (slice 4).
+
+6. **Payment** (pending). One provider's checkout and webhook, idempotent purchase recording, and refunds that stop re-issue.
+7. **Sign-in with Google or GitHub** (pending; the issuer is the sign-in relying party).
    - Issuer-side OIDC/OAuth.
    - The desktop loopback and PKCE flow through the system browser.
    - Re-issue on a new machine.
    - Device list and device limit in the Library.
-8. **Publish integration.**
-   - Paid toggle and preview lessons.
+8. **Publish integration** (pending; it connects Publish to an issuer).
+   - Paid toggle and preview lessons. Already delivered in slice 2.
    - Issuer configuration and delegation signing.
    - Release registration, with recoverable retries when the issuer is unreachable.
 9. **Creator verification.** Signing and posting the GitHub gist proof, the catalog field, and the Library's online check with the "verified via GitHub" label.
@@ -123,7 +125,7 @@ Exit:
 - The threat model covers the issuer, licenses, and the decrypting gateway.
 - Every slice has its release note.
 
-Blocked on ADR 0017 open questions 1–4 where the slices name them.
+The exit criteria need slices 6–8, which are pending. Slice 9 does not depend on them.
 
 ## First milestone
 
@@ -136,5 +138,5 @@ The first meaningful milestone spans Phases 0–4: Admin publishes and seeds a f
 3. ~~May Phase 0 adopt a narrow maintained metainfo writer?~~ Settled by ADR 0002: Zeron writes v1 metainfo itself (`torrent-metainfo`).
 4. ~~Should publisher signing wait for Phase 9?~~ Answered 2026-10-16: the user wants signing now (ADR 0014).
 5. What license and maximum package/manifest/file-count policies should the default validator enforce?
-6. Phase 11: who hosts license issuers, which payment provider comes first, the default device limit, and whether purchases include future versions (ADR 0017 open questions).
+6. Phase 11: who hosts license issuers, which payment provider comes first, the default device limit, and whether purchases include future versions (ADR 0017 open questions). Payments and license servers are on hold since 2026-10-17, so Phase 11 slices 6–8 are pending.
 

@@ -9,6 +9,8 @@ Status: accepted in direction (2026-10-16). The user chose:
 
 The open questions at the end block only the slices that name them (roadmap Phase 11).
 
+Update (2026-10-17): slices 1–5 are built. Payments and running license servers are on hold at the user's request, so roadmap slices 6–8 (payment, sign-in, Publish connecting to an issuer) are pending. Paid courses are sold today by licensing each buyer by hand (decision 5, as built in slice 4).
+
 ## Context
 
 A torrent cannot be gated: anyone with the magnet downloads the bytes from any seeder. A paywall can therefore only gate **decryption**.

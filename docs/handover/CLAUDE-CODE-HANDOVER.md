@@ -346,6 +346,12 @@ Done so far: parser fuzzing (`phase-10-fuzzing.md`: `fuzz/` cargo-fuzz targets o
 
 Open roadmap approval questions remain in `docs/roadmap.md`: platform targets, v1-only BitTorrent, the timing of signing, and license and size policy. Ask the user before a phase depends on one of them.
 
+## Phase 11: paid courses (ADR 0017)
+
+- **Done (2026-10-16/17):** slices 1–5. That is the spike, encrypted packages, the learner key, offline licenses with licensing by hand, and the reference license issuer (`services/license-issuer`). Release notes: `docs/releases/phase-11-*.md`.
+- **Pending (user decision 2026-10-17):** slices 6–8, which are payments, sign-in through the issuer, and Publish connecting to an issuer. Do not start them until the user decides the payment provider and who hosts issuers (ADR 0017 open questions 1 and 2).
+- **Still open:** slice 9, creator verification through a GitHub gist, does not depend on the pending slices.
+
 ## Module boundaries
 
 - `course-format`: manifest wire contract and semantic validation (schema 1 for free courses, 2 for paid ones).
