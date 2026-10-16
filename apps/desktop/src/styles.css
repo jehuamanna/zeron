@@ -3,29 +3,31 @@
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 /*
- * Design tokens: a monochrome theme. Light is white paper with near-black
- * ink and controls; dark mirrors it. Colour is kept for meaning only
+ * Design tokens: a layered charcoal theme. Light is soft grey panels, a
+ * pale stage, and white cards with charcoal ink; dark is the same layering
+ * in charcoal. Colour is kept for meaning only
  * (warnings, errors, success) and for the learner's own highlights.
  * `data-theme` on <html> picks one.
  */
 :root {
-  --zr-bg: #fafafa;
+  /* Layered light: panels a soft grey, the stage lighter, cards white; charcoal ink. */
+  --zr-bg: #f4f4f5;
   --zr-surface: #ffffff;
-  --zr-sunken: #f2f2f3;
-  --zr-panel: #ffffff;
-  --zr-ink: #0a0a0a;
+  --zr-sunken: #e9e9ec;
+  --zr-panel: #ececef;
+  --zr-ink: #1f2024;
   --zr-shade: #ffffff;
-  --zr-fg: #0a0a0a;
-  --zr-fg-soft: #27272a;
-  --zr-muted: #52525b;
-  --zr-subtle: #71717a;
-  --zr-faint: #a1a1aa;
-  --zr-line: rgb(10 10 10 / 0.08);
-  --zr-accent: #0a0a0a;
-  --zr-accent-hover: #2a2a2e;
-  --zr-accent-text: #0a0a0a;
-  --zr-accent-strong: #000000;
-  --zr-on-accent: #ffffff;
+  --zr-fg: #1f2024;
+  --zr-fg-soft: #33343a;
+  --zr-muted: #5c5d65;
+  --zr-subtle: #74757d;
+  --zr-faint: #a6a7ae;
+  --zr-line: rgb(31 32 36 / 0.08);
+  --zr-accent: #2d2e33;
+  --zr-accent-hover: #3d3e44;
+  --zr-accent-text: #1f2024;
+  --zr-accent-strong: #141518;
+  --zr-on-accent: #f4f4f5;
   --zr-warn: #d97706;
   --zr-warn-bright: #f59e0b;
   --zr-warn-text: #92400e;
@@ -37,11 +39,11 @@
   --zr-ok: #16a34a;
   --zr-ok-text: #15803d;
   --zr-ok-strong: #166534;
-  --zr-info: #52525b;
-  --zr-info-strong: #27272a;
-  --zr-sky: #3f3f46;
+  --zr-info: #5c5d65;
+  --zr-info-strong: #33343a;
+  --zr-sky: #45464d;
   --zr-video: #000000;
-  --zr-shadow: 0 1px 2px rgb(10 10 10 / 0.04), 0 12px 32px -12px rgb(10 10 10 / 0.12);
+  --zr-shadow: 0 1px 2px rgb(31 32 36 / 0.05), 0 12px 32px -14px rgb(31 32 36 / 0.16);
   color-scheme: light;
 }
 

@@ -149,6 +149,8 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
 - **Dark theme, revised:** it follows a second reference as layered charcoal.
   - **Layers:** a new `--zr-panel` token (white in light) carries the header, course bar, contents, side panel, and PDF sidebar at the darkest step. The stage is mid-grey (`#25262a`) and cards a step lighter (`#2d2e33`).
   - **Controls:** buttons are light grey with dark text.
+- **Light theme, revised to match:** the same layering in daylight, with charcoal (`#2d2e33`) rather than black for ink and buttons.
+  - **Layers:** soft grey panels (`#ececef`), a pale stage (`#f4f4f5`), and white cards.
 - **Video player:** the seek bar and switches are white on black.
 - **Publish:** its main buttons use the shared accent instead of amber.
 
