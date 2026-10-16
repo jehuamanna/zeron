@@ -1552,6 +1552,103 @@ fn note_error(error: LibraryError) -> CommandError {
     }
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AnnotationMoveDto {
+    from_lesson_id: String,
+    from_title: Option<String>,
+    from_version: Option<String>,
+    suggested_lesson_id: Option<String>,
+    suggested_title: Option<String>,
+    reason: Option<&'static str>,
+    notes: usize,
+    notes_widened: usize,
+    has_drawing: bool,
+    has_progress: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AnnotationMoveReportDto {
+    notes_moved: usize,
+    notes_widened: usize,
+    drawing_moved: bool,
+    drawing_kept: bool,
+    progress_moved: bool,
+    positions_moved: usize,
+}
+
+/// Lessons whose notes, drawing, or progress need a new place in the
+/// course's current version, with a suggested lesson where one matches.
+#[tauri::command]
+pub(crate) async fn get_annotation_moves(
+    course_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<AnnotationMoveDto>, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || annotation_moves(&*lock_library(&library)?, &course_id)).await
+}
+
+/// Move a lesson's annotations to a lesson of the current version.
+#[tauri::command]
+pub(crate) async fn move_annotations(
+    course_id: String,
+    from_lesson_id: String,
+    to_lesson_id: String,
+    state: State<'_, AppState>,
+) -> Result<AnnotationMoveReportDto, CommandError> {
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        let report = lock_library(&library)?
+            .move_annotations(&course_id, &from_lesson_id, &to_lesson_id)
+            .map_err(note_error)?;
+        Ok(AnnotationMoveReportDto {
+            notes_moved: report.notes_moved,
+            notes_widened: report.notes_widened,
+            drawing_moved: report.drawing_moved,
+            drawing_kept: report.drawing_kept,
+            progress_moved: report.progress_moved,
+            positions_moved: report.positions_moved,
+        })
+    })
+    .await
+}
+
+fn annotation_moves(
+    library: &CourseLibrary,
+    course_id: &str,
+) -> Result<Vec<AnnotationMoveDto>, CommandError> {
+    let moves = library.annotation_moves(course_id).map_err(note_error)?;
+    let manifest = library
+        .manifest(course_id)
+        .map_err(|error| command_error("library_unavailable", error))?;
+    let title = |lesson_id: &str| {
+        manifest.as_ref().and_then(|manifest| {
+            manifest
+                .modules
+                .iter()
+                .flat_map(|module| &module.lessons)
+                .find(|lesson| lesson.id == lesson_id)
+                .map(|lesson| lesson.title.clone())
+        })
+    };
+    Ok(moves
+        .into_iter()
+        .map(|item| AnnotationMoveDto {
+            suggested_title: item.suggested_lesson_id.as_deref().and_then(title),
+            reason: item.reason.map(learning_application::MatchReason::as_str),
+            from_lesson_id: item.from_lesson_id,
+            from_title: item.from_title,
+            from_version: item.from_version,
+            suggested_lesson_id: item.suggested_lesson_id,
+            notes: item.notes,
+            notes_widened: item.notes_widened,
+            has_drawing: item.has_drawing,
+            has_progress: item.has_progress,
+        })
+        .collect())
+}
+
 /// The learner's drawing for a lesson, or `null`.
 #[tauri::command]
 pub(crate) async fn get_drawing(
@@ -2081,6 +2178,16 @@ mod tests {
         assert_eq!(
             progress(&library, "course").unwrap_err().code,
             "course_not_found"
+        );
+    }
+
+    #[test]
+    fn annotation_moves_of_unknown_courses_are_an_error() {
+        let library =
+            CourseLibrary::open_in_memory(learning_application::ImportLimits::default()).unwrap();
+        assert_eq!(
+            annotation_moves(&library, "course").unwrap_err().code,
+            "note_target_invalid"
         );
     }
 

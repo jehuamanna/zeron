@@ -13,8 +13,40 @@ use course_format::{CourseManifest, ManifestError, parse_and_validate};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-const CURRENT_SCHEMA_VERSION: i64 = 11;
+const CURRENT_SCHEMA_VERSION: i64 = 12;
+/// Previous versions of one course whose manifests are kept for moving annotations.
+pub const KEPT_PREVIOUS_MANIFESTS: u32 = 5;
 const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
+
+/// Annotations to move from one lesson to another of the same course.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnnotationMoveRequest {
+    /// Course both lessons belong to.
+    pub course_id: String,
+    /// Lesson the annotations are on now.
+    pub from_lesson_id: String,
+    /// Lesson they move to; it may equal `from_lesson_id` to repoint anchors.
+    pub to_lesson_id: String,
+    /// Each note of the lesson to move, with its anchor for the target.
+    pub note_anchors: Vec<(String, String)>,
+    /// Old resource ID to new, for playback positions.
+    pub resource_map: Vec<(String, String)>,
+}
+
+/// What a move changed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AnnotationMoveOutcome {
+    /// Notes moved or repointed.
+    pub notes_moved: usize,
+    /// The drawing moved to the target lesson.
+    pub drawing_moved: bool,
+    /// The target already had a drawing, so this one stayed where it was.
+    pub drawing_kept: bool,
+    /// Lesson progress moved; it stays when the target already has its own.
+    pub progress_moved: bool,
+    /// Playback positions moved to the mapped resources.
+    pub positions_moved: usize,
+}
 
 /// A stored learner note.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -854,6 +886,112 @@ impl Storage {
         Ok(DrawingWrite::Saved { revision })
     }
 
+    /// Manifests of the versions this course replaced, newest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query or decoding failures.
+    pub fn previous_manifests(&self, course_id: &str) -> Result<Vec<CourseManifest>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT manifest_json FROM course_manifest_history WHERE course_id = ?1
+             ORDER BY replaced_at DESC, rowid DESC",
+        )?;
+        let rows = statement.query_map([course_id], |row| row.get::<_, Vec<u8>>(0))?;
+        rows.map(|json| Ok(serde_json::from_slice(&json?)?))
+            .collect()
+    }
+
+    /// Lessons of a course that have a drawing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn drawing_lessons(&self, course_id: &str) -> Result<Vec<String>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT lesson_id FROM lesson_drawings WHERE course_id = ?1 ORDER BY lesson_id",
+        )?;
+        let rows = statement.query_map([course_id], |row| row.get(0))?;
+        rows.collect::<Result<_, _>>().map_err(StorageError::from)
+    }
+
+    /// Move a lesson's annotations to another lesson of the same course in
+    /// one transaction. Notes move with the anchors given for them, and each
+    /// moved note's revision increases, so an editor holding the old one
+    /// reloads rather than overwrites. The drawing, lesson progress, and the
+    /// playback positions of mapped resources move only where the target
+    /// has none, so nothing the target already has is overwritten.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for clock or `SQLite` failures.
+    pub fn move_lesson_annotations(
+        &mut self,
+        request: &AnnotationMoveRequest,
+    ) -> Result<AnnotationMoveOutcome, StorageError> {
+        let now = unix_now()?;
+        let tx = self.connection.transaction()?;
+        let course = &request.course_id;
+        let (from, to) = (&request.from_lesson_id, &request.to_lesson_id);
+        let mut outcome = AnnotationMoveOutcome::default();
+        for (note_id, anchor_json) in &request.note_anchors {
+            outcome.notes_moved += tx.execute(
+                "UPDATE notes SET lesson_id = ?4, anchor_json = ?5, revision = revision + 1, updated_at = ?6
+                 WHERE note_id = ?1 AND course_id = ?2 AND lesson_id = ?3",
+                params![note_id, course, from, to, anchor_json, now],
+            )?;
+        }
+        if from != to {
+            let exists = |table: &str, lesson: &str| -> Result<bool, StorageError> {
+                Ok(tx.query_row(
+                    &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE course_id = ?1 AND lesson_id = ?2)"),
+                    [course, lesson],
+                    |row| row.get(0),
+                )?)
+            };
+            if exists("lesson_drawings", from)? {
+                if exists("lesson_drawings", to)? {
+                    outcome.drawing_kept = true;
+                } else {
+                    tx.execute(
+                        "INSERT INTO lesson_drawings (course_id, lesson_id, scene_json, revision, updated_at)
+                         SELECT course_id, ?3, scene_json, revision + 1, ?4 FROM lesson_drawings
+                         WHERE course_id = ?1 AND lesson_id = ?2",
+                        params![course, from, to, now],
+                    )?;
+                    tx.execute(
+                        "UPDATE drawing_files SET lesson_id = ?3 WHERE course_id = ?1 AND lesson_id = ?2",
+                        params![course, from, to],
+                    )?;
+                    tx.execute(
+                        "DELETE FROM lesson_drawings WHERE course_id = ?1 AND lesson_id = ?2",
+                        params![course, from],
+                    )?;
+                    outcome.drawing_moved = true;
+                }
+            }
+            if exists("lesson_progress", from)? && !exists("lesson_progress", to)? {
+                tx.execute(
+                    "UPDATE lesson_progress SET lesson_id = ?3 WHERE course_id = ?1 AND lesson_id = ?2",
+                    params![course, from, to],
+                )?;
+                outcome.progress_moved = true;
+            }
+        }
+        for (old_resource, new_resource) in &request.resource_map {
+            if old_resource == new_resource {
+                continue;
+            }
+            outcome.positions_moved += tx.execute(
+                "UPDATE playback_positions SET resource_id = ?3
+                 WHERE course_id = ?1 AND resource_id = ?2 AND NOT EXISTS (
+                   SELECT 1 FROM playback_positions WHERE course_id = ?1 AND resource_id = ?3)",
+                params![course, old_resource, new_resource],
+            )?;
+        }
+        tx.commit()?;
+        Ok(outcome)
+    }
+
     /// Whether a course file's text is indexed at this digest.
     ///
     /// # Errors
@@ -1122,6 +1260,7 @@ impl Storage {
         let imported_at_i64 = sqlite_integer(imported_at, "import timestamp")?;
         let manifest_json = serde_json::to_vec(manifest)?;
         let tx = self.connection.transaction()?;
+        keep_previous_manifest(&tx, manifest, imported_at_i64)?;
         tx.execute(
             "INSERT INTO courses (course_id, course_version, title, description, publisher_name, language, manifest_json, total_resource_bytes, imported_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -1211,6 +1350,43 @@ impl Storage {
             sharing: false,
         })
     }
+}
+
+/// Before a course is replaced by another version, keep the manifest it had,
+/// and drop history entries for the version arriving now and beyond the
+/// newest [`KEPT_PREVIOUS_MANIFESTS`].
+fn keep_previous_manifest(
+    tx: &Transaction<'_>,
+    manifest: &CourseManifest,
+    replaced_at: i64,
+) -> Result<(), StorageError> {
+    let previous: Option<(String, Vec<u8>)> = tx
+        .query_row(
+            "SELECT course_version, manifest_json FROM courses WHERE course_id = ?1",
+            [&manifest.course_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if let Some((version, json)) = previous.filter(|(version, _)| *version != manifest.version) {
+        tx.execute(
+            "INSERT INTO course_manifest_history (course_id, course_version, manifest_json, replaced_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(course_id, course_version) DO UPDATE SET
+               manifest_json = excluded.manifest_json, replaced_at = excluded.replaced_at",
+            params![manifest.course_id, version, json, replaced_at],
+        )?;
+    }
+    tx.execute(
+        "DELETE FROM course_manifest_history WHERE course_id = ?1 AND course_version = ?2",
+        [&manifest.course_id, &manifest.version],
+    )?;
+    tx.execute(
+        "DELETE FROM course_manifest_history WHERE course_id = ?1 AND rowid NOT IN (
+           SELECT rowid FROM course_manifest_history WHERE course_id = ?1
+           ORDER BY replaced_at DESC, rowid DESC LIMIT ?2)",
+        params![manifest.course_id, KEPT_PREVIOUS_MANIFESTS],
+    )?;
+    Ok(())
 }
 
 /// One schema step, upgrading by exactly one version.
@@ -1432,7 +1608,7 @@ fn add_drawings(connection: &mut Connection) -> Result<(), StorageError> {
 }
 
 /// Migrations from schema 4 on, by the version they start from.
-const TABLE_MIGRATIONS: [(i64, Migration); 7] = [
+const TABLE_MIGRATIONS: [(i64, Migration); 8] = [
     (4, add_playback_positions),
     (5, add_download_commitments),
     (6, add_pause_flag),
@@ -1440,7 +1616,33 @@ const TABLE_MIGRATIONS: [(i64, Migration); 7] = [
     (8, add_notes),
     (9, add_drawings),
     (10, add_learning_search),
+    (11, add_manifest_history),
 ];
+
+/// Schema 12. The manifests of the versions a course replaced, so a
+/// learner's annotations on lessons a new version no longer has can still be
+/// matched to its lessons, and a trigger that keeps moved notes searchable
+/// under their new lesson.
+fn add_manifest_history(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE course_manifest_history (
+           course_id TEXT NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+           course_version TEXT NOT NULL,
+           manifest_json BLOB NOT NULL,
+           replaced_at INTEGER NOT NULL CHECK(replaced_at >= 0),
+           PRIMARY KEY(course_id, course_version)
+         ) STRICT;
+         CREATE TRIGGER notes_search_move AFTER UPDATE OF lesson_id ON notes BEGIN
+           DELETE FROM learning_search WHERE kind = 'note' AND source_id = old.note_id;
+           INSERT INTO learning_search (course_id, lesson_id, kind, source_id, origin_id, position, title, body)
+           VALUES (new.course_id, new.lesson_id, 'note', new.note_id, new.note_id, NULL, '', new.body_text);
+         END;
+         PRAGMA user_version = 12;",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
 
 /// Schema 11. One full-text index over what a learner can search: course and
 /// lesson titles, notes (kept in step by triggers), and the text of
@@ -1865,7 +2067,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TABLE learning_search; DROP TABLE indexed_resources;
+                    "DROP TABLE course_manifest_history;
+                     DROP TABLE learning_search; DROP TABLE indexed_resources;
                      DROP TABLE drawing_files; DROP TABLE lesson_drawings;
                      DROP TABLE notes; DROP TABLE lesson_progress;
                      ALTER TABLE course_torrent_sources DROP COLUMN paused;
@@ -1905,7 +2108,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "DROP TRIGGER notes_search_insert; DROP TRIGGER notes_search_update;
+                    "DROP TABLE course_manifest_history; DROP TRIGGER notes_search_move;
+                     DROP TRIGGER notes_search_insert; DROP TRIGGER notes_search_update;
                      DROP TRIGGER notes_search_delete;
                      DROP TABLE learning_search; DROP TABLE indexed_resources;
                      PRAGMA user_version = 10;",
@@ -2274,6 +2478,197 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn replaced_versions_keep_their_manifests_newest_first_and_bounded() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let mut course = manifest("Rust", "systems");
+        let id = course.course_id.clone();
+        let root = Path::new("/courses/rust");
+        course.version = "1.0.0".to_owned();
+        storage
+            .save_imported_course_at(&course, 1, root, 1, None)
+            .unwrap();
+        storage
+            .save_imported_course_at(&course, 1, root, 2, None)
+            .unwrap();
+        assert_eq!(storage.previous_manifests(&id).unwrap().len(), 0);
+        for (minor, at) in (1..=7).zip(3..) {
+            course.version = format!("1.{minor}.0");
+            storage
+                .save_imported_course_at(&course, 1, root, at, None)
+                .unwrap();
+        }
+        let versions: Vec<String> = storage
+            .previous_manifests(&id)
+            .unwrap()
+            .into_iter()
+            .map(|manifest| manifest.version)
+            .collect();
+        assert_eq!(versions, ["1.6.0", "1.5.0", "1.4.0", "1.3.0", "1.2.0"]);
+        course.version = "1.4.0".to_owned();
+        storage
+            .save_imported_course_at(&course, 1, root, 20, None)
+            .unwrap();
+        let versions: Vec<String> = storage
+            .previous_manifests(&id)
+            .unwrap()
+            .into_iter()
+            .map(|manifest| manifest.version)
+            .collect();
+        assert_eq!(versions, ["1.7.0", "1.6.0", "1.5.0", "1.3.0", "1.2.0"]);
+    }
+
+    #[test]
+    fn annotations_move_without_overwriting_the_target() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Rust", "systems");
+        let id = course.course_id.clone();
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/rust"))
+            .unwrap();
+        storage
+            .insert_note(
+                "n1",
+                &id,
+                "old",
+                "a1",
+                r#"{"type":"doc"}"#,
+                "ownership rules",
+            )
+            .unwrap();
+        storage
+            .insert_note("n2", &id, "old", "a2", r#"{"type":"doc"}"#, "borrowing")
+            .unwrap();
+        storage
+            .insert_note("n3", &id, "other", "a3", r#"{"type":"doc"}"#, "kept")
+            .unwrap();
+        storage
+            .save_drawing(
+                &id,
+                "old",
+                None,
+                "scene-old",
+                &[("f1".to_owned(), "image/png".to_owned(), "data:a".to_owned())],
+            )
+            .unwrap();
+        storage.mark_lesson_started(&id, "old").unwrap();
+        storage.set_lesson_completed(&id, "old", true).unwrap();
+        let position = PlaybackPosition {
+            position_ms: 5_000,
+            duration_ms: 9_000,
+        };
+        storage
+            .set_playback_position(&id, "video_old", position)
+            .unwrap();
+
+        let outcome = storage
+            .move_lesson_annotations(&AnnotationMoveRequest {
+                course_id: id.clone(),
+                from_lesson_id: "old".to_owned(),
+                to_lesson_id: "new".to_owned(),
+                note_anchors: vec![
+                    ("n1".to_owned(), "b1".to_owned()),
+                    ("n2".to_owned(), "b2".to_owned()),
+                    ("n3".to_owned(), "x".to_owned()),
+                ],
+                resource_map: vec![("video_old".to_owned(), "video_new".to_owned())],
+            })
+            .unwrap();
+        assert_eq!(
+            outcome,
+            AnnotationMoveOutcome {
+                notes_moved: 2,
+                drawing_moved: true,
+                drawing_kept: false,
+                progress_moved: true,
+                positions_moved: 1
+            }
+        );
+        let moved = storage.notes(&id, Some("new")).unwrap();
+        assert_eq!(
+            moved
+                .iter()
+                .map(|note| note.anchor_json.as_str())
+                .collect::<Vec<_>>(),
+            ["b1", "b2"]
+        );
+        assert!(moved.iter().all(|note| note.revision == 1));
+        assert_eq!(storage.note("n3").unwrap().unwrap().lesson_id, "other");
+        let drawing = storage.drawing(&id, "new").unwrap().unwrap();
+        assert_eq!(drawing.scene_json, "scene-old");
+        assert_eq!(drawing.files.len(), 1);
+        assert!(storage.drawing(&id, "old").unwrap().is_none());
+        assert_eq!(storage.lesson_progress(&id).unwrap()[0].lesson_id, "new");
+        assert!(storage.lesson_progress(&id).unwrap()[0].completed);
+        assert_eq!(
+            storage.playback_position(&id, "video_new").unwrap(),
+            Some(position)
+        );
+        let hits = storage.search("\"ownership\"", 5).unwrap();
+        assert_eq!(hits[0].lesson_id, "new");
+    }
+
+    #[test]
+    fn a_move_onto_a_lesson_with_its_own_annotations_keeps_them() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Rust", "systems");
+        let id = course.course_id.clone();
+        storage
+            .save_imported_course(&course, 10, Path::new("/courses/rust"))
+            .unwrap();
+        let position = PlaybackPosition {
+            position_ms: 5_000,
+            duration_ms: 9_000,
+        };
+        storage
+            .save_drawing(&id, "new", None, "scene-old", &[])
+            .unwrap();
+        storage.mark_lesson_started(&id, "new").unwrap();
+        storage
+            .set_playback_position(&id, "video_new", position)
+            .unwrap();
+
+        storage
+            .save_drawing(&id, "elsewhere", None, "scene-target", &[])
+            .unwrap();
+        storage.mark_lesson_started(&id, "elsewhere").unwrap();
+        storage
+            .set_playback_position(&id, "video_elsewhere", position)
+            .unwrap();
+        let kept = storage
+            .move_lesson_annotations(&AnnotationMoveRequest {
+                course_id: id.clone(),
+                from_lesson_id: "new".to_owned(),
+                to_lesson_id: "elsewhere".to_owned(),
+                note_anchors: Vec::new(),
+                resource_map: vec![("video_new".to_owned(), "video_elsewhere".to_owned())],
+            })
+            .unwrap();
+        assert_eq!(
+            kept,
+            AnnotationMoveOutcome {
+                notes_moved: 0,
+                drawing_moved: false,
+                drawing_kept: true,
+                progress_moved: false,
+                positions_moved: 0
+            }
+        );
+        assert_eq!(
+            storage
+                .drawing(&id, "elsewhere")
+                .unwrap()
+                .unwrap()
+                .scene_json,
+            "scene-target"
+        );
+        assert_eq!(
+            storage.drawing(&id, "new").unwrap().unwrap().scene_json,
+            "scene-old"
+        );
+        assert_eq!(storage.drawing_lessons(&id).unwrap(), ["elsewhere", "new"]);
     }
 
     #[test]

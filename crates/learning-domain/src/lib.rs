@@ -1,7 +1,9 @@
-//! Learner-owned learning rules: progress, notes, drawings, and transcripts. Pure logic
+//! Learner-owned learning rules: progress, notes, drawings, transcripts, and
+//! moving annotations to a new course version. Pure logic
 //! with no storage, engine, or UI dependency.
 
 mod drawings;
+mod migration;
 mod notes;
 mod progress;
 mod search;
@@ -10,6 +12,9 @@ mod transcript;
 pub use drawings::{
     DrawingError, DrawingFile, MAX_FILE_DATA_URL_BYTES, MAX_FILES_PER_DRAWING, MAX_SCENE_BYTES,
     Scene,
+};
+pub use migration::{
+    MatchReason, OutlineLesson, OutlineResource, remap_anchor, resource_map, suggest_lesson,
 };
 pub use notes::{Anchor, MAX_NOTE_BYTES, NoteBody, NoteError, Region};
 pub use progress::{COMPLETION_RATIO, CourseProgress, LessonStatus, watched_enough};

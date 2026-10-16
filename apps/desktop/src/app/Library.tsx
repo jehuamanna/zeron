@@ -8,6 +8,7 @@ import { DocumentViewer } from "../features/documents/DocumentViewer";
 import { DrawingPanel } from "../features/drawings/DrawingPanel";
 import { LibrarySearch } from "../features/search/LibrarySearch";
 import { TranscriptPanel } from "../features/transcripts/TranscriptPanel";
+import { AnnotationMovesCard } from "../features/migration/AnnotationMovesCard";
 import { NotesPanel } from "../features/notes/NotesPanel";
 import { LessonPlayer, type PlayerHandle } from "../features/player/LessonPlayer";
 import { LessonStatusIcon, MarkCompleteButton, ProgressBar, useCourseProgress } from "../features/progress/progress";
@@ -221,6 +222,7 @@ export function Library() {
                       </p>
                     ) : null}
                     {torrentCourse ? <CourseSharingCard courseId={detail.data.courseId} /> : null}
+                    <AnnotationMovesCard course={detail.data} />
                     <div className="mt-10 rounded-3xl border border-white/10 bg-black/20 p-8">
                       {pdfView ? (
                         <DocumentViewer

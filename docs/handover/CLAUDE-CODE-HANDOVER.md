@@ -312,13 +312,15 @@ Done so far: lesson and course progress (`phase-6-progress.md`, new `learning-do
 
 ### Phase 7 — release and distribution management
 
-Partly pulled forward by the active slice. Remaining:
+All items are done:
 
 - ~~version history per course, and supersession/archive UX~~ done (`phase-7-version-history.md`: make current, new draft from a release);
 - ~~retry and rollback of failed preparations~~ done (`phase-7-preparation-retry-and-rollback.md`);
 - ~~distribution details and logs, with redaction~~ done (`phase-7-distribution-activity.md`, publisher schema v5);
 - ~~import and export of publisher configuration~~ done (`phase-7-publisher-configuration.md`);
-- suggestions for migrating annotations between course versions.
+- ~~suggestions for migrating annotations between course versions~~ done (`phase-7-annotation-migration.md`, learner schema v12).
+
+**Phase 7 is complete.**
 
 ### Phase 8 — removed
 

@@ -180,6 +180,8 @@ pub fn run() {
             commands::read_text_resource,
             commands::search_library,
             commands::list_notes,
+            commands::get_annotation_moves,
+            commands::move_annotations,
             commands::create_note,
             commands::update_note,
             commands::get_drawing,

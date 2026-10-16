@@ -254,6 +254,32 @@ export interface CourseDetail {
   }>;
 }
 
+/** Annotations on a lesson the current version no longer has, or notes pointing at files a kept lesson lost. */
+export interface AnnotationMove {
+  fromLessonId: string;
+  /** Title in the version it came from, when known. */
+  fromTitle: string | null;
+  fromVersion: string | null;
+  suggestedLessonId: string | null;
+  suggestedTitle: string | null;
+  reason: "same_lesson" | "same_content" | "same_title" | null;
+  notes: number;
+  /** Notes that would point at the whole lesson after moving to the suggestion. */
+  notesWidened: number;
+  hasDrawing: boolean;
+  hasProgress: boolean;
+}
+
+export interface AnnotationMoveReport {
+  notesMoved: number;
+  notesWidened: number;
+  drawingMoved: boolean;
+  /** The target lesson had its own drawing, so this one stayed where it was. */
+  drawingKept: boolean;
+  progressMoved: boolean;
+  positionsMoved: number;
+}
+
 export const libraryApi = {
   readiness: () => invoke<Readiness>("readiness"),
   list: () => invoke<CourseSummary[]>("list_courses"),
@@ -293,6 +319,9 @@ export const libraryApi = {
   /** Verified bytes of a PDF resource. */
   readDocument: (courseId: string, resourceId: string) => invoke<ArrayBuffer>("read_document", { courseId, resourceId }),
   notes: (courseId: string, lessonId: string | null) => invoke<Note[]>("list_notes", { courseId, lessonId }),
+  annotationMoves: (courseId: string) => invoke<AnnotationMove[]>("get_annotation_moves", { courseId }),
+  moveAnnotations: (courseId: string, fromLessonId: string, toLessonId: string) =>
+    invoke<AnnotationMoveReport>("move_annotations", { courseId, fromLessonId, toLessonId }),
   createNote: (courseId: string, lessonId: string, anchor: NoteAnchor, body: string) =>
     invoke<Note>("create_note", { courseId, lessonId, anchor, body }),
   /** Saves only if the note is still at `expectedRevision`; never overwrites a newer note. */
