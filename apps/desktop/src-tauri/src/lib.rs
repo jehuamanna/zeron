@@ -1,5 +1,7 @@
 //! Thin Tauri composition root for Zeron Desktop.
 
+#[cfg(target_os = "linux")]
+mod appimage;
 mod backup;
 mod catalogs;
 mod commands;
@@ -278,6 +280,10 @@ fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
 /// setup failure is logged by Tauri before process termination.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    if let Some(code) = appimage::restart_with_bundled_gstreamer() {
+        std::process::exit(code);
+    }
     let app = tauri::Builder::default()
         .plugin(navigation::guard())
         .plugin(tauri_plugin_dialog::init())
