@@ -13,3 +13,6 @@ fuzz/target/
 fuzz/corpus/
 fuzz/artifacts/
 fuzz/coverage/
+
+# Publisher identity backups hold the signing key; never commit them.
+zeron-publisher-key*.json
