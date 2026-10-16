@@ -41,6 +41,7 @@ impl Scratch {
     }
 }
 
+#[cfg(unix)]
 impl Scratch {
     fn make_tree_writable(path: &std::path::Path) {
         for entry in fs::read_dir(path).unwrap() {
@@ -504,6 +505,7 @@ fn recorded_release_torrents_are_read_back_only_while_they_match_the_record() {
     ));
 }
 
+#[cfg(unix)]
 fn set_writable(path: &std::path::Path, writable: bool) {
     let mut permissions = fs::metadata(path).unwrap().permissions();
     permissions.set_readonly(!writable);

@@ -300,11 +300,12 @@ fn a_draft_is_in_progress_until_its_job_is_published_failed_or_cancelled() {
 
 #[test]
 fn preparation_refuses_to_fill_the_disk() {
-    use publisher_application::{DISK_RESERVE_BYTES, available_bytes, check_space};
+    use publisher_application::{DISK_RESERVE_BYTES, check_space};
 
     #[cfg(unix)]
     assert!(
-        available_bytes(&std::env::temp_dir().join("missing/child")).is_some_and(|bytes| bytes > 0)
+        publisher_application::available_bytes(&std::env::temp_dir().join("missing/child"))
+            .is_some_and(|bytes| bytes > 0)
     );
     check_space(None, u64::MAX).unwrap();
     check_space(Some(2 * DISK_RESERVE_BYTES), DISK_RESERVE_BYTES / 2).unwrap();
