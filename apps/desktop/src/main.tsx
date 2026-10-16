@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./app/App";
 import { applyTheme, useShell } from "./stores/shell";
+import "./fonts.css";
 import "./styles.css";
 
 const queryClient = new QueryClient({

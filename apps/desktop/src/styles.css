@@ -78,8 +78,9 @@
 }
 
 @theme inline {
-  --font-sans: Inter, ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
-  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Charter, "Bitstream Charter", Georgia, serif;
+  --font-sans: var(--zr-font-sans);
+  --font-display: var(--zr-font-display);
+  --font-mono: var(--zr-font-mono);
 
   /* Semantic colours for new components. */
   --color-bg: var(--zr-bg);
@@ -138,6 +139,7 @@
 
 :root {
   font-family: var(--font-sans);
+  font-optical-sizing: auto;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -160,6 +162,33 @@ body {
 }
 
 ::selection { background: color-mix(in oklab, var(--zr-accent) 28%, transparent); }
+
+/* One icon weight everywhere: lucide icons default to a heavier 2px line. */
+.lucide { stroke-width: 1.75; }
+button .lucide, a .lucide { flex-shrink: 0; }
+
+/* Checkboxes, radios, and range inputs take the accent colour. */
+input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color: var(--zr-accent); }
+
+/*
+ * Drop-downs: a quiet chevron instead of the system's button. Unlayered on
+ * purpose, so it outranks the padding utilities on each select.
+ */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  padding-right: 1.6rem;
+  background-repeat: no-repeat;
+  background-position: right 0.45rem center;
+  background-size: 0.7rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2357534e' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a8a29e' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+select option { background: var(--zr-surface); color: var(--zr-fg); }
+code, kbd, pre, .font-mono { font-family: var(--font-mono); }
 
 /* Thin, theme-coloured scrollbars inside panels. */
 * { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--zr-ink) 22%, transparent) transparent; }
@@ -192,7 +221,7 @@ body {
 .prose-note ul { list-style: disc; padding-left: 1.25rem; margin: 0.25rem 0; }
 .prose-note ol { list-style: decimal; padding-left: 1.25rem; margin: 0.25rem 0; }
 .prose-note blockquote { border-left: 3px solid var(--zr-accent); padding-left: 0.75rem; color: var(--zr-muted); font-style: italic; margin: 0.4rem 0; }
-.prose-note code { font-family: ui-monospace, monospace; font-size: 0.85em; background: color-mix(in oklab, var(--zr-ink) 8%, transparent); border-radius: 4px; padding: 0.05rem 0.3rem; }
+.prose-note code { font-family: var(--font-mono); font-size: 0.85em; background: color-mix(in oklab, var(--zr-ink) 8%, transparent); border-radius: 4px; padding: 0.05rem 0.3rem; }
 .prose-note pre { background: color-mix(in oklab, var(--zr-ink) 6%, transparent); border-radius: 8px; padding: 0.6rem 0.8rem; overflow-x: auto; margin: 0.4rem 0; }
 .prose-note pre code { background: none; padding: 0; }
 .prose-note hr { border-color: var(--zr-line); margin: 0.6rem 0; }

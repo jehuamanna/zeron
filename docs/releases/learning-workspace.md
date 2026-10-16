@@ -127,6 +127,17 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
   - **Shortcuts:** ←/→, ↑/↓, M, C, and F.
 - **Full screen** for the whole workspace from the course bar.
 
+### 11. Bundled typefaces and consistent icons (follow-up)
+
+- **Typefaces:** the named fonts (Inter, Iowan Old Style) were not installed on Linux, so titles fell back to a plain system sans. The app now bundles three variable fonts, all SIL OFL, from `@fontsource-variable`; they are served by the app itself, so the CSP is unchanged:
+  - interface: Inter, with optical sizing;
+  - titles, notes, and reading: Source Serif 4, roman and italic;
+  - code and timestamps: JetBrains Mono.
+- **Swapping fonts:** `src/fonts.css` is the only file to change for licensed fonts: declare them and put their names first in `--zr-font-sans`, `--zr-font-display`, and `--zr-font-mono`.
+- **Icons:** every lucide icon uses one 1.75 line weight, and icons never shrink in tight bars.
+- **Drop-downs:** selects lose the system button for a theme-coloured chevron.
+- **Form controls:** checkboxes, radios, and ranges take the accent colour.
+
 ## Acceptance evidence
 
 - **Vitest:** all 176 tests pass, 3 of them new.
