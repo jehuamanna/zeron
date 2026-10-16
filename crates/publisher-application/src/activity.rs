@@ -32,6 +32,8 @@ pub enum ActivityKind {
     TrackerListsRefreshed,
     /// A followed tracker list could not be downloaded.
     TrackerListFailed,
+    /// A whole course was deleted: drafts, release files, and catalog entries.
+    CourseDeleted,
 }
 
 impl ActivityKind {
@@ -48,6 +50,7 @@ impl ActivityKind {
             Self::SeedingFailed => "seeding_failed",
             Self::TrackerListsRefreshed => "tracker_lists_refreshed",
             Self::TrackerListFailed => "tracker_list_failed",
+            Self::CourseDeleted => "course_deleted",
         }
     }
 }

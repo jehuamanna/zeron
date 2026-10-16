@@ -8,7 +8,7 @@ import { accessibilityViolations } from "../../../test/accessibility";
 
 vi.mock("../../services/publisher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/publisher")>()),
-  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn(), deleteDraft: vi.fn(), archiveRelease: vi.fn(), deleteReleaseFiles: vi.fn(), makeReleaseCurrent: vi.fn(), createDraftFromRelease: vi.fn(), getDistributionActivity: vi.fn(), exportDistributionActivity: vi.fn() },
+  publisherApi: { listDrafts: vi.fn(), listReleases: vi.fn(), getDistribution: vi.fn(), getReleaseDetails: vi.fn(), exportReleaseTorrent: vi.fn(), deleteDraft: vi.fn(), deleteCourse: vi.fn(), archiveRelease: vi.fn(), deleteReleaseFiles: vi.fn(), makeReleaseCurrent: vi.fn(), createDraftFromRelease: vi.fn(), getDistributionActivity: vi.fn(), exportDistributionActivity: vi.fn() },
 }));
 
 const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=rust-systems";
@@ -324,5 +324,41 @@ describe("course management", () => {
     fireEvent.click(within(rust).getByRole("button", { name: /Version 1.1.0/ }));
     await waitFor(() => within(rust).getByRole("list", { name: "Release files" }));
     expect(await accessibilityViolations(view.container)).toEqual([]);
+  });
+});
+
+describe("deleting a whole course", () => {
+  it("asks for the title, says what goes, then deletes and refreshes the list", async () => {
+    vi.mocked(publisherApi.deleteCourse).mockImplementation(async () => {
+      vi.mocked(publisherApi.listDrafts).mockResolvedValue([draft({ draftId: "draft_new", courseId: "course_new", title: "Fresh Course", courseVersion: "0.1.0", revision: 0 })]);
+      vi.mocked(publisherApi.listReleases).mockResolvedValue(releases.filter((item) => item.courseId !== "course_rust"));
+    });
+    const { view } = renderList();
+    const card = await waitFor(() => view.getByRole("listitem", { name: "Rust Systems" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Delete course Rust Systems" }));
+    const dialog = within(card).getByRole("alertdialog", { name: "Delete “Rust Systems”?" });
+    expect(dialog.textContent).toContain("1 draft deleted.");
+    expect(dialog.textContent).toContain("2 releases stop seeding");
+    expect(dialog.textContent).toContain("Release records stay hidden");
+    const confirm = within(dialog).getByRole("button", { name: "Delete course permanently" });
+    expect(confirm.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText("Type Rust Systems to confirm"), { target: { value: "Rust" } });
+    expect(confirm.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText("Type Rust Systems to confirm"), { target: { value: "Rust Systems" } });
+    expect(await accessibilityViolations(dialog)).toEqual([]);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(publisherApi.deleteCourse).toHaveBeenCalledWith("course_rust", "Rust Systems"));
+    await waitFor(() => expect(view.queryByRole("listitem", { name: "Rust Systems" })).toBeNull());
+    expect(view.getByRole("listitem", { name: "Fresh Course" })).toBeTruthy();
+  });
+
+  it("shows the backend's refusal and keeps the course", async () => {
+    vi.mocked(publisherApi.deleteCourse).mockRejectedValue({ code: "course_delete_failed", message: "a draft of this course is being prepared for publishing" });
+    const { view } = renderList();
+    const card = await waitFor(() => view.getByRole("listitem", { name: "Go Basics" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Delete course Go Basics" }));
+    fireEvent.change(within(card).getByLabelText("Type Go Basics to confirm"), { target: { value: "Go Basics" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Delete course permanently" }));
+    await waitFor(() => expect(within(card).getByRole("alert").textContent).toContain("being prepared for publishing"));
   });
 });

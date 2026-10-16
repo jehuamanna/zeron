@@ -368,6 +368,18 @@ impl PublisherDrafts {
                 message: "must match the course version",
             });
         }
+        self.delete_archived_files(releases_root, &record)?;
+        self.storage.release(release_id)?.ok_or_else(unknown)
+    }
+
+    /// Delete an archived release's files, recorded before and after so a
+    /// crash is finished at the next start. The caller has checked consent.
+    pub(crate) fn delete_archived_files(
+        &mut self,
+        releases_root: &Path,
+        record: &ReleaseRecord,
+    ) -> Result<(), DraftServiceError> {
+        let release_id = record.release.release_id.as_str();
         self.storage
             .begin_release_file_deletion(release_id)?
             .ok_or(DraftServiceError::ReleaseNotArchived)?;
@@ -381,7 +393,7 @@ impl PublisherDrafts {
                 record.release.course_version
             ),
         );
-        self.storage.release(release_id)?.ok_or_else(unknown)
+        Ok(())
     }
 
     /// Finish file deletions interrupted by a crash. Call once at startup,

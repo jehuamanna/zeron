@@ -3,6 +3,7 @@
 mod activity;
 mod catalog;
 mod configuration;
+mod course_deletion;
 mod disk;
 mod drops;
 mod publish_jobs;
@@ -22,6 +23,7 @@ pub use configuration::{
     CONFIGURATION_FORMAT, CONFIGURATION_VERSION, MAX_CONFIGURATION_BYTES, NetworkConfiguration,
     PublisherConfiguration,
 };
+pub use course_deletion::{CourseDeletion, UNTITLED_COURSE};
 pub use course_publisher::PublishStage;
 use course_publisher::{
     DraftCourse, DraftLesson, DraftMetadata, DraftModule, DraftResource, DraftValidationIssue,

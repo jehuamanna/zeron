@@ -551,10 +551,74 @@ pub(crate) async fn list_releases(
 ) -> Result<Vec<ReleaseDto>, CommandError> {
     let drafts = Arc::clone(&state.drafts);
     run_blocking(move || {
-        lock_drafts(&drafts)?
+        let drafts = lock_drafts(&drafts)?;
+        let failed = |error| service_error("release_list_failed", error);
+        // Deleted courses keep their release rows but leave the list.
+        let hidden = drafts.hidden_courses().map_err(failed)?;
+        drafts
             .releases()
-            .map(|records| records.into_iter().map(ReleaseDto::from).collect())
-            .map_err(|error| service_error("release_list_failed", error))
+            .map(|records| {
+                records
+                    .into_iter()
+                    .filter(|record| !hidden.contains(&record.release.course_id))
+                    .map(ReleaseDto::from)
+                    .collect()
+            })
+            .map_err(failed)
+    })
+    .await
+}
+
+/// Delete a whole course: its drafts, its releases' seeding, catalog
+/// entries, and files. `confirmation` must be the course title, checked
+/// again in the backend (ADR 0016). Release rows stay hidden so a version is
+/// never reused.
+#[tauri::command]
+pub(crate) async fn delete_course(
+    course_id: String,
+    confirmation: String,
+    state: State<'_, PublishState>,
+) -> Result<(), CommandError> {
+    let failed = |error| service_error("course_delete_failed", error);
+    let (drafts, jobs) = (Arc::clone(&state.drafts), Arc::clone(&state.publish_jobs));
+    let (id, typed) = (course_id.clone(), confirmation.clone());
+    let in_use = run_blocking(move || {
+        let drafts = lock_drafts(&drafts)?;
+        let Some(title) = drafts.course_title(&id).map_err(failed)? else {
+            return Err(CommandError::new(
+                "course_not_found",
+                "the course is not in your list",
+            ));
+        };
+        if typed.trim() != title.trim() {
+            return Err(CommandError {
+                field: Some("confirmation".to_owned()),
+                ..CommandError::new("invalid_input", "type the course title to confirm")
+            });
+        }
+        if drafts
+            .course_draft_ids(&id)
+            .map_err(failed)?
+            .iter()
+            .any(|draft| jobs.draft_in_progress(draft))
+        {
+            return Err(failed(DraftServiceError::DraftBusy));
+        }
+        drafts.course_releases_in_use(&id).map_err(failed)
+    })
+    .await?;
+    // Seeding takes the drafts lock itself, so it runs without holding it.
+    if let Some(seeding) = state.seeding.clone() {
+        for release_id in in_use {
+            seeding.archive(&release_id).await.map_err(failed)?;
+        }
+    }
+    let (drafts, root) = (Arc::clone(&state.drafts), state.releases_root.clone());
+    run_blocking(move || {
+        lock_drafts(&drafts)?
+            .delete_course(&root, &course_id, &confirmation)
+            .map(|_| ())
+            .map_err(failed)
     })
     .await
 }
@@ -1205,10 +1269,18 @@ pub(crate) async fn validate_draft(
 }
 
 fn list(drafts: &PublisherDrafts) -> Result<Vec<DraftSummaryDto>, CommandError> {
+    let failed = |error| service_error("draft_list_failed", error);
+    let hidden = drafts.hidden_courses().map_err(failed)?;
     drafts
         .list()
-        .map(|summaries| summaries.into_iter().map(DraftSummaryDto::from).collect())
-        .map_err(|error| service_error("draft_list_failed", error))
+        .map(|summaries| {
+            summaries
+                .into_iter()
+                .filter(|draft| !hidden.contains(&draft.course_id))
+                .map(DraftSummaryDto::from)
+                .collect()
+        })
+        .map_err(failed)
 }
 
 fn create(drafts: &mut PublisherDrafts) -> Result<DraftDetailDto, CommandError> {

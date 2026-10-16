@@ -167,6 +167,16 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
 - **Notes and sketch panel:** it only appears once there is a lesson to take notes on.
 - **Player:** a Previous lesson button sits beside Next.
 
+### 14. Deleting a whole course from Publish (follow-up)
+
+- **Where:** each course in Publish → Your courses has a delete button. Its confirmation lists what goes (drafts, seeding releases, catalog entries, the size of release files) and enables only once the exact title is typed (ADR 0016).
+- **What happens:** the backend checks the title again, refuses while a draft is being prepared, stops seeding, then deletes drafts, archives and un-lists releases, and deletes their files with ADR 0006's crash-safe steps.
+- **Afterwards:**
+  - The course leaves the list. Its archived release records stay hidden, so versions are never reused.
+  - A new draft or release with the same course ID brings it back.
+  - The publisher database is at schema 7, and the activity log gains "Course deleted".
+- **Also:** publisher identity backups (`zeron-publisher-key*.json`) are ignored by git.
+
 ## Acceptance evidence
 
 - **Vitest:** all 176 tests pass, 3 of them new.

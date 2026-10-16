@@ -143,7 +143,7 @@ fn version_one_databases_migrate_without_losing_drafts() {
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 6);
+    assert_eq!(version, 7);
     let reopened = PublisherStorage::open(&database).unwrap();
     assert_eq!(reopened.releases().unwrap().len(), 1);
     // Windows cannot remove a file that is still open.
@@ -246,6 +246,7 @@ fn version_three_releases_migrate_with_their_files_present() {
             "ALTER TABLE releases DROP COLUMN files_state;
              DROP TABLE distribution_events;
              DROP TABLE catalog_releases;
+             DROP TABLE hidden_courses;
              PRAGMA user_version = 3;",
         )
         .unwrap();
@@ -434,4 +435,41 @@ fn releases_are_listed_in_the_catalog_only_once_confirmed() {
     assert_eq!(storage.catalog_releases().unwrap().len(), 2);
     assert!(storage.set_catalog_release("release_2", false).unwrap());
     assert_eq!(storage.catalog_releases().unwrap(), ["release_1"]);
+}
+
+#[test]
+fn deleted_courses_are_hidden_until_a_new_draft_or_release_brings_them_back() {
+    let scratch = std::env::temp_dir().join(format!("zeron-hidden-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).unwrap();
+    let mut storage = PublisherStorage::open(&scratch.join("publisher.sqlite3")).unwrap();
+    let first = release("release_1", "1.0.0");
+    let course_id = first.course_id.clone();
+    storage.insert_release(first).unwrap();
+
+    storage.hide_course(&course_id).unwrap();
+    storage.hide_course(&course_id).unwrap();
+    assert_eq!(
+        storage.hidden_courses().unwrap(),
+        std::slice::from_ref(&course_id)
+    );
+    assert_eq!(
+        storage.releases().unwrap().len(),
+        1,
+        "release history stays"
+    );
+    assert!(matches!(
+        storage.insert_release(release("release_again", "1.0.0")),
+        Err(PublisherStorageError::VersionAlreadyReleased { .. })
+    ));
+
+    storage
+        .insert_release(release("release_2", "1.1.0"))
+        .unwrap();
+    assert!(
+        storage.hidden_courses().unwrap().is_empty(),
+        "a new release shows the course again"
+    );
+    drop(storage);
+    std::fs::remove_dir_all(scratch).unwrap();
 }

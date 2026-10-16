@@ -819,3 +819,89 @@ fn a_release_without_its_files_cannot_start_a_draft() {
         ))
     ));
 }
+
+#[test]
+fn deleting_a_course_needs_its_title_and_removes_drafts_files_and_listings() {
+    let mut fixture = Fixture::new("delete-course");
+    let first = fixture.prepare();
+    let (older, _) = fixture
+        .jobs
+        .activate(&first, &mut fixture.drafts, &fixture.scratch.releases())
+        .unwrap();
+    fixture.set_version("1.1.0");
+    let second = fixture.prepare();
+    let (newer, _) = fixture
+        .jobs
+        .activate(&second, &mut fixture.drafts, &fixture.scratch.releases())
+        .unwrap();
+    let root = fixture.scratch.releases();
+    let course_id = newer.release.course_id.clone();
+    fixture
+        .drafts
+        .archive_release(&older.release.release_id)
+        .unwrap();
+    let older_dir = root.join(&older.release.release_id);
+    let newer_dir = root.join(&newer.release.release_id);
+
+    assert_eq!(
+        fixture.drafts.course_title(&course_id).unwrap().as_deref(),
+        Some("Released Course")
+    );
+    assert_eq!(
+        fixture.drafts.course_releases_in_use(&course_id).unwrap(),
+        std::slice::from_ref(&newer.release.release_id)
+    );
+    assert_eq!(
+        fixture.drafts.course_draft_ids(&course_id).unwrap(),
+        std::slice::from_ref(&fixture.draft_id)
+    );
+    for typed in ["", "Released", "released course", &course_id] {
+        assert!(matches!(
+            fixture.drafts.delete_course(&root, &course_id, typed),
+            Err(DraftServiceError::InvalidInput { ref field, .. }) if field == "confirmation"
+        ));
+    }
+    assert!(newer_dir.is_dir(), "a wrong title deletes nothing");
+    assert!(matches!(
+        fixture
+            .drafts
+            .delete_course(&root, "course_missing", "Released Course"),
+        Err(DraftServiceError::InvalidAttempt(_))
+    ));
+
+    let report = fixture
+        .drafts
+        .delete_course(&root, &course_id, " Released Course ")
+        .unwrap();
+    assert_eq!((report.drafts, report.releases), (1, 2));
+    assert!(
+        !older_dir.exists() && !newer_dir.exists(),
+        "every release's files are gone"
+    );
+    assert!(fixture.drafts.draft(&fixture.draft_id).unwrap().is_none());
+    let releases = fixture.drafts.releases().unwrap();
+    assert_eq!(
+        releases.len(),
+        2,
+        "history stays so versions are never reused"
+    );
+    assert!(
+        releases
+            .iter()
+            .all(|record| record.status == ReleaseStatus::Archived
+                && record.files == ReleaseFiles::Deleted)
+    );
+    assert_eq!(
+        fixture.drafts.hidden_courses().unwrap(),
+        std::slice::from_ref(&course_id)
+    );
+    assert_eq!(fixture.drafts.course_title(&course_id).unwrap(), None);
+    assert!(matches!(
+        fixture
+            .drafts
+            .delete_course(&root, &course_id, "Released Course"),
+        Err(DraftServiceError::InvalidAttempt(_))
+    ));
+    let activity = fixture.drafts.activity(None, 50).unwrap();
+    assert!(activity.iter().any(|event| event.kind == "course_deleted" && event.detail.contains("Released Course")));
+}

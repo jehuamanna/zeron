@@ -13,6 +13,7 @@ const kindLabels: Record<ActivityKind, string> = {
   seeding_failed: "Seeding failed",
   tracker_lists_refreshed: "Tracker lists",
   tracker_list_failed: "Tracker list failed",
+  course_deleted: "Course deleted",
 };
 
 const failureKinds: ReadonlySet<ActivityKind> = new Set(["seeding_failed", "tracker_list_failed"]);

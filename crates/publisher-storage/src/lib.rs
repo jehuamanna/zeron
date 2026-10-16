@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
 /// Schema version this build creates and understands.
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 /// Distribution events kept; older ones are pruned as new ones arrive.
 pub const MAX_DISTRIBUTION_EVENTS: u64 = 2_000;
 
@@ -258,6 +258,11 @@ impl PublisherStorage {
         }
         let updated_at = now()?;
         let snapshot = serde_json::to_vec(draft)?;
+        // A new draft of a deleted course brings it back to the list.
+        self.connection.execute(
+            "DELETE FROM hidden_courses WHERE course_id=?1",
+            [&draft.metadata.course_id],
+        )?;
         self.connection.execute(
             "INSERT INTO drafts (draft_id, course_id, course_version, title, revision, snapshot_json, updated_at)
              VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6)",
@@ -411,6 +416,10 @@ impl PublisherStorage {
     ) -> Result<ReleaseRecord, PublisherStorageError> {
         let published_at = now()?;
         let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM hidden_courses WHERE course_id=?1",
+            [&release.course_id],
+        )?;
         let exists: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM releases WHERE course_id=?1 AND course_version=?2)",
             params![release.course_id, release.course_version],
@@ -716,6 +725,35 @@ impl PublisherStorage {
         Ok(())
     }
 
+    /// Hide a deleted course from the course list. Its release rows stay,
+    /// so its versions are never reused; a new draft or release of the
+    /// course shows it again.
+    ///
+    /// # Errors
+    /// Clock or `SQLite` failures.
+    pub fn hide_course(&mut self, course_id: &str) -> Result<(), PublisherStorageError> {
+        let hidden_at = to_i64(now()?, "hide timestamp")?;
+        self.connection.execute(
+            "INSERT INTO hidden_courses (course_id, hidden_at) VALUES (?1, ?2)
+             ON CONFLICT(course_id) DO UPDATE SET hidden_at=excluded.hidden_at",
+            params![course_id, hidden_at],
+        )?;
+        Ok(())
+    }
+
+    /// Courses deleted from the course list.
+    ///
+    /// # Errors
+    /// `SQLite` failures.
+    pub fn hidden_courses(&self) -> Result<Vec<String>, PublisherStorageError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT course_id FROM hidden_courses ORDER BY course_id")?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect::<Result<_, _>>()
+            .map_err(PublisherStorageError::from)
+    }
+
     /// Confirm a release for the publisher's catalog, or take it out.
     /// Returns `false` for an unknown release.
     ///
@@ -921,16 +959,40 @@ fn migrate(connection: &mut Connection) -> Result<(), PublisherStorageError> {
         transaction.commit()?;
     }
     if found < 6 {
-        let transaction = connection.transaction()?;
-        transaction.execute_batch(
-            "CREATE TABLE catalog_releases (
-                release_id TEXT PRIMARY KEY NOT NULL REFERENCES releases (release_id),
-                confirmed_at INTEGER NOT NULL CHECK (confirmed_at >= 0)
-             );
-             PRAGMA user_version = 6;",
-        )?;
-        transaction.commit()?;
+        add_catalog_releases(connection)?;
     }
+    if found < 7 {
+        add_hidden_courses(connection)?;
+    }
+    Ok(())
+}
+
+/// Schema 6. Releases the publisher confirmed for the catalog.
+fn add_catalog_releases(connection: &mut Connection) -> Result<(), PublisherStorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "CREATE TABLE catalog_releases (
+            release_id TEXT PRIMARY KEY NOT NULL REFERENCES releases (release_id),
+            confirmed_at INTEGER NOT NULL CHECK (confirmed_at >= 0)
+         );
+         PRAGMA user_version = 6;",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Schema 7. Deleted courses leave the list but keep their release rows, so
+/// a version is never reused (ADR 0016).
+fn add_hidden_courses(connection: &mut Connection) -> Result<(), PublisherStorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "CREATE TABLE hidden_courses (
+            course_id TEXT PRIMARY KEY NOT NULL,
+            hidden_at INTEGER NOT NULL CHECK (hidden_at >= 0)
+         ) STRICT;
+         PRAGMA user_version = 7;",
+    )?;
+    transaction.commit()?;
     Ok(())
 }
 

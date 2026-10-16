@@ -76,10 +76,15 @@ export function CourseList({ onOpenDraft }: { onOpenDraft: (draftId: string) => 
     <ul aria-label="Courses" className="space-y-5">
       {courses.map((course) => (
         <li key={course.courseId} aria-label={course.title} className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
-          <h2 className="text-lg font-semibold">{course.title}</h2>
-          <p className="mt-1 text-xs text-slate-500">
-            {count(course.drafts.length, "draft")} · {count(course.releases.length, "release")}
-          </p>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold">{course.title}</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                {count(course.drafts.length, "draft")} · {count(course.releases.length, "release")}
+              </p>
+            </div>
+            <DeleteCourse course={course} />
+          </div>
 
           {course.drafts.length ? (
             <div className="mt-4 space-y-2">
@@ -191,5 +196,60 @@ function ReleaseRow({ release, currentVersion, seeding, onOpenDraft }: ReleaseRo
       </button>
       {open ? <ReleaseDetailsPanel id={detailsId} release={release} currentVersion={currentVersion} seeding={seeding} onOpenDraft={onOpenDraft} /> : null}
     </li>
+  );
+}
+
+/** Deletes a whole course after the publisher types its title (ADR 0016). */
+function DeleteCourse({ course }: { course: CourseGroup }) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState("");
+  const remove = useMutation({
+    mutationFn: () => publisherApi.deleteCourse(course.courseId, typed),
+    onSuccess: () => {
+      setConfirming(false);
+      for (const key of ["publisher-drafts", "publisher-releases", "distribution", "publisher-catalog", "distribution-activity"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
+  });
+  const inputId = `delete-course-${course.courseId}`;
+  const bytes = course.releases.filter((release) => release.files !== "deleted").reduce((sum, release) => sum + release.totalBytes, 0);
+  const live = course.releases.filter((release) => release.status !== "archived").length;
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        aria-label={`Delete course ${course.title}`}
+        title="Delete course"
+        onClick={() => setConfirming(true)}
+        className="grid size-8 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-red-400/10 hover:text-red-300"
+      >
+        <Trash2 size={16} />
+      </button>
+    );
+  }
+  return (
+    <div className="w-full max-w-md">
+      <ConfirmAction
+        title={`Delete “${course.title}”?`}
+        confirmLabel="Delete course permanently"
+        pendingLabel="Deleting…"
+        pending={remove.isPending}
+        confirmDisabled={typed.trim() !== course.title.trim()}
+        error={remove.isError ? (asCommandError(remove.error)?.message ?? "The course could not be deleted.") : null}
+        onConfirm={() => remove.mutate()}
+        onCancel={() => { remove.reset(); setTyped(""); setConfirming(false); }}
+      >
+        <ul className="list-disc space-y-1 pl-4">
+          <li>{count(course.drafts.length, "draft")} deleted.</li>
+          {live ? <li>{count(live, "release")} stop seeding; learners can no longer download from this computer.</li> : null}
+          {course.releases.length ? <li>Taken out of your catalog, and {formatBytes(bytes)} of release files deleted from this computer.</li> : null}
+        </ul>
+        <p className="mt-2">This cannot be undone. Release records stay hidden so a version number is never reused.</p>
+        <label htmlFor={inputId} className="mt-3 block text-xs font-semibold text-slate-300">Type {course.title} to confirm</label>
+        <input id={inputId} value={typed} onChange={(event) => setTyped(event.target.value)} autoComplete="off" spellCheck={false} className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-xs text-slate-100" />
+      </ConfirmAction>
+    </div>
   );
 }

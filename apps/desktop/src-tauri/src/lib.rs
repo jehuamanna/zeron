@@ -223,6 +223,7 @@ fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         publish::commands::create_draft,
         publish::commands::get_draft,
         publish::commands::delete_draft,
+        publish::commands::delete_course,
         publish::commands::update_draft_metadata,
         publish::commands::edit_draft_structure,
         publish::commands::choose_and_attach_resource,

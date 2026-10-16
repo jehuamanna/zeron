@@ -115,7 +115,7 @@ fn rejects_a_future_database_schema() {
         PublisherStorage::open(&database),
         Err(PublisherStorageError::FutureSchema {
             found: 99,
-            supported: 6
+            supported: 7
         })
     ));
     fs::remove_file(database).unwrap();

@@ -249,7 +249,8 @@ export type ActivityKind =
   | "seeding_stopped"
   | "seeding_failed"
   | "tracker_lists_refreshed"
-  | "tracker_list_failed";
+  | "tracker_list_failed"
+  | "course_deleted";
 
 /** One distribution event. `detail` had paths, addresses, and link secrets removed when it was recorded. */
 export interface ActivityEvent {
@@ -312,6 +313,12 @@ export const publisherApi = {
   listDrafts: () => invoke<DraftSummary[]>("list_drafts"),
   createDraft: () => invoke<DraftDetail>("create_draft"),
   getDraft: (draftId: string) => invoke<DraftDetail | null>("get_draft", { draftId }),
+  /**
+   * Deletes a whole course: every draft, its releases' seeding, catalog
+   * entries, and files. `confirmation` must be the course title. Release
+   * records stay hidden so versions are never reused.
+   */
+  deleteCourse: (courseId: string, confirmation: string) => invoke<void>("delete_course", { courseId, confirmation }),
   /** Deletes the draft only; its releases and source files are kept. */
   deleteDraft: (draftId: string, expectedRevision: number) => invoke<void>("delete_draft", { draftId, expectedRevision }),
   updateDraftMetadata: (draftId: string, expectedRevision: number, metadata: DraftMetadata) =>
