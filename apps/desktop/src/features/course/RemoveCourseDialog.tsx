@@ -4,11 +4,11 @@ import { useEffect } from "react";
 
 import { Button } from "../../components/ui/button";
 import { formatSize } from "../downloads/downloads";
-import { asCommandError, libraryApi } from "../../services/library";
+import { asCommandError, libraryApi, type CourseSource } from "../../services/library";
 
 /** Confirms removing a course, and says exactly what goes and what stays. */
 export function RemoveCourseDialog({ course, onClose, onRemoved }: {
-  course: { courseId: string; title: string; source: "local" | "torrent"; totalResourceBytes: number };
+  course: { courseId: string; title: string; source: CourseSource; totalResourceBytes: number };
   onClose: () => void;
   onRemoved: () => void;
 }) {
@@ -42,7 +42,9 @@ export function RemoveCourseDialog({ course, onClose, onRemoved }: {
               <p>
                 {course.source === "torrent"
                   ? `The course leaves your library, its download stops, and the ${formatSize(course.totalResourceBytes)} it may have downloaded is deleted from this computer.`
-                  : "The course leaves your library. The folder you imported it from is not touched."}
+                  : course.source === "youtube"
+                    ? "The video leaves your library. Zeron never downloaded it, so nothing is deleted from this computer."
+                    : "The course leaves your library. The folder you imported it from is not touched."}
               </p>
               <p className="text-fg-soft">Your notes, highlights, sketches, and progress stay. They come back if you import this course again, and the notebook still shows them.</p>
             </div>

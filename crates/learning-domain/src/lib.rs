@@ -1,5 +1,5 @@
 //! Learner-owned learning rules: progress, notes, drawings, transcripts, and
-//! moving annotations to a new course version. Pure logic
+//! moving annotations to a new course version, and YouTube links. Pure logic
 //! with no storage, engine, or UI dependency.
 
 mod drawings;
@@ -8,6 +8,7 @@ mod notes;
 mod progress;
 mod search;
 mod transcript;
+mod youtube;
 
 pub use drawings::{
     DrawingError, DrawingFile, MAX_FILE_DATA_URL_BYTES, MAX_FILES_PER_DRAWING, MAX_SCENE_BYTES,
@@ -23,3 +24,4 @@ pub use notes::{
 pub use progress::{COMPLETION_RATIO, CourseProgress, LessonStatus, watched_enough};
 pub use search::{fts_query, text_passages, transcript_passages};
 pub use transcript::{Cue, MAX_TRANSCRIPT_BYTES, TranscriptError, parse_transcript};
+pub use youtube::{MAX_LINK_BYTES, VideoId, YouTubeLink, YouTubeLinkError, clean_youtube_text};

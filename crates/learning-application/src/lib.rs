@@ -17,6 +17,7 @@ mod sharing;
 mod streaming;
 mod torrent_import;
 mod trust;
+mod youtube;
 
 pub use annotation_migration::{AnnotationMove, AnnotationMoveReport};
 pub use cache::{CacheError, CourseCache, RemovalReport};
@@ -33,8 +34,9 @@ pub use downloads::{Availability, DownloadScope};
 pub use drawings::{Drawing, DrawingSave};
 pub use learning_domain::{
     Anchor, CourseProgress, Cue, DrawingError, DrawingFile, HighlightColor, HighlightStyle,
-    LessonStatus, MAX_TRANSCRIPT_BYTES, MatchReason, NoteError, Region, TextHighlight,
-    TranscriptError, parse_transcript,
+    LessonStatus, MAX_LINK_BYTES as MAX_YOUTUBE_LINK_BYTES, MAX_TRANSCRIPT_BYTES, MatchReason,
+    NoteError, Region, TextHighlight, TranscriptError, VideoId, YouTubeLink, YouTubeLinkError,
+    parse_transcript,
 };
 pub use library::{
     CourseImportReceipt, CourseLibrary, LibraryError, LocalResource, TorrentResource,
@@ -57,3 +59,8 @@ pub use torrent_port::{
     TorrentSource, TransferState, TransferStats,
 };
 pub use trust::CoursePublisher;
+pub use youtube::{
+    MAX_YOUTUBE_TEXT_CHARS, VideoDetails, VideoLookupError, VideoMetadataSource,
+    YOUTUBE_MEDIA_TYPE, YouTubeAddError, YouTubeVideoCourse, look_up_youtube_video,
+    youtube_resource_id, youtube_video_course_id, youtube_video_manifest,
+};

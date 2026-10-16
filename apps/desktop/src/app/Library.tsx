@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, BookMarked, BookOpen, Download, HardDrive, Magnet, MoreHorizontal, Share2, Trash2 } from "lucide-react";
+import { ArrowRight, BookMarked, BookOpen, Download, HardDrive, Magnet, MonitorPlay, MoreHorizontal, Share2, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
@@ -11,6 +11,7 @@ import { LibraryNotebook } from "../features/notebook/LibraryNotebook";
 import { ProgressBar } from "../features/progress/progress";
 import { LibrarySearch } from "../features/search/LibrarySearch";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
+import { YouTubeAddPanel } from "../features/youtube/YouTubeAddPanel";
 import { asCommandError, libraryApi, type CourseSummary, type SearchResult } from "../services/library";
 import { useLibraryUi } from "../stores/library";
 
@@ -138,12 +139,13 @@ export function Library() {
               <BookOpen size={26} />
             </div>
             <h2 className="font-display text-2xl font-bold">Your library is ready</h2>
-            <p className="mx-auto mt-2 max-w-md text-muted">Import a verified local course folder, or add a course from a .torrent file or magnet link.</p>
+            <p className="mx-auto mt-2 max-w-md text-muted">Import a verified local course folder, add a course from a .torrent file or magnet link, or learn from a YouTube video.</p>
           </div>
         )}
 
         <section aria-label="Add courses" className="mt-10">
           <h2 className="mb-3 text-sm font-semibold text-muted">Add courses</h2>
+          <YouTubeAddPanel onOpen={selectCourse} />
           <TorrentImportPanel engine={readiness.data?.torrentImport ?? "pending"} />
           <CatalogsSection torrentsAvailable={readiness.data?.torrentImport === "ready"} />
         </section>
@@ -232,11 +234,11 @@ function CourseCardBody({ course, onOpen }: { course: CourseSummary; onOpen: () 
         style={{ background: cover(course.courseId) }}
       >
         <span className="grid size-9 place-items-center rounded-lg bg-[#fff]/15 backdrop-blur">
-          {course.source === "torrent" ? <Magnet size={17} /> : <HardDrive size={17} />}
+          {course.source === "torrent" ? <Magnet size={17} /> : course.source === "youtube" ? <MonitorPlay size={17} /> : <HardDrive size={17} />}
         </span>
         <div className="flex flex-col items-end gap-1">
           <span className="rounded-full bg-[#000]/30 px-2.5 py-0.5 text-[11px] font-medium backdrop-blur">
-            {course.source === "torrent" ? "Torrent · outline only" : "Local · verified"}
+            {course.source === "torrent" ? "Torrent · outline only" : course.source === "youtube" ? "Online · YouTube" : "Local · verified"}
           </span>
           {course.sharing ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-[#fff]/20 px-2.5 py-0.5 text-[11px] font-medium backdrop-blur"><Share2 size={10} /> Sharing</span>
@@ -255,7 +257,7 @@ function CourseCardBody({ course, onOpen }: { course: CourseSummary; onOpen: () 
         <div className="mt-auto pt-4">
           <div className="flex items-center justify-between border-t border-line pt-3 text-xs text-subtle">
             <span>Version {course.courseVersion}</span>
-            <span>{formatBytes(course.totalResourceBytes)}</span>
+            <span>{course.source === "youtube" ? "Streams from YouTube" : formatBytes(course.totalResourceBytes)}</span>
           </div>
         </div>
       </div>

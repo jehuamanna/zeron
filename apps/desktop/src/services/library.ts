@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-export type CourseSource = "local" | "torrent";
+export type CourseSource = "local" | "torrent" | "youtube";
+
+/** Media type of a lesson played by YouTube's own player (ADR 0018). */
+export const YOUTUBE_MEDIA_TYPE = "video/x-youtube";
 
 export type NetworkProfile = "loopback" | "local_network" | "internet";
 
@@ -345,6 +348,7 @@ export const libraryApi = {
   registerMedia: (courseId: string, resourceId: string) =>
     invoke<MediaRegistration>("register_media", { courseId, resourceId }),
   chooseAndImport: () => invoke<ImportReceipt | null>("choose_and_import_course"),
+  addYouTubeVideo: (link: string) => invoke<ImportReceipt>("add_youtube_video", { link }),
   chooseTorrentFile: () => invoke<TorrentImport | null>("choose_torrent_file_and_import"),
   importMagnet: (uri: string) => invoke<TorrentImport>("import_magnet", { uri }),
   getTorrentImport: (jobId: string) => invoke<TorrentImport | null>("get_torrent_import", { jobId }),

@@ -9,6 +9,7 @@ mod media;
 mod navigation;
 mod publish;
 mod updates;
+mod youtube;
 
 use std::{
     path::PathBuf,
@@ -172,6 +173,7 @@ fn ipc_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         commands::get_course_detail,
         commands::register_media,
         commands::choose_and_import_course,
+        commands::add_youtube_video,
         commands::choose_torrent_file_and_import,
         commands::import_magnet,
         commands::get_torrent_import,

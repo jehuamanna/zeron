@@ -71,6 +71,16 @@ pub struct FileResource {
     pub byte_length: u64,
 }
 
+/// A fixed HTML page served under its own Content Security Policy, such as
+/// the frame that hosts a YouTube player (ADR 0018).
+#[derive(Debug, Clone)]
+pub struct PageResource {
+    /// The complete page.
+    pub html: String,
+    /// The page's `Content-Security-Policy` header value.
+    pub content_security_policy: String,
+}
+
 /// Browser-safe result of registering a resource.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MediaRegistration {
@@ -130,6 +140,10 @@ impl Default for GatewayLimits {
 enum Origin {
     File(PathBuf),
     Source(Arc<dyn MediaSource>),
+    Page {
+        html: Arc<str>,
+        content_security_policy: HeaderValue,
+    },
 }
 
 #[derive(Clone)]
@@ -351,6 +365,56 @@ impl MediaGateway {
         )
     }
 
+    /// Register a fixed HTML page and return an opaque capability URL. The
+    /// page is served whole with its own CSP, `nosniff`, no caching, and a
+    /// referrer policy that sends other sites only the gateway's origin,
+    /// never the capability path.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a CSP that is not a valid header value, random failures, and
+    /// a full registry.
+    pub fn register_page(&self, page: PageResource) -> Result<MediaRegistration, GatewayError> {
+        let content_security_policy = HeaderValue::from_str(&page.content_security_policy)
+            .map_err(|_| GatewayError::ResourceChanged)?;
+        let byte_length = page.html.len() as u64;
+        self.insert(
+            Origin::Page {
+                html: Arc::from(page.html),
+                content_security_policy,
+            },
+            "text/html; charset=utf-8".to_owned(),
+            byte_length,
+        )
+    }
+
+    /// Whether `url` is the capability URL of a page registered here, so a
+    /// webview may load it in a frame. Query and fragment are ignored.
+    #[must_use]
+    pub fn is_page_url(&self, url: &str) -> bool {
+        let prefix = format!(
+            "{}://{}:{}/v1/media/",
+            self.scheme,
+            self.address.ip(),
+            self.address.port()
+        );
+        let Some(rest) = url.strip_prefix(&prefix) else {
+            return false;
+        };
+        let rest = rest.split(['#', '?']).next().unwrap_or_default();
+        let Some((handle, secret)) = rest.split_once('/') else {
+            return false;
+        };
+        if !constant_time_equal(secret.as_bytes(), self.state.secret.as_bytes()) {
+            return false;
+        }
+        self.state.resources.read().is_ok_and(|resources| {
+            resources
+                .get(handle)
+                .is_some_and(|resource| matches!(resource.origin, Origin::Page { .. }))
+        })
+    }
+
     /// Revoke one capability URL and cancel its in-flight responses.
     pub fn revoke(&self, url: &str) {
         let Some(handle) = url
@@ -483,6 +547,13 @@ async fn serve_media(
     let Some(resource) = resource else {
         return empty_response(StatusCode::NOT_FOUND);
     };
+    if let Origin::Page {
+        html,
+        content_security_policy,
+    } = &resource.origin
+    {
+        return serve_page(html, content_security_policy, head_only);
+    }
     let Ok(range) = parse_range(headers.get(header::RANGE), resource.byte_length) else {
         return range_not_satisfiable(resource.byte_length);
     };
@@ -523,6 +594,8 @@ async fn serve_media(
             Ok(reader) => reader,
             Err(_) => return empty_response(StatusCode::SERVICE_UNAVAILABLE),
         },
+        // Served whole above.
+        Origin::Page { .. } => return empty_response(StatusCode::INTERNAL_SERVER_ERROR),
     };
     if reader.seek(SeekFrom::Start(start)).await.is_err() {
         return empty_response(StatusCode::INTERNAL_SERVER_ERROR);
@@ -537,6 +610,26 @@ async fn serve_media(
         });
     builder
         .body(Body::from_stream(stream))
+        .unwrap_or_else(|_| empty_response(StatusCode::INTERNAL_SERVER_ERROR))
+}
+
+/// A page is small and fixed, so it is served whole and ignores ranges.
+fn serve_page(html: &Arc<str>, content_security_policy: &HeaderValue, head_only: bool) -> Response {
+    let builder = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::CONTENT_LENGTH, html.len())
+        .header(header::CONTENT_SECURITY_POLICY, content_security_policy)
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(header::REFERRER_POLICY, "strict-origin")
+        .header(header::CACHE_CONTROL, "no-store");
+    let body = if head_only {
+        Body::empty()
+    } else {
+        Body::from(html.to_string())
+    };
+    builder
+        .body(body)
         .unwrap_or_else(|_| empty_response(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
@@ -701,6 +794,75 @@ mod tests {
     fn binds_only_ipv4_loopback() {
         let address = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), 42);
         assert!(address.ip().is_loopback());
+    }
+
+    #[tokio::test]
+    async fn pages_are_served_whole_with_their_policy_and_can_be_revoked() {
+        let gateway = MediaGateway::start(GatewayLimits::default()).await.unwrap();
+        let page = gateway
+            .register_page(PageResource {
+                html: "<!doctype html><p>player</p>".to_owned(),
+                content_security_policy: "default-src 'none'".to_owned(),
+            })
+            .unwrap();
+        assert_eq!(page.media_type, "text/html; charset=utf-8");
+        assert!(gateway.is_page_url(&page.url));
+        assert!(gateway.is_page_url(&format!("{}#v=M7lc1UVf-VE", page.url)));
+        assert!(!gateway.is_page_url(&format!("{}x", page.url)));
+        assert!(!gateway.is_page_url(&page.url.replace("127.0.0.1", "127.0.0.2")));
+        assert!(!gateway.is_page_url("https://www.youtube.com/"));
+        let path = page.url.split_once("127.0.0.1").unwrap().1;
+        let path = &path[path.find('/').unwrap()..];
+        let app = router(gateway.state.clone(), Duration::from_secs(1));
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(path)
+                    .header(header::RANGE, "bytes=2-5")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let headers = response.headers();
+        assert_eq!(
+            headers[header::CONTENT_SECURITY_POLICY],
+            "default-src 'none'"
+        );
+        assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        assert_eq!(headers[header::REFERRER_POLICY], "strict-origin");
+        assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+        assert_eq!(
+            to_bytes(response.into_body(), 1024).await.unwrap(),
+            "<!doctype html><p>player</p>"
+        );
+
+        let wrong_secret = path.rsplit_once('/').unwrap().0.to_owned() + "/wrong";
+        let refused = app
+            .clone()
+            .oneshot(Request::get(wrong_secret).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+
+        gateway.revoke(&page.url);
+        assert!(!gateway.is_page_url(&page.url));
+        let gone = app
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+        assert!(
+            gateway
+                .register_page(PageResource {
+                    html: String::new(),
+                    content_security_policy: "bad\nheader".to_owned(),
+                })
+                .is_err()
+        );
+        gateway.wait_for_shutdown().await;
     }
 
     #[tokio::test]

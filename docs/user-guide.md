@@ -14,6 +14,11 @@ Courses travel as BitTorrent packages, so they work offline and need no server.
 - **From a folder:** "Import local course" verifies every file against the course's `course.json` before the course appears.
 - **From a magnet link or `.torrent` file:** use the torrent panel. Zeron downloads only `course.json` and the publisher's signature first, shows the course outline, and downloads lessons as you open them.
 - **From a catalog:** Library → Catalogs → "Add catalog file…" or "Follow address…". A catalog is a signed list of a publisher's courses. Choose Import on any course, or Update when a newer version is listed.
+- **From YouTube:** paste a video link under "Learn from a YouTube video" and choose Add video.
+  - The video plays in YouTube's own player and needs an internet connection. Zeron never downloads it.
+  - Notes at a moment, sketches, progress, and search work as for any course, and stay on this computer.
+  - Playlists are not supported yet.
+  - Some owners do not allow their videos to be played outside YouTube. Zeron tells you when that is the case.
 
 ### Who published a course
 

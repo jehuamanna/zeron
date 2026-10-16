@@ -3,13 +3,14 @@ import { BookMarked, ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, Maxim
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMediaQuery } from "../../lib/useMediaQuery";
-import { asCommandError, libraryApi, type NoteAnchor, type Region } from "../../services/library";
+import { asCommandError, libraryApi, YOUTUBE_MEDIA_TYPE, type NoteAnchor, type Region } from "../../services/library";
 import { useWorkspace, type SideTab } from "../../stores/workspace";
 import { DocumentViewer } from "../documents/DocumentViewer";
 import { percentOf, useCourseDownloads } from "../downloads/downloads";
 import { DrawingPanel } from "../drawings/DrawingPanel";
 import { NotesPanel, type NoteRequest } from "../notes/NotesPanel";
 import { LessonPlayer, type PlayerHandle } from "../player/LessonPlayer";
+import { YouTubePlayer } from "../player/YouTubePlayer";
 import { MarkCompleteButton, useCourseProgress } from "../progress/progress";
 import { TranscriptPanel } from "../transcripts/TranscriptPanel";
 import { CourseContents, type Showing } from "./CourseContents";
@@ -27,7 +28,7 @@ const TextReader = lazy(() => import("../reader/TextReader").then((module) => ({
 type Stage =
   | { kind: "overview" }
   | { kind: "notebook" }
-  | { kind: "video"; resourceId: string; url: string; startAt: number | null }
+  | { kind: "video"; resourceId: string; url: string; startAt: number | null; youtube: boolean }
   | { kind: "pdf"; resourceId: string; page: number; region: Region | null }
   | { kind: "text"; resourceId: string };
 
@@ -118,7 +119,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
     onSuccess: ({ registration, position }, resourceId) => {
       const startAt = pendingSeek.current ?? position;
       pendingSeek.current = null;
-      setStage({ kind: "video", resourceId, url: registration.url, startAt });
+      setStage({ kind: "video", resourceId, url: registration.url, startAt, youtube: registration.mediaType === YOUTUBE_MEDIA_TYPE });
       setActiveLessonId(lessonOf(resourceId)?.id ?? null);
     },
   });
@@ -227,11 +228,12 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
   const transcript = useQuery({
     queryKey: ["transcript", courseId, stage.kind === "video" ? stage.resourceId : null],
     queryFn: () => libraryApi.transcript(courseId, stage.kind === "video" ? stage.resourceId : ""),
-    enabled: stage.kind === "video",
+    enabled: stage.kind === "video" && !stage.youtube,
     staleTime: Infinity,
   });
 
-  const sideTabs: SideTab[] = stage.kind === "video" ? ["notes", "sketch", "transcript"] : ["notes", "sketch"];
+  // YouTube lessons show YouTube's own captions; Zeron has no transcript for them.
+  const sideTabs: SideTab[] = stage.kind === "video" && !stage.youtube ? ["notes", "sketch", "transcript"] : ["notes", "sketch"];
   const sideTab = sideTabs.includes(layout.sideTab) ? layout.sideTab : "notes";
 
   // Keyboard shortcuts, ignored while typing.
@@ -537,6 +539,23 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
                   <TextReader key={stage.resourceId} courseId={courseId} resourceId={stage.resourceId} title={active?.lesson.title ?? "Lesson"} />
                 </Suspense>
               </div>
+            ) : stage.kind === "video" && stage.youtube ? (
+              <YouTubePlayer
+                handle={player}
+                key={stage.url}
+                url={stage.url}
+                onRetry={() => openMedia.mutate(stage.resourceId)}
+                startAt={stage.startAt}
+                onPosition={savePosition(stage.resourceId)}
+                onAddNote={(seconds) => requestNote({ kind: "videoTime", resourceId: stage.resourceId, seconds })}
+                markers={(videoNotes.data ?? []).flatMap((note) =>
+                  note.anchor.kind === "videoTime" && note.anchor.resourceId === stage.resourceId ? [{ seconds: note.anchor.seconds, label: note.text }] : [],
+                )}
+                upNext={next ? { title: next.lesson.title } : null}
+                onNext={() => next && openLesson(next.lesson)}
+                previous={previous ? { title: previous.lesson.title } : null}
+                onPrevious={() => previous && openLesson(previous.lesson)}
+              />
             ) : stage.kind === "video" ? (
               <LessonPlayer
                 handle={player}
@@ -564,7 +583,9 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
           </div>
           {openMedia.isError ? (
             <p role="alert" className="shrink-0 px-4 pb-3 text-sm text-red-300">
-              {torrent ? (asCommandError(openMedia.error)?.message ?? "This lesson could not be streamed.") : "This verified media file is no longer available."}
+              {torrent || course.source === "youtube"
+                ? (asCommandError(openMedia.error)?.message ?? "This lesson could not be opened.")
+                : "This verified media file is no longer available."}
             </p>
           ) : openMedia.isPending ? (
             <p role="status" className="shrink-0 px-4 pb-3 text-xs text-muted">Opening the lesson…</p>
@@ -588,7 +609,7 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
           course={{
             courseId,
             title: course.title,
-            source: torrent ? "torrent" : "local",
+            source: course.source,
             totalResourceBytes: placed.reduce((sum, item) => sum + item.lesson.resources.reduce((bytes, resource) => bytes + resource.byteLength, 0), 0),
           }}
           onClose={() => setRemoving(false)}

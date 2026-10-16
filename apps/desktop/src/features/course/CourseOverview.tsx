@@ -1,4 +1,4 @@
-import { BookOpen, ChevronRight, Clock, Layers, Magnet, Play } from "lucide-react";
+import { BookOpen, ChevronRight, Clock, Layers, Magnet, MonitorPlay, Play } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -50,7 +50,16 @@ export function CourseOverview({ course, placed, progress, next, onStart, onOpen
 
         {/* Who published it, where it comes from, and sharing: one quiet row. */}
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <PublisherBadge compact courseId={course.courseId} publisher={course.publisher} />
+          {course.source === "youtube" ? (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-medium text-muted"
+              title="Plays in YouTube's own player while you are online. Nothing is downloaded; your notes, sketches, and progress stay on this computer."
+            >
+              <MonitorPlay size={13} /> Online · YouTube
+            </span>
+          ) : (
+            <PublisherBadge compact courseId={course.courseId} publisher={course.publisher} />
+          )}
           {torrent ? (
             <span
               className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-medium text-muted"

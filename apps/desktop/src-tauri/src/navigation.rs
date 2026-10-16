@@ -2,15 +2,25 @@
 //!
 //! Embedded tools such as the drawing editor carry links to web sites. The
 //! learner window must never become a browser for remote content, so any
-//! top-level navigation away from the bundled app is refused.
+//! navigation away from the bundled app is refused. On Linux this applies to
+//! frames too, so the only exceptions are the YouTube player (ADR 0018): the
+//! media gateway's registered player page and YouTube's embed frame in it.
 
-use tauri::{Runtime, Url, plugin::TauriPlugin};
+use tauri::{Manager as _, Runtime, Url, plugin::TauriPlugin};
+
+use crate::{AppState, youtube};
 
 /// A plugin refusing navigation to anything but the bundled app (and the
-/// Vite dev server in debug builds).
+/// Vite dev server in debug builds) and the YouTube player's frames.
 pub(crate) fn guard<R: Runtime>() -> TauriPlugin<R> {
     tauri::plugin::Builder::new("navigation-guard")
-        .on_navigation(|_, url| is_app_page(url))
+        .on_navigation(|webview, url| {
+            is_app_page(url)
+                || youtube::is_embed_frame(url)
+                || webview
+                    .try_state::<AppState>()
+                    .is_some_and(|state| state.media_gateway.is_page_url(url.as_str()))
+        })
         .build()
 }
 

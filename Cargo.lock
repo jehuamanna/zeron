@@ -2717,6 +2717,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "url",
 ]
 
 [[package]]
@@ -7189,6 +7190,7 @@ dependencies = [
 name = "zeron-desktop"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "course-format",
  "course-publisher",
  "course-signing",
@@ -7205,6 +7207,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

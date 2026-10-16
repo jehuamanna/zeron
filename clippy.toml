@@ -1,0 +1,2 @@
+# Product names that clippy::doc_markdown would otherwise ask to backtick.
+doc-valid-idents = ["YouTube", ".."]

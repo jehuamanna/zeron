@@ -14,6 +14,7 @@ vi.mock("../services/library", async (importOriginal) => ({
     readiness: vi.fn(),
     list: vi.fn(),
     chooseAndImport: vi.fn(),
+    addYouTubeVideo: vi.fn(),
     detail: vi.fn(),
     registerMedia: vi.fn(),
     chooseTorrentFile: vi.fn(),
@@ -618,5 +619,73 @@ describe("learner library", () => {
     fireEvent.click(view.getByRole("button", { name: "Notebook" }));
     await waitFor(() => expect(view.container.querySelector("video")).toBeTruthy());
     expect(libraryApi.registerMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds a YouTube video from a link and opens it in YouTube's player with notes", async () => {
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    vi.mocked(libraryApi.list).mockResolvedValue([]);
+    vi.mocked(libraryApi.addYouTubeVideo)
+      .mockRejectedValueOnce({ code: "youtube_not_embeddable", message: "the owner of this video does not allow it to be played outside YouTube" })
+      .mockResolvedValueOnce({ courseId: "youtube-video-M7lc1UVf-VE", courseVersion: "1.0.0", title: "Embedded player", verifiedResourceCount: 1, totalResourceBytes: 0 });
+    const view = renderApp();
+    const input = await view.findByLabelText("YouTube video link");
+
+    fireEvent.change(input, { target: { value: "https://youtu.be/M7lc1UVf-VE" } });
+    fireEvent.click(view.getByRole("button", { name: "Add video" }));
+    await waitFor(() => expect(view.getByRole("alert").textContent).toContain("does not allow it to be played outside YouTube"));
+
+    const course = {
+      courseId: "youtube-video-M7lc1UVf-VE",
+      courseVersion: "1.0.0",
+      title: "Embedded player",
+      publisherName: "Google for Developers",
+      language: "und",
+      totalResourceBytes: 0,
+      importedAtUnixSeconds: 1,
+      source: "youtube" as const,
+      torrentInfoHash: null,
+      sharing: false,
+      completedLessons: 0,
+      totalLessons: 1,
+    };
+    vi.mocked(libraryApi.list).mockResolvedValue([course]);
+    fireEvent.change(input, { target: { value: "https://youtu.be/M7lc1UVf-VE" } });
+    fireEvent.click(view.getByRole("button", { name: "Add video" }));
+    await waitFor(() => expect(view.container.textContent).toContain("Added “Embedded player”."));
+    expect(libraryApi.addYouTubeVideo).toHaveBeenLastCalledWith("https://youtu.be/M7lc1UVf-VE");
+    await waitFor(() => expect(view.container.textContent).toContain("Online · YouTube"));
+    expect(view.container.textContent).toContain("Streams from YouTube");
+
+    vi.mocked(libraryApi.detail).mockResolvedValue({
+      courseId: course.courseId,
+      courseVersion: "1.0.0",
+      title: "Embedded player",
+      description: null,
+      publisherName: "Google for Developers",
+      source: "youtube",
+      torrentInfoHash: null,
+      publisher: { status: "unsigned", fingerprint: null, publisherId: null, signedAtUnixSeconds: null },
+      modules: [
+        {
+          id: "youtube",
+          title: "Video",
+          lessons: [
+            {
+              id: "lesson-M7lc1UVf-VE",
+              title: "Embedded player",
+              resources: [{ id: "video-M7lc1UVf-VE", kind: "video", mediaType: "video/x-youtube", byteLength: 0, durationSeconds: null }],
+            },
+          ],
+        },
+      ],
+    });
+    vi.mocked(libraryApi.registerMedia).mockResolvedValue({ url: "https://127.0.0.1:4433/v1/media/h/s#v=M7lc1UVf-VE", mediaType: "video/x-youtube", byteLength: 0 });
+    fireEvent.click(view.getByRole("button", { name: "Open it" }));
+    await waitFor(() => expect(view.container.textContent).toContain("Online · YouTube"));
+    fireEvent.click(await view.findByRole("button", { name: /Start|Continue/ }));
+    const frame = await view.findByTitle("YouTube video player");
+    expect(frame.getAttribute("src")).toBe("https://127.0.0.1:4433/v1/media/h/s#v=M7lc1UVf-VE");
+    expect(view.container.querySelector("video")).toBeNull();
+    expect(view.getByRole("button", { name: /Note at 0:00/ })).toBeTruthy();
   });
 });

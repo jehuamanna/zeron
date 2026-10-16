@@ -14,10 +14,10 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
 /// Schema version this build creates and understands.
-pub const CURRENT_SCHEMA_VERSION: i64 = 15;
+pub const CURRENT_SCHEMA_VERSION: i64 = 16;
 /// Previous versions of one course whose manifests are kept for moving annotations.
 pub const KEPT_PREVIOUS_MANIFESTS: u32 = 5;
-const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0)";
+const SUMMARY_COLUMNS: &str = "c.course_id, c.course_version, c.title, c.publisher_name, c.language, c.total_resource_bytes, c.imported_at, t.info_hash, coalesce(t.sharing, 0), EXISTS(SELECT 1 FROM course_youtube_videos AS y WHERE y.course_id = c.course_id)";
 
 /// What removing a course left for the caller to clean up.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,6 +240,17 @@ pub struct StoredCourseSummary {
     pub torrent_info_hash: Option<String>,
     /// Whether the learner chose to share this torrent-sourced course.
     pub sharing: bool,
+    /// Whether the course plays its videos from YouTube (ADR 0018).
+    pub youtube: bool,
+}
+
+/// One lesson video of a YouTube course (ADR 0018).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct YouTubeVideo {
+    /// Manifest resource ID of the video.
+    pub resource_id: String,
+    /// YouTube's 11-character video ID.
+    pub video_id: String,
 }
 
 /// Backend-only description of a torrent-sourced course for engine restore.
@@ -288,6 +299,9 @@ pub enum StorageError {
     /// The system clock cannot produce a Unix timestamp.
     #[error("system clock is before the Unix epoch")]
     InvalidSystemClock,
+    /// Another course in the library already uses this course ID.
+    #[error("another course in the library already uses this course ID")]
+    CourseIdTaken,
 }
 
 /// An opened and migrated `SQLite` database.
@@ -1636,6 +1650,100 @@ impl Storage {
         torrent: Option<(&str, &[u8])>,
         trust: &CourseTrust,
     ) -> Result<StoredCourseSummary, StorageError> {
+        self.save_any_course(
+            manifest,
+            total_resource_bytes,
+            CourseSource::Package {
+                root: package_root,
+                torrent,
+            },
+            imported_at,
+            trust,
+        )
+    }
+
+    /// Persist a course Zeron built from a YouTube link (ADR 0018). It has
+    /// no package location or torrent; `videos` says which YouTube video
+    /// each video resource plays. Adding it again refreshes the snapshot and
+    /// brings back a removed course with the learner's kept work.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::CourseIdTaken`] when a local or torrent course
+    /// in the library uses the same course ID, else as
+    /// [`Self::save_imported_course`].
+    pub fn save_youtube_course(
+        &mut self,
+        manifest: &CourseManifest,
+        videos: &[YouTubeVideo],
+    ) -> Result<StoredCourseSummary, StorageError> {
+        let taken: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM courses AS c JOIN course_locations AS l ON l.course_id = c.course_id
+             WHERE c.course_id = ?1 AND c.removed_at IS NULL)",
+            [&manifest.course_id],
+            |row| row.get(0),
+        )?;
+        if taken {
+            return Err(StorageError::CourseIdTaken);
+        }
+        let imported_at = unix_now_u64()?;
+        self.save_any_course(
+            manifest,
+            0,
+            CourseSource::YouTube(videos),
+            imported_at,
+            &CourseTrust::default(),
+        )
+    }
+
+    /// The YouTube video a resource of a YouTube course in the library plays.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn youtube_video(
+        &self,
+        course_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<String>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT y.video_id FROM course_youtube_videos AS y JOIN courses AS c ON c.course_id = y.course_id
+                 WHERE y.course_id = ?1 AND y.resource_id = ?2 AND c.removed_at IS NULL",
+                [course_id, resource_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    /// Whether a course, in the library or removed, plays from YouTube.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] for query failures.
+    pub fn course_is_youtube(&self, course_id: &str) -> Result<bool, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM course_youtube_videos WHERE course_id = ?1)",
+                [course_id],
+                |row| row.get(0),
+            )
+            .map_err(StorageError::from)
+    }
+
+    fn save_any_course(
+        &mut self,
+        manifest: &CourseManifest,
+        total_resource_bytes: u64,
+        source: CourseSource<'_>,
+        imported_at: u64,
+        trust: &CourseTrust,
+    ) -> Result<StoredCourseSummary, StorageError> {
+        let (torrent, youtube) = match source {
+            CourseSource::Package { torrent, .. } => (torrent, false),
+            CourseSource::YouTube(videos) => (None, !videos.is_empty()),
+        };
         let total_bytes = sqlite_integer(total_resource_bytes, "total resource bytes")?;
         let imported_at_i64 = sqlite_integer(imported_at, "import timestamp")?;
         let manifest_json = serde_json::to_vec(manifest)?;
@@ -1689,31 +1797,7 @@ impl Storage {
                 ],
             )?;
         }
-        let (path_encoding, path_bytes) = encode_path(package_root);
-        tx.execute(
-            "INSERT INTO course_locations (course_id, path_encoding, path_bytes, verified_at)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(course_id) DO UPDATE SET
-               path_encoding=excluded.path_encoding,
-               path_bytes=excluded.path_bytes,
-               verified_at=excluded.verified_at",
-            params![
-                manifest.course_id,
-                path_encoding,
-                path_bytes,
-                imported_at_i64
-            ],
-        )?;
-        tx.execute(
-            "DELETE FROM course_torrent_sources WHERE course_id = ?1",
-            [&manifest.course_id],
-        )?;
-        if let Some((info_hash, metainfo)) = torrent {
-            tx.execute(
-                "INSERT INTO course_torrent_sources (course_id, info_hash, metainfo) VALUES (?1, ?2, ?3)",
-                params![manifest.course_id, info_hash, metainfo],
-            )?;
-        }
+        write_course_source(&tx, &manifest.course_id, source, imported_at_i64)?;
         refresh_search_row(&tx, manifest)?;
         index_course_outline(&tx, manifest)?;
         record_trust(&tx, &manifest.course_id, trust, imported_at_i64)?;
@@ -1730,8 +1814,73 @@ impl Storage {
             torrent_info_hash: torrent.map(|(info_hash, _)| info_hash.to_owned()),
             // Every import replaces the source row, so sharing starts off again.
             sharing: false,
+            youtube,
         })
     }
+}
+
+/// Record where a course's content comes from: its package location and
+/// torrent, or its YouTube videos. Rows of the other kind are removed.
+fn write_course_source(
+    tx: &Transaction<'_>,
+    course_id: &str,
+    source: CourseSource<'_>,
+    imported_at: i64,
+) -> Result<(), StorageError> {
+    let (package_root, torrent, videos) = match source {
+        CourseSource::Package { root, torrent } => (Some(root), torrent, &[][..]),
+        CourseSource::YouTube(videos) => (None, None, videos),
+    };
+    if let Some(package_root) = package_root {
+        let (path_encoding, path_bytes) = encode_path(package_root);
+        tx.execute(
+            "INSERT INTO course_locations (course_id, path_encoding, path_bytes, verified_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(course_id) DO UPDATE SET
+               path_encoding=excluded.path_encoding,
+               path_bytes=excluded.path_bytes,
+               verified_at=excluded.verified_at",
+            params![course_id, path_encoding, path_bytes, imported_at],
+        )?;
+    } else {
+        tx.execute(
+            "DELETE FROM course_locations WHERE course_id = ?1",
+            [course_id],
+        )?;
+    }
+    tx.execute(
+        "DELETE FROM course_youtube_videos WHERE course_id = ?1",
+        [course_id],
+    )?;
+    for video in videos {
+        tx.execute(
+            "INSERT INTO course_youtube_videos (course_id, resource_id, video_id) VALUES (?1, ?2, ?3)",
+            params![course_id, video.resource_id, video.video_id],
+        )?;
+    }
+    tx.execute(
+        "DELETE FROM course_torrent_sources WHERE course_id = ?1",
+        [course_id],
+    )?;
+    if let Some((info_hash, metainfo)) = torrent {
+        tx.execute(
+            "INSERT INTO course_torrent_sources (course_id, info_hash, metainfo) VALUES (?1, ?2, ?3)",
+            params![course_id, info_hash, metainfo],
+        )?;
+    }
+    Ok(())
+}
+
+/// Where a saved course's content comes from.
+#[derive(Clone, Copy)]
+enum CourseSource<'a> {
+    /// A verified package folder, and the torrent it came from, if any.
+    Package {
+        root: &'a Path,
+        torrent: Option<(&'a str, &'a [u8])>,
+    },
+    /// YouTube videos, one per video resource (ADR 0018).
+    YouTube(&'a [YouTubeVideo]),
 }
 
 /// Replace the course's recorded signature, and pin it when it has no pin.
@@ -2022,7 +2171,7 @@ fn add_drawings(connection: &mut Connection) -> Result<(), StorageError> {
 }
 
 /// Migrations from schema 4 on, by the version they start from.
-const TABLE_MIGRATIONS: [(i64, Migration); 11] = [
+const TABLE_MIGRATIONS: [(i64, Migration); 12] = [
     (4, add_playback_positions),
     (5, add_download_commitments),
     (6, add_pause_flag),
@@ -2034,7 +2183,25 @@ const TABLE_MIGRATIONS: [(i64, Migration); 11] = [
     (12, add_course_trust),
     (13, add_catalogs),
     (14, add_course_removal),
+    (15, add_youtube_videos),
 ];
+
+/// Schema 16. Which YouTube video each video resource of a YouTube course
+/// plays (ADR 0018).
+fn add_youtube_videos(connection: &mut Connection) -> Result<(), StorageError> {
+    let tx = connection.transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE course_youtube_videos (
+           course_id TEXT NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+           resource_id TEXT NOT NULL,
+           video_id TEXT NOT NULL CHECK(length(video_id) = 11),
+           PRIMARY KEY(course_id, resource_id)
+         ) STRICT;
+         PRAGMA user_version = 16;",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
 
 /// Schema 15. A removed course keeps its row, so the learner's notes,
 /// drawings, and progress, which cascade from it, survive (ADR 0015).
@@ -2284,6 +2451,7 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredCourseSum
         })?,
         torrent_info_hash: row.get(7)?,
         sharing: row.get(8)?,
+        youtube: row.get(9)?,
     })
 }
 
@@ -2372,6 +2540,95 @@ mod tests {
         manifest.title = title.to_owned();
         manifest.tags = vec![tag.to_owned()];
         manifest
+    }
+
+    #[test]
+    fn youtube_courses_have_no_location_and_keep_work_across_removal() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Embedded Player", "youtube");
+        let resource_id = course.modules[0].lessons[0].resources[0].id.clone();
+        let videos = [YouTubeVideo {
+            resource_id: resource_id.clone(),
+            video_id: "M7lc1UVf-VE".to_owned(),
+        }];
+        let saved = storage.save_youtube_course(&course, &videos).unwrap();
+        assert!(saved.youtube);
+        assert_eq!(saved.total_resource_bytes, 0);
+        let listed = storage.course(&course.course_id).unwrap().unwrap();
+        assert!(listed.youtube && listed.torrent_info_hash.is_none());
+        assert_eq!(
+            storage.course_package_root(&course.course_id).unwrap(),
+            None
+        );
+        assert_eq!(
+            storage
+                .youtube_video(&course.course_id, &resource_id)
+                .unwrap(),
+            Some("M7lc1UVf-VE".to_owned())
+        );
+        assert_eq!(
+            storage.youtube_video(&course.course_id, "other").unwrap(),
+            None
+        );
+
+        storage
+            .insert_note(
+                "note_1",
+                &course.course_id,
+                &course.modules[0].lessons[0].id,
+                r#"{"kind":"lesson"}"#,
+                r#"{"type":"doc"}"#,
+                "keep me",
+            )
+            .unwrap();
+        let removed = storage.remove_course(&course.course_id).unwrap().unwrap();
+        assert_eq!(removed.torrent, None, "nothing on disk to delete");
+        assert_eq!(
+            storage
+                .youtube_video(&course.course_id, &resource_id)
+                .unwrap(),
+            None
+        );
+        // The course stays known as a YouTube course in the notebook.
+        assert!(storage.removed_courses().unwrap()[0].youtube);
+
+        // Adding the video again brings the course and its notes back.
+        storage.save_youtube_course(&course, &videos).unwrap();
+        assert!(storage.course(&course.course_id).unwrap().unwrap().youtube);
+        assert_eq!(storage.notes(&course.course_id, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn youtube_and_package_courses_never_share_an_id() {
+        let mut storage = Storage::open_in_memory().unwrap();
+        let course = manifest("Shared ID", "youtube");
+        let videos = [YouTubeVideo {
+            resource_id: course.modules[0].lessons[0].resources[0].id.clone(),
+            video_id: "M7lc1UVf-VE".to_owned(),
+        }];
+        storage
+            .save_imported_course(&course, 10, Path::new("/learner/folder"))
+            .unwrap();
+        assert!(matches!(
+            storage.save_youtube_course(&course, &videos),
+            Err(StorageError::CourseIdTaken)
+        ));
+        assert!(!storage.course(&course.course_id).unwrap().unwrap().youtube);
+
+        // A package course arriving with a YouTube course's ID replaces it entirely.
+        storage.remove_course(&course.course_id).unwrap();
+        storage.save_youtube_course(&course, &videos).unwrap();
+        storage
+            .save_imported_course(&course, 10, Path::new("/learner/folder"))
+            .unwrap();
+        let replaced = storage.course(&course.course_id).unwrap().unwrap();
+        assert!(!replaced.youtube);
+        assert_eq!(
+            storage
+                .youtube_video(&course.course_id, &videos[0].resource_id)
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -2674,7 +2931,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "ALTER TABLE courses DROP COLUMN removed_at;
+                    "DROP TABLE course_youtube_videos;
+                     ALTER TABLE courses DROP COLUMN removed_at;
                      DROP TABLE catalogs;
                      DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;
                      DROP TABLE course_manifest_history;
@@ -2718,7 +2976,8 @@ mod tests {
             storage
                 .connection
                 .execute_batch(
-                    "ALTER TABLE courses DROP COLUMN removed_at;
+                    "DROP TABLE course_youtube_videos;
+                     ALTER TABLE courses DROP COLUMN removed_at;
                      DROP TABLE catalogs;
                      DROP TABLE key_revocations; DROP TABLE course_pins; DROP TABLE course_signatures;
                      DROP TABLE course_manifest_history; DROP TRIGGER notes_search_move;

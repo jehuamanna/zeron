@@ -10,15 +10,16 @@ use learning_application::{
     DrawingFile, DrawingSave, EngineError, ImportError, InfoHash, LibraryError, LocalResource,
     MAX_TEXT_BYTES, MAX_TRANSCRIPT_BYTES, NetworkProfile, Note, NoteChange, PeerReachability,
     RateLimits, SearchKind, SharingError, TorrentEngine, TorrentImportSnapshot, TorrentImportStage,
-    TorrentResource, TorrentSource, TransferState, fits, parse_transcript, read_local_document,
-    read_torrent_document, set_aside_course_files,
+    TorrentResource, TorrentSource, TransferState, VideoId, YOUTUBE_MEDIA_TYPE, YouTubeAddError,
+    fits, look_up_youtube_video, parse_transcript, read_local_document, read_torrent_document,
+    set_aside_course_files,
 };
 use media_gateway::{FileResource, StreamResource};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::{AppState, Router, media::TorrentMedia};
+use crate::{AppState, Router, media::TorrentMedia, youtube};
 
 const TORRENT_IMPORT_EVENT: &str = "torrent-import";
 /// Course torrents list a handful of files; anything larger is not a Zeron release.
@@ -525,7 +526,10 @@ pub(crate) async fn list_courses(
                             language: course.language,
                             total_resource_bytes: course.total_resource_bytes,
                             imported_at_unix_seconds: course.imported_at_unix_seconds,
-                            source: source_name(course.torrent_info_hash.as_deref()),
+                            source: source_name(
+                                course.torrent_info_hash.as_deref(),
+                                course.youtube,
+                            ),
                             torrent_info_hash: course.torrent_info_hash,
                             sharing: course.sharing,
                         }
@@ -552,9 +556,11 @@ pub(crate) async fn get_course_detail(
         };
         let info_hash = library.torrent_info_hash(&course_id).map_err(failed)?;
         let publisher = library.course_publisher(&course_id).map_err(failed)?;
+        let youtube = library.is_youtube_course(&course_id).map_err(failed)?;
         Ok(Some(CourseDetailDto::new(
             manifest,
             info_hash,
+            youtube,
             publisher.into(),
         )))
     })
@@ -587,6 +593,57 @@ pub(crate) async fn choose_and_import_course(
     let library = Arc::clone(&state.library);
     tauri::async_runtime::spawn_blocking(move || index_local_texts(&library));
     Ok(receipt)
+}
+
+/// Add a YouTube video from a pasted link as an online-only course, or
+/// refresh one added before (ADR 0018). The link is parsed before anything
+/// is fetched; YouTube is asked only for the video's title and channel.
+#[tauri::command]
+pub(crate) async fn add_youtube_video(
+    link: String,
+    state: State<'_, AppState>,
+) -> Result<ImportReceiptDto, CommandError> {
+    if link.len() > learning_application::MAX_YOUTUBE_LINK_BYTES {
+        return Err(youtube_add_error(&YouTubeAddError::Link(
+            learning_application::YouTubeLinkError::NotYouTube,
+        )));
+    }
+    let course = look_up_youtube_video(&youtube::OEmbed, &link)
+        .await
+        .map_err(|error| youtube_add_error(&error))?;
+    let library = Arc::clone(&state.library);
+    run_blocking(move || {
+        lock_library(&library)?
+            .add_youtube_video(&course)
+            .map(ImportReceiptDto::from)
+            .map_err(|error| youtube_add_error(&error))
+    })
+    .await
+}
+
+fn youtube_add_error(error: &YouTubeAddError) -> CommandError {
+    let code = match error {
+        YouTubeAddError::Link(_) => "youtube_link_invalid",
+        YouTubeAddError::Playlist => "youtube_playlist_unsupported",
+        YouTubeAddError::Lookup(learning_application::VideoLookupError::NotEmbeddable) => {
+            "youtube_not_embeddable"
+        }
+        YouTubeAddError::Lookup(learning_application::VideoLookupError::Unavailable) => {
+            "youtube_unavailable"
+        }
+        YouTubeAddError::Lookup(learning_application::VideoLookupError::Unreachable) => {
+            "youtube_unreachable"
+        }
+        YouTubeAddError::CourseIdTaken => "course_id_taken",
+        // Storage errors can name the database location; keep them in Rust.
+        YouTubeAddError::Library(_) => {
+            return CommandError {
+                code: "library_unavailable",
+                message: "the video could not be saved to the library".to_owned(),
+            };
+        }
+    };
+    command_error(code, error)
 }
 
 /// Index the text of local courses' transcripts and documents that are not
@@ -1023,6 +1080,7 @@ fn parse_reachability(
 enum Media {
     Local(LocalResource),
     Torrent(TorrentResource),
+    YouTube(VideoId),
 }
 
 #[tauri::command]
@@ -1043,6 +1101,12 @@ pub(crate) async fn register_media(
             code: "media_not_found",
             message: "the selected media resource is unavailable".to_owned(),
         };
+        if let Some(video) = library
+            .youtube_video(&course_id, &resource_id)
+            .map_err(failed)?
+        {
+            return Ok(Media::YouTube(video));
+        }
         if library
             .torrent_info_hash(&course_id)
             .map_err(failed)?
@@ -1064,6 +1128,16 @@ pub(crate) async fn register_media(
     })
     .await?;
     let registration = match media {
+        // YouTube's player runs in a gateway page, framed by the app (ADR 0018).
+        Media::YouTube(video) => state
+            .media_gateway
+            .register_page(youtube::player_page())
+            .map(|mut page| {
+                page.url = youtube::player_url(&page.url, &video);
+                YOUTUBE_MEDIA_TYPE.clone_into(&mut page.media_type);
+                page.byte_length = 0;
+                page
+            }),
         Media::Local(resource) => {
             state
                 .media_gateway
@@ -1738,7 +1812,7 @@ pub(crate) async fn list_removed_courses(
                         language: course.language,
                         total_resource_bytes: course.total_resource_bytes,
                         imported_at_unix_seconds: course.imported_at_unix_seconds,
-                        source: source_name(None),
+                        source: source_name(None, course.youtube),
                         torrent_info_hash: None,
                         sharing: false,
                     })
@@ -2150,6 +2224,7 @@ impl CourseDetailDto {
     fn new(
         manifest: course_format::CourseManifest,
         torrent_info_hash: Option<String>,
+        youtube: bool,
         publisher: CoursePublisherDto,
     ) -> Self {
         Self {
@@ -2158,7 +2233,7 @@ impl CourseDetailDto {
             title: manifest.title,
             description: manifest.description,
             publisher_name: manifest.publisher.name,
-            source: source_name(torrent_info_hash.as_deref()),
+            source: source_name(torrent_info_hash.as_deref(), youtube),
             torrent_info_hash,
             publisher,
             modules: manifest
@@ -2264,9 +2339,11 @@ const fn torrent_stage(stage: TorrentImportStage) -> &'static str {
     }
 }
 
-const fn source_name(torrent_info_hash: Option<&str>) -> &'static str {
+const fn source_name(torrent_info_hash: Option<&str>, youtube: bool) -> &'static str {
     if torrent_info_hash.is_some() {
         "torrent"
+    } else if youtube {
+        "youtube"
     } else {
         "local"
     }
@@ -2526,8 +2603,9 @@ mod tests {
         });
         assert_eq!(failed.stage, "failed");
         assert_eq!(failed.failure.unwrap().code, "metadata_timeout");
-        assert_eq!(source_name(None), "local");
-        assert_eq!(source_name(Some("ab")), "torrent");
+        assert_eq!(source_name(None, false), "local");
+        assert_eq!(source_name(Some("ab"), false), "torrent");
+        assert_eq!(source_name(None, true), "youtube");
     }
 
     #[test]
