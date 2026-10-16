@@ -34,6 +34,7 @@ vi.mock("../services/library", async (importOriginal) => ({
     progress: vi.fn(() => Promise.resolve({ completedLessons: 0, totalLessons: 0, percent: 0, lessons: [] })),
     setLessonCompleted: vi.fn(),
     notes: vi.fn(() => Promise.resolve([])),
+    drawnLessons: vi.fn(() => Promise.resolve([])),
     storage: vi.fn(() => Promise.resolve({ streamedBytes: 0, cacheLimitBytes: null, availableBytes: 50 * 1024 ** 3, lowDisk: false })),
     savePlaybackPosition: vi.fn(() => Promise.resolve(true)),
     search: vi.fn(),
@@ -56,6 +57,7 @@ afterEach(cleanup);
 describe("learner library", () => {
   beforeEach(() => {
     useLibraryUi.getState().selectCourse(null);
+    useLibraryUi.getState().showNotebook(false);
     useLibraryUi.getState().dismissTorrentImport();
   });
 
@@ -471,5 +473,45 @@ describe("learner library", () => {
     fireEvent.keyDown(document.body, { key: "n" });
     await waitFor(() => expect(view.getByRole("region", { name: "Notes for Second" }).textContent).toContain("New note · 0:00"));
     expect(await accessibilityViolations(view.container)).toEqual([]);
+  });
+
+  it("gathers notes from every course in the library notebook and opens a note's moment", async () => {
+    vi.mocked(libraryApi.readiness).mockResolvedValue({ state: "ready", torrentImport: "ready", sharing: "ready" });
+    const summary = { courseVersion: "1.0.0", publisherName: "Zeron Tests", language: "en", totalResourceBytes: 1, importedAtUnixSeconds: 1, source: "local" as const, torrentInfoHash: null, sharing: false, completedLessons: 0, totalLessons: 1 };
+    vi.mocked(libraryApi.list).mockResolvedValue([
+      { ...summary, courseId: "caching", title: "Caching" },
+      { ...summary, courseId: "empty", title: "Empty" },
+      { ...summary, courseId: "storage", title: "Storage" },
+    ]);
+    const outline = (courseId: string, title: string) => ({
+      courseId, courseVersion: "1.0.0", title, description: null, publisherName: "Zeron Tests", source: "local" as const, torrentInfoHash: null,
+      publisher: { status: "unsigned" as const, fingerprint: null, publisherId: null, signedAtUnixSeconds: null },
+      modules: [{ id: "m", title: "Module", lessons: [{ id: `${courseId}_lesson`, title: `${title} lesson`, resources: [{ id: `${courseId}_video`, kind: "video", mediaType: "video/mp4", byteLength: 1, durationSeconds: 60 }] }] }],
+    });
+    vi.mocked(libraryApi.detail).mockImplementation(async (courseId) => outline(courseId, courseId === "caching" ? "Caching" : courseId === "storage" ? "Storage" : "Empty"));
+    const body = (text: string) => JSON.stringify({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+    vi.mocked(libraryApi.notes).mockImplementation(async (courseId) => (courseId === "empty" ? [] : [{
+      noteId: `${courseId}_note`, lessonId: `${courseId}_lesson`, anchor: { kind: "videoTime", resourceId: `${courseId}_video`, seconds: 42 },
+      body: body(`${courseId} insight`), text: `${courseId} insight`, revision: 0, createdAtUnixSeconds: 1, updatedAtUnixSeconds: 1,
+    }]));
+    vi.mocked(libraryApi.drawnLessons).mockResolvedValue([]);
+    vi.mocked(libraryApi.registerMedia).mockImplementation(async (_course, resourceId) => ({ url: `http://127.0.0.1:1/v1/media/${resourceId}`, mediaType: "video/mp4", byteLength: 1 }));
+
+    const view = renderApp();
+    fireEvent.click(await waitFor(() => view.getByRole("button", { name: "Notebook" })));
+    await waitFor(() => expect(view.container.textContent).toContain("2 notes · 0 sketches across 2 courses"));
+    expect(view.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual(["Caching", "Storage"]);
+    expect(libraryApi.notes).toHaveBeenCalledWith("caching", null);
+
+    fireEvent.change(view.getByRole("searchbox", { name: "Search notes" }), { target: { value: "storage" } });
+    expect(view.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual(["Storage"]);
+    expect(await accessibilityViolations(view.container)).toEqual([]);
+
+    fireEvent.click(view.getByRole("button", { name: "Go to 0:42 in Storage lesson" }));
+    await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("/v1/media/storage_video"));
+    expect(useLibraryUi.getState().selectedCourseId).toBe("storage");
+
+    fireEvent.click(view.getByRole("button", { name: "Back to library" }));
+    await waitFor(() => expect(view.container.textContent).toContain("All your notes"));
   });
 });

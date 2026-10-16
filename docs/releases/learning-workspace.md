@@ -91,6 +91,16 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
   - Notes on lessons that a newer course version dropped are not shown here; Annotation moves on the overview still offers to move them.
 - **New IPC command:** `list_drawn_lessons(courseId) -> string[]`, backed by `CourseLibrary::drawn_lessons` and the existing `drawing_lessons` storage query. It returns lesson IDs only, so the notebook stays light. The command table in `lib.rs` now carries `#[expect(clippy::too_many_lines)]`.
 
+### 9. Library notebook (follow-up)
+
+- **Where:** a **Notebook** button beside the Library search shows every note and sketch across all courses. It groups by course, then by lesson in course order.
+- **Filters:** the All / Notes / Sketches filter and the note search are shared with the course notebook (`features/notebook/LessonGroups.tsx`). A course picker narrows to one course; courses with nothing captured are left out.
+- **Opening entries:**
+  - Clicking a timestamp, a page, "Edit notes", or "Open sketch" opens that course at that place.
+  - `CourseWorkspace` now takes a `WorkspaceTarget` (`search`, `moment`, `page`, `lesson` with a tab) instead of a bare search result.
+  - Leaving the course returns to the notebook (`useLibraryUi.notebookOpen`).
+- **Loading:** no new IPC. Each course's outline, notes (`list_notes` with no lesson), and drawn lessons load in parallel with `useQueries`; the outlines share the workspace's cache entries.
+
 ## Acceptance evidence
 
 - **Vitest:** all 176 tests pass, 3 of them new.
@@ -103,6 +113,8 @@ Shortcuts are ignored while you type in a field, the note editor, or Excalidraw.
 - **Follow-up tests:**
   - `drawings_save_from_their_current_revision_and_keep_images` now also checks `drawn_lessons` before and after the first save.
   - `CourseNotebook.test.tsx` checks lesson order, ordering inside a lesson, counts, jumping to a moment, the search and Sketches filters, and axe.
+
+- **Library notebook test** (`Library.test.tsx`): notes from two of three courses appear under their course headings with the right counts, the search narrows to one course, axe passes, and a timestamp opens the right course at that moment. Back to library returns to the notebook.
 
 ## Manual verification
 

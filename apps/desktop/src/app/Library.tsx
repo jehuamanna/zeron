@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, BookOpen, Download, HardDrive, Magnet, Share2 } from "lucide-react";
+import { ArrowRight, BookMarked, BookOpen, Download, HardDrive, Magnet, Share2 } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { CatalogsSection } from "../features/catalogs/CatalogsSection";
 import { CourseWorkspace } from "../features/course/CourseWorkspace";
+import type { WorkspaceTarget } from "../features/course/target";
+import { LibraryNotebook } from "../features/notebook/LibraryNotebook";
 import { ProgressBar } from "../features/progress/progress";
 import { LibrarySearch } from "../features/search/LibrarySearch";
 import { TorrentImportPanel } from "../features/torrent-import/TorrentImportPanel";
@@ -26,9 +28,9 @@ function coverHue(courseId: string) {
 /** Library: the courses you learn from. */
 export function Library() {
   const queryClient = useQueryClient();
-  const { selectedCourseId, selectCourse } = useLibraryUi();
-  // A search result opens its course, then the place it matched.
-  const [searchTarget, setSearchTarget] = useState<SearchResult | null>(null);
+  const { selectedCourseId, selectCourse, notebookOpen, showNotebook } = useLibraryUi();
+  // A search result or notebook entry opens its course, then the place it points at.
+  const [target, setTarget] = useState<WorkspaceTarget | null>(null);
   const readiness = useQuery({ queryKey: ["readiness"], queryFn: libraryApi.readiness });
   const courses = useQuery({
     queryKey: ["courses"],
@@ -50,8 +52,8 @@ export function Library() {
       <CourseWorkspace
         key={selectedCourseId}
         courseId={selectedCourseId}
-        target={searchTarget}
-        onTargetHandled={() => setSearchTarget(null)}
+        target={target}
+        onTargetHandled={() => setTarget(null)}
         onLeave={() => selectCourse(null)}
       />
     );
@@ -59,8 +61,25 @@ export function Library() {
 
   const openSearchResult = (result: SearchResult) => {
     selectCourse(result.courseId);
-    setSearchTarget(result);
+    setTarget({ kind: "search", courseId: result.courseId, result });
   };
+
+  if (notebookOpen && courses.data) {
+    return (
+      <main className="relative h-full overflow-y-auto">
+        <div className="px-4 py-6 sm:px-6 sm:py-8">
+          <LibraryNotebook
+            courses={courses.data}
+            onBack={() => showNotebook(false)}
+            onOpen={(courseId, next) => {
+              selectCourse(courseId);
+              setTarget(next);
+            }}
+          />
+        </div>
+      </main>
+    );
+  }
   const resume = courses.data?.find((course) => course.completedLessons > 0 && course.completedLessons < course.totalLessons) ?? null;
 
   return (
@@ -83,6 +102,9 @@ export function Library() {
           </div>
           <div className="flex w-full flex-1 items-center justify-end gap-2 sm:w-auto">
             <LibrarySearch onOpen={openSearchResult} />
+            <Button variant="ghost" onClick={() => showNotebook(true)} className="shrink-0" title="All notes and sketches across your courses">
+              <BookMarked size={16} /> Notebook
+            </Button>
             <Button onClick={() => importCourse.mutate()} disabled={importCourse.isPending} className="shrink-0">
               <Download size={16} />
               {importCourse.isPending ? "Verifying…" : "Import local course"}

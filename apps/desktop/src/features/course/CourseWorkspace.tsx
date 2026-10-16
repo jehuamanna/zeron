@@ -3,7 +3,7 @@ import { BookMarked, ChevronLeft, ChevronRight, Keyboard, LayoutDashboard, Noteb
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMediaQuery } from "../../lib/useMediaQuery";
-import { asCommandError, libraryApi, type NoteAnchor, type Region, type SearchResult } from "../../services/library";
+import { asCommandError, libraryApi, type NoteAnchor, type Region } from "../../services/library";
 import { useWorkspace, type SideTab } from "../../stores/workspace";
 import { DocumentViewer } from "../documents/DocumentViewer";
 import { percentOf, useCourseDownloads } from "../downloads/downloads";
@@ -17,6 +17,7 @@ import { CourseNotebook } from "./CourseNotebook";
 import { CourseOverview } from "./CourseOverview";
 import { isReadable, nextToLearn, placeLessons, primaryResource, resourceLabel, type Lesson, type PlacedLesson } from "./lessons";
 import { SidePanel } from "./SidePanel";
+import type { WorkspaceTarget } from "./target";
 
 // Markdown rendering and Shiki load only when a lesson text is opened.
 const TextReader = lazy(() => import("../reader/TextReader").then((module) => ({ default: module.TextReader })));
@@ -45,8 +46,8 @@ const SHORTCUTS: Array<[string, string]> = [
  */
 export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: {
   courseId: string;
-  /** A search match to open once the course has loaded. */
-  target: SearchResult | null;
+  /** A search match or notebook entry to open once the course has loaded. */
+  target: WorkspaceTarget | null;
   onTargetHandled: () => void;
   onLeave: () => void;
 }) {
@@ -158,13 +159,26 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
   };
   const currentPlayerTime = useCallback(() => player.current?.currentTime() ?? 0, []);
 
-  // A search match opens the place it matched once the course has loaded.
+  const openLessonWith = (lesson: Lesson, tab: SideTab) => {
+    openLesson(lesson);
+    showSide(true, tab);
+  };
+
+  // A search match or notebook entry opens its place once the course has loaded.
   useEffect(() => {
     if (!target || course?.courseId !== target.courseId) return;
     onTargetHandled();
-    if (target.kind === "transcript") seekTo(target.sourceId, target.position ?? 0);
-    else if (target.kind === "text") openText(target.sourceId);
-    else if (target.lessonId) setActiveLessonId(target.lessonId);
+    if (target.kind === "moment") seekTo(target.resourceId, target.seconds);
+    else if (target.kind === "page") openDocument(target.resourceId, target.page);
+    else if (target.kind === "lesson") {
+      const lesson = placedOf(target.lessonId)?.lesson;
+      if (lesson) openLessonWith(lesson, target.tab);
+    } else {
+      const { result } = target;
+      if (result.kind === "transcript") seekTo(result.sourceId, result.position ?? 0);
+      else if (result.kind === "text") openText(result.sourceId);
+      else if (result.lessonId) setActiveLessonId(result.lessonId);
+    }
     // Runs once the target's course has loaded; the openers are fresh each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, course]);
@@ -425,14 +439,8 @@ export function CourseWorkspace({ courseId, target, onTargetHandled, onLeave }: 
                 onOpenLesson={openLesson}
                 onSeek={seekTo}
                 onOpenPage={(resourceId, page) => openDocument(resourceId, page)}
-                onOpenSketch={(lesson) => {
-                  openLesson(lesson);
-                  showSide(true, "sketch");
-                }}
-                onEditNotes={(lesson) => {
-                  openLesson(lesson);
-                  showSide(true, "notes");
-                }}
+                onOpenSketch={(lesson) => openLessonWith(lesson, "sketch")}
+                onEditNotes={(lesson) => openLessonWith(lesson, "notes")}
               />
             ) : stage.kind === "pdf" ? (
               <DocumentViewer
