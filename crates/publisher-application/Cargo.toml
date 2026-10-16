@@ -8,7 +8,9 @@ publish.workspace = true
 [dependencies]
 course-format = { path = "../course-format" }
 course-publisher = { path = "../course-publisher" }
+course-signing = { path = "../course-signing" }
 getrandom.workspace = true
+publisher-identity = { path = "../publisher-identity" }
 publisher-storage = { path = "../publisher-storage" }
 semver.workspace = true
 serde.workspace = true

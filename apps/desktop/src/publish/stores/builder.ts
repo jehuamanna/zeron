@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type Workspace = "courses" | "distribution";
+export type Workspace = "courses" | "distribution" | "identity";
 
 interface BuilderUiState {
   workspace: Workspace;

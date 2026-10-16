@@ -328,7 +328,7 @@ The user removed the headless seed server on 2026-10-16 (an earlier attempt, `f1
 
 ### Phase 9 — optional catalog and publisher identity
 
-The user wants signing, working on Windows and macOS without limitation (2026-10-16; ADR 0014). Done so far: the signature formats and key handling (`phase-9-signing-foundation.md`, crates `course-signing` and `publisher-identity`) and a three-platform CI matrix (`.github/workflows/ci.yml`). Next: sign releases when publishing, verify and pin in the Library, then catalogs.
+The user wants signing, working on Windows and macOS without limitation (2026-10-16; ADR 0014). Done so far: the signature formats and key handling (`phase-9-signing-foundation.md`, crates `course-signing` and `publisher-identity`) a three-platform CI matrix (`.github/workflows/ci.yml`), and signed publishing with Publish → Identity (`phase-9-signed-releases.md`). Next: verify and pin in the Library, then catalogs.
 
 - Canonical signed release envelopes and an Ed25519 key lifecycle (key storage is a security trigger).
 - A catalog API, discovery, and an explicit publication confirmation.

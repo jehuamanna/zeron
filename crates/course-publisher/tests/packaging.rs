@@ -9,7 +9,8 @@ use std::{
 use course_format::{ResourceKind, parse_and_validate};
 use course_publisher::{
     DraftCourse, DraftLesson, DraftMetadata, DraftModule, DraftResource, MANIFEST_FILE_NAME,
-    PackagingCancellation, PackagingError, PackagingLimits, StagedPackage, stage_package,
+    PackageSigning, PackagingCancellation, PackagingError, PackagingLimits, StagedPackage,
+    stage_package, stage_signed_package,
 };
 use learning_application::{CancellationFlag, ImportLimits, import_local_course};
 
@@ -309,4 +310,75 @@ fn limits_are_enforced_before_copying() {
         assert!(matches!(result, Err(PackagingError::LimitExceeded(_))));
         assert!(!destination.exists());
     }
+}
+
+#[test]
+fn a_signed_package_names_its_publisher_and_carries_the_signature_file() {
+    let scratch = Scratch::new("signed");
+    let course = draft(&scratch);
+    let destination = scratch.out("signed");
+    let seen = std::cell::RefCell::new(None);
+    let sign = |manifest: &course_format::CourseManifest, sha256: &str| {
+        *seen.borrow_mut() = Some((manifest.publisher.publisher_id.clone(), sha256.to_owned()));
+        b"signature bytes".to_vec()
+    };
+    let staged = stage_signed_package(
+        &course,
+        &destination,
+        PackagingLimits::default(),
+        &PackagingCancellation::default(),
+        &mut |_| {},
+        Some(&PackageSigning {
+            publisher_id: "ed25519-abc".to_owned(),
+            file_name: "zeron-signature.json",
+            sign: &sign,
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        staged.signature_file.as_deref(),
+        Some("zeron-signature.json")
+    );
+    assert_eq!(
+        staged.manifest.publisher.publisher_id.as_deref(),
+        Some("ed25519-abc")
+    );
+    let manifest =
+        parse_and_validate(&fs::read(destination.join(MANIFEST_FILE_NAME)).unwrap()).unwrap();
+    assert_eq!(
+        manifest.publisher.publisher_id.as_deref(),
+        Some("ed25519-abc")
+    );
+    assert_eq!(
+        seen.borrow().clone(),
+        Some((
+            Some("ed25519-abc".to_owned()),
+            staged.manifest_sha256.clone()
+        ))
+    );
+    assert_eq!(
+        fs::read(destination.join("zeron-signature.json")).unwrap(),
+        b"signature bytes"
+    );
+    assert_eq!(
+        stage(&course, &scratch.out("unsigned"))
+            .unwrap()
+            .signature_file,
+        None
+    );
+
+    let reserved = stage_signed_package(
+        &course,
+        &scratch.out("reserved"),
+        PackagingLimits::default(),
+        &PackagingCancellation::default(),
+        &mut |_| {},
+        Some(&PackageSigning {
+            publisher_id: "ed25519-abc".to_owned(),
+            file_name: "resources/resource_subs/intro.vtt",
+            sign: &sign,
+        }),
+    );
+    assert!(matches!(reserved, Err(PackagingError::LimitExceeded(_))));
+    assert!(!scratch.out("reserved").exists());
 }

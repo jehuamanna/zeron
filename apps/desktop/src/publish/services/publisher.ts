@@ -90,6 +90,8 @@ export interface PreparedRelease {
   pieceCount: number;
   fileCount: number;
   totalBytes: number;
+  /** Whether the package carries the publisher's signature. */
+  signed: boolean;
 }
 
 export interface PublishJob {
@@ -127,9 +129,31 @@ export interface ReleaseFile {
   byteLength: number;
 }
 
+export interface ReleaseSignature {
+  /** The publisher's identity, the root key learners pin. */
+  publisherId: string;
+  fingerprint: string;
+  signingKey: string;
+  signedAtUnixSeconds: number;
+}
+
 export interface ReleaseDetails {
   release: Release;
   files: ReleaseFile[];
+  /** `null` for an unsigned release. */
+  signature: ReleaseSignature | null;
+}
+
+export interface PublisherIdentity {
+  status: "none" | "ready" | "key_missing" | "keychain_unavailable";
+  publisherId: string | null;
+  signingKey: string | null;
+  fingerprint: string | null;
+  createdAtUnixSeconds: number | null;
+  rotations: number;
+  signReleases: boolean;
+  /** Why the keychain or key cannot be used, when it cannot. */
+  problem: string | null;
 }
 
 export type SkipReason =
@@ -336,4 +360,12 @@ export const publisherApi = {
     invoke<DropOutcome>("apply_drop", { draftId, expectedRevision, token, target: { lessonId } }),
   discardDrop: (token: string) => invoke<void>("discard_drop", { token }),
   validateDraft: (draftId: string) => invoke<ValidationIssue[]>("validate_draft", { draftId }),
+  getIdentity: () => invoke<PublisherIdentity>("get_publisher_identity"),
+  createIdentity: () => invoke<PublisherIdentity>("create_publisher_identity"),
+  rotateIdentity: () => invoke<PublisherIdentity>("rotate_publisher_identity"),
+  setSignReleases: (enabled: boolean) => invoke<PublisherIdentity>("set_sign_releases", { enabled }),
+  /** Opens a native save dialog; resolves `false` when cancelled. The passphrase is only used to encrypt. */
+  exportIdentityBackup: (passphrase: string) => invoke<boolean>("export_identity_backup", { passphrase }),
+  /** Opens a native picker; resolves `null` when cancelled. */
+  restoreIdentityBackup: (passphrase: string) => invoke<PublisherIdentity | null>("restore_identity_backup", { passphrase }),
 };

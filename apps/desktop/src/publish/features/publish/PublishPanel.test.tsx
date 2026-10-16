@@ -97,6 +97,7 @@ describe("release preparation", () => {
           pieceCount: 3,
           fileCount: 2,
           totalBytes: 40_000,
+          signed: true,
         },
       }),
     );
@@ -105,6 +106,7 @@ describe("release preparation", () => {
     expect(view.container.textContent).toContain("None: learners find it through local discovery or the DHT");
     expect((view.getByLabelText("Magnet link") as HTMLInputElement).value).toContain("urn:btih:");
     expect(view.container.textContent).toContain("3 × 16 KB");
+    expect(view.container.textContent).toContain("Signed with your publisher identity");
     expect(view.getByRole("button", { name: /prepare again/i })).toBeTruthy();
     expect(view.queryByRole("progressbar")).toBeNull();
   });
@@ -133,7 +135,7 @@ describe("release preparation", () => {
   });
 
   it("discards a prepared release so the draft can be prepared again", async () => {
-    const prepared = { attemptId: "stage_x", courseVersion: "1.0.0", resourceCount: 1, manifestSha256: "f".repeat(64), infoHash: "d".repeat(40), magnet: "magnet:?xt=urn:btih:d", trackerCount: 0, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10 };
+    const prepared = { attemptId: "stage_x", courseVersion: "1.0.0", resourceCount: 1, manifestSha256: "f".repeat(64), infoHash: "d".repeat(40), magnet: "magnet:?xt=urn:btih:d", trackerCount: 0, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10, signed: false };
     server = job({ sequence: 4, stage: "READY_TO_PUBLISH", prepared });
     useBuilderUi.setState({ publishJobIds: { draft_one: "job_one" } });
     vi.mocked(publisherApi.discardPublishJob).mockImplementation(async () => {
@@ -149,7 +151,7 @@ describe("release preparation", () => {
   });
 
   it("explains how to recover from a reused version", async () => {
-    const prepared = { attemptId: "stage_x", courseVersion: "1.0.0", resourceCount: 1, manifestSha256: "f".repeat(64), infoHash: "e".repeat(40), magnet: "magnet:?xt=urn:btih:e", trackerCount: 0, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10 };
+    const prepared = { attemptId: "stage_x", courseVersion: "1.0.0", resourceCount: 1, manifestSha256: "f".repeat(64), infoHash: "e".repeat(40), magnet: "magnet:?xt=urn:btih:e", trackerCount: 0, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10, signed: false };
     server = job({ sequence: 4, stage: "READY_TO_PUBLISH", prepared });
     useBuilderUi.setState({ publishJobIds: { draft_one: "job_one" } });
     vi.mocked(publisherApi.activateRelease).mockRejectedValueOnce({ code: "version_already_released", message: "version 1.0.0 was already released; choose a new version" });
@@ -160,7 +162,7 @@ describe("release preparation", () => {
   });
 
   it("publishes only after explicit confirmation and reports reused versions", async () => {
-    const prepared = { attemptId: "stage_x", courseVersion: "1.0.0", resourceCount: 1, manifestSha256: "f".repeat(64), infoHash: "c".repeat(40), magnet: "magnet:?xt=urn:btih:c", trackerCount: 2, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10 };
+    const prepared = { attemptId: "stage_x", courseVersion: "1.0.0", resourceCount: 1, manifestSha256: "f".repeat(64), infoHash: "c".repeat(40), magnet: "magnet:?xt=urn:btih:c", trackerCount: 2, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10, signed: false };
     server = job({ sequence: 4, stage: "READY_TO_PUBLISH", prepared });
     useBuilderUi.setState({ publishJobIds: { draft_one: "job_one" } });
     vi.mocked(publisherApi.activateRelease).mockRejectedValueOnce({ code: "version_already_released", message: "version 1.0.0 was already released; choose a new version" });
@@ -184,7 +186,7 @@ describe("release preparation", () => {
   });
 
   it("flags results prepared from an older draft revision", async () => {
-    server = job({ sequence: 4, stage: "READY_TO_PUBLISH", draftRevision: 2, prepared: { attemptId: "stage_x", courseVersion: "1.0.0", resourceCount: 1, manifestSha256: "f".repeat(64), infoHash: "b".repeat(40), magnet: "magnet:?xt=urn:btih:b", trackerCount: 2, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10 } });
+    server = job({ sequence: 4, stage: "READY_TO_PUBLISH", draftRevision: 2, prepared: { attemptId: "stage_x", courseVersion: "1.0.0", resourceCount: 1, manifestSha256: "f".repeat(64), infoHash: "b".repeat(40), magnet: "magnet:?xt=urn:btih:b", trackerCount: 2, pieceLength: 16384, pieceCount: 1, fileCount: 2, totalBytes: 10, signed: false } });
     useBuilderUi.setState({ publishJobIds: { draft_one: "job_one" } });
     const view = renderPanel(5);
     await waitFor(() => expect(view.container.textContent).toContain("Prepared from r2; the draft has changed since."));

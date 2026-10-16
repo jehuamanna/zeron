@@ -177,6 +177,17 @@ pub(crate) struct PublishJobDto {
 pub(crate) struct ReleaseDetailsDto {
     release: ReleaseDto,
     files: Vec<ReleaseFileDto>,
+    /// The publisher signature, or `null` for an unsigned release.
+    signature: Option<ReleaseSignatureDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleaseSignatureDto {
+    publisher_id: String,
+    fingerprint: String,
+    signing_key: String,
+    signed_at_unix_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -225,6 +236,8 @@ struct PreparedReleaseDto {
     piece_count: usize,
     file_count: usize,
     total_bytes: u64,
+    /// Whether the package carries the publisher's signature.
+    signed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -431,7 +444,8 @@ pub(crate) async fn start_publish_preparation(
 ) -> Result<PublishJobDto, CommandError> {
     let drafts = Arc::clone(&state.drafts);
     let jobs = Arc::clone(&state.publish_jobs);
-    let (draft, distribution, started) = run_blocking(move || {
+    let credentials = Arc::clone(&state.credentials);
+    let (draft, distribution, signer, started) = run_blocking(move || {
         let drafts = lock_drafts(&drafts)?;
         let draft = drafts
             .draft(&draft_id)
@@ -441,18 +455,29 @@ pub(crate) async fn start_publish_preparation(
         let distribution = drafts
             .distribution_options()
             .map_err(|error| service_error("publish_start_failed", error))?;
+        let signer = super::identity::release_signer(
+            &drafts,
+            &credentials,
+            super::tracker_lists::now_unix_seconds(),
+        )?;
         let started = jobs
             .begin(&draft)
             .map_err(|error| service_error("publish_start_failed", error))?;
-        Ok((draft, distribution, started))
+        Ok((draft, distribution, signer, started))
     })
     .await?;
     let jobs = Arc::clone(&state.publish_jobs);
     let job_id = started.job_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        jobs.run(&job_id, &draft, &distribution, &mut |snapshot| {
-            let _ = app.emit(PUBLISH_JOB_EVENT, PublishJobDto::from(snapshot));
-        });
+        jobs.run_signed(
+            &job_id,
+            &draft,
+            &distribution,
+            signer.as_ref(),
+            &mut |snapshot| {
+                let _ = app.emit(PUBLISH_JOB_EVENT, PublishJobDto::from(snapshot));
+            },
+        );
     });
     Ok(PublishJobDto::from(&started))
 }
@@ -685,8 +710,12 @@ pub(crate) async fn get_release_details(
     let drafts = Arc::clone(&state.drafts);
     let releases_root = state.releases_root.clone();
     run_blocking(move || {
-        release_torrent(&*lock_drafts(&drafts)?, &releases_root, &release_id)
-            .map(ReleaseDetailsDto::from)
+        let drafts = lock_drafts(&drafts)?;
+        let torrent = release_torrent(&drafts, &releases_root, &release_id)?;
+        let signature = drafts
+            .release_signature(&releases_root, &release_id)
+            .map_err(|error| service_error("release_unavailable", error))?;
+        Ok(ReleaseDetailsDto::signed(torrent, signature.as_ref()))
     })
     .await
 }
@@ -1282,6 +1311,7 @@ impl From<&PublishJobSnapshot> for PublishJobDto {
                     piece_count: prepared.torrent.piece_count,
                     file_count: prepared.torrent.file_count,
                     total_bytes: prepared.torrent.total_bytes,
+                    signed: prepared.staging.signed,
                 }),
             failure: snapshot.failure.as_ref().map(|failure| JobFailureDto {
                 code: failure.code,
@@ -1330,9 +1360,27 @@ impl From<ReleaseSeedingStatus> for SeedingStatusDto {
     }
 }
 
+impl ReleaseDetailsDto {
+    fn signed(
+        torrent: ReleaseTorrent,
+        signature: Option<&course_signing::VerifiedRelease>,
+    ) -> Self {
+        Self {
+            signature: signature.map(|signature| ReleaseSignatureDto {
+                publisher_id: signature.root.to_string(),
+                fingerprint: course_signing::fingerprint(&signature.root),
+                signing_key: signature.signing_key.to_string(),
+                signed_at_unix_seconds: signature.signed_at,
+            }),
+            ..Self::from(torrent)
+        }
+    }
+}
+
 impl From<ReleaseTorrent> for ReleaseDetailsDto {
     fn from(torrent: ReleaseTorrent) -> Self {
         Self {
+            signature: None,
             release: ReleaseDto::from(torrent.record),
             files: torrent
                 .files
@@ -1558,9 +1606,12 @@ pub(crate) fn service_error(code: &'static str, error: DraftServiceError) -> Com
 }
 
 impl CommandError {
-    #[cfg(test)]
     pub(crate) fn code(&self) -> &'static str {
         self.code
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
     }
 
     pub(crate) fn new(code: &'static str, message: impl std::fmt::Display) -> Self {

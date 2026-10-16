@@ -1,11 +1,11 @@
 use std::{fs, io, path::Path};
 
 use course_publisher::{
-    DraftCourse, PackagingCancellation, PackagingError, PackagingLimits, StagingProgress,
-    stage_package,
+    DraftCourse, PackageSigning, PackagingCancellation, PackagingError, PackagingLimits,
+    StagingProgress, stage_signed_package,
 };
 
-use crate::{DraftServiceError, opaque_id};
+use crate::{DraftServiceError, ReleaseSigner, opaque_id, signing::SIGNATURE_FILE};
 
 const ATTEMPT_PREFIX: &str = "stage_";
 const PARTIAL_SUFFIX: &str = ".partial";
@@ -27,6 +27,8 @@ pub struct StagingReceipt {
     pub total_resource_bytes: u64,
     /// SHA-256 of the exact `course.json` bytes.
     pub manifest_sha256: String,
+    /// Whether the package carries the publisher's signature.
+    pub signed: bool,
 }
 
 /// Stage a frozen draft snapshot into a new attempt under `staging_root`.
@@ -45,17 +47,51 @@ pub fn stage_draft(
     cancellation: &PackagingCancellation,
     progress: &mut dyn FnMut(StagingProgress),
 ) -> Result<StagingReceipt, DraftServiceError> {
+    stage_signed_draft(draft, staging_root, limits, cancellation, progress, None)
+}
+
+/// [`stage_draft`], signing the package with `signer` when one is given:
+/// `course.json` names the publisher and `zeron-signature.json` signs it.
+///
+/// # Errors
+/// As [`stage_draft`].
+pub fn stage_signed_draft(
+    draft: &DraftCourse,
+    staging_root: &Path,
+    limits: PackagingLimits,
+    cancellation: &PackagingCancellation,
+    progress: &mut dyn FnMut(StagingProgress),
+    signer: Option<&ReleaseSigner>,
+) -> Result<StagingReceipt, DraftServiceError> {
     fs::create_dir_all(staging_root)
         .map_err(|source| io_error("creating the staging root", source))?;
     let attempt_id = opaque_id("stage")?;
     let partial = staging_root.join(format!("{attempt_id}{PARTIAL_SUFFIX}"));
-    let staged = stage_package(draft, &partial, limits, cancellation, progress)
-        .map_err(DraftServiceError::Packaging)?;
+    let sign = |manifest: &course_format::CourseManifest, manifest_sha256: &str| {
+        signer.map_or_else(Vec::new, |signer| {
+            signer.sign(&manifest.course_id, &manifest.version, manifest_sha256)
+        })
+    };
+    let signing = signer.map(|signer| PackageSigning {
+        publisher_id: signer.publisher_id().to_owned(),
+        file_name: SIGNATURE_FILE,
+        sign: &sign,
+    });
+    let staged = stage_signed_package(
+        draft,
+        &partial,
+        limits,
+        cancellation,
+        progress,
+        signing.as_ref(),
+    )
+    .map_err(DraftServiceError::Packaging)?;
     if let Err(source) = fs::rename(&partial, staging_root.join(&attempt_id)) {
         let _ = fs::remove_dir_all(&partial);
         return Err(io_error("completing the staging attempt", source));
     }
     Ok(StagingReceipt {
+        signed: staged.signature_file.is_some(),
         attempt_id,
         draft_revision: draft.revision,
         course_id: staged.manifest.course_id,

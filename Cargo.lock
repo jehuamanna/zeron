@@ -4069,9 +4069,11 @@ version = "0.1.0"
 dependencies = [
  "course-format",
  "course-publisher",
+ "course-signing",
  "getrandom 0.4.3",
  "learning-application",
  "nix",
+ "publisher-identity",
  "publisher-storage",
  "semver",
  "serde",
@@ -7026,6 +7028,7 @@ version = "0.1.0"
 dependencies = [
  "course-format",
  "course-publisher",
+ "course-signing",
  "data-import",
  "futures-util",
  "learning-application",
@@ -7033,6 +7036,7 @@ dependencies = [
  "media-gateway",
  "port-mapping",
  "publisher-application",
+ "publisher-identity",
  "reqwest",
  "serde",
  "serde_json",

@@ -14,6 +14,7 @@ tauri-build.workspace = true
 
 [dependencies]
 course-format = { path = "../../../crates/course-format" }
+course-signing = { path = "../../../crates/course-signing" }
 course-publisher = { path = "../../../crates/course-publisher" }
 data-import = { path = "../../../crates/data-import" }
 futures-util.workspace = true
@@ -21,6 +22,7 @@ learning-application = { path = "../../../crates/learning-application" }
 media-gateway = { path = "../../../crates/media-gateway" }
 port-mapping = { path = "../../../crates/port-mapping" }
 publisher-application = { path = "../../../crates/publisher-application" }
+publisher-identity = { path = "../../../crates/publisher-identity" }
 reqwest.workspace = true
 serde.workspace = true
 tauri.workspace = true

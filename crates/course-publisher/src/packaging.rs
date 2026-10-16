@@ -104,6 +104,8 @@ pub struct StagedPackage {
     pub files: Vec<StagedFile>,
     /// Sum of resource sizes.
     pub total_resource_bytes: u64,
+    /// The signature file written beside `course.json`, if the package is signed.
+    pub signature_file: Option<String>,
 }
 
 /// Classified staging failure. No variant carries an absolute path.
@@ -236,6 +238,18 @@ pub fn canonical_manifest_bytes(manifest: &CourseManifest) -> Result<Vec<u8>, se
     Ok(bytes)
 }
 
+/// How to sign a staged package. Crypto stays with the caller: `sign`
+/// receives the final manifest and its SHA-256 and returns the bytes of the
+/// signature file.
+pub struct PackageSigning<'a> {
+    /// Written into `course.json` as `publisher.publisherId`.
+    pub publisher_id: String,
+    /// The signature file's name at the package root.
+    pub file_name: &'a str,
+    /// Produce the signature file for a manifest and its digest.
+    pub sign: &'a dyn Fn(&CourseManifest, &str) -> Vec<u8>,
+}
+
 /// Copy every draft source into a new `destination` directory, hash it, and
 /// write the canonical `course.json`.
 ///
@@ -250,6 +264,22 @@ pub fn stage_package(
     limits: PackagingLimits,
     cancellation: &PackagingCancellation,
     progress: &mut dyn FnMut(StagingProgress),
+) -> Result<StagedPackage, PackagingError> {
+    stage_signed_package(draft, destination, limits, cancellation, progress, None)
+}
+
+/// [`stage_package`], then, with `signing`, name the publisher in
+/// `course.json` and write the signature file beside it.
+///
+/// # Errors
+/// Returns a classified [`PackagingError`].
+pub fn stage_signed_package(
+    draft: &DraftCourse,
+    destination: &Path,
+    limits: PackagingLimits,
+    cancellation: &PackagingCancellation,
+    progress: &mut dyn FnMut(StagingProgress),
+    signing: Option<&PackageSigning<'_>>,
 ) -> Result<StagedPackage, PackagingError> {
     cancellation.check()?;
     let issues = draft.validate();
@@ -271,7 +301,7 @@ pub fn stage_package(
             }
         }
     })?;
-    let result = write_package(draft, destination, &plan, cancellation, progress);
+    let result = write_package(draft, destination, &plan, cancellation, progress, signing);
     if result.is_err() {
         let _ = fs::remove_dir_all(destination);
     }
@@ -348,6 +378,7 @@ fn write_package(
     plan: &Plan<'_>,
     cancellation: &PackagingCancellation,
     progress: &mut dyn FnMut(StagingProgress),
+    signing: Option<&PackageSigning<'_>>,
 ) -> Result<StagedPackage, PackagingError> {
     let mut state = StagingProgress {
         completed_files: 0,
@@ -389,25 +420,47 @@ fn write_package(
         });
     }
 
-    let manifest = manifest_for(draft, |resource| {
+    let mut manifest = manifest_for(draft, |resource| {
         files
             .iter()
             .find(|file| file.resource_id == resource.id)
             .map(|file| (file.byte_length, file.sha256.clone()))
             .unwrap_or_default()
     });
+    if let Some(signing) = signing {
+        manifest.publisher.publisher_id = Some(signing.publisher_id.clone());
+    }
     validate_manifest(&manifest)?;
     let bytes = canonical_manifest_bytes(&manifest).map_err(|error| PackagingError::Io {
         operation: "serializing course.json",
         source: io::Error::other(error),
     })?;
     write_new_file(&destination.join(MANIFEST_FILE_NAME), &bytes)?;
+    let manifest_sha256 = hex(&Sha256::digest(&bytes));
+    let signature_file = match signing {
+        Some(signing) => {
+            let reserved = files
+                .iter()
+                .any(|file| file.package_path == signing.file_name);
+            if reserved {
+                return Err(PackagingError::LimitExceeded(format!(
+                    "a resource uses the reserved name {}",
+                    signing.file_name
+                )));
+            }
+            let signature = (signing.sign)(&manifest, &manifest_sha256);
+            write_new_file(&destination.join(signing.file_name), &signature)?;
+            Some(signing.file_name.to_owned())
+        }
+        None => None,
+    };
     cancellation.check()?;
     Ok(StagedPackage {
         manifest,
-        manifest_sha256: hex(&Sha256::digest(&bytes)),
+        manifest_sha256,
         files,
         total_resource_bytes: plan.total_bytes,
+        signature_file,
     })
 }
 

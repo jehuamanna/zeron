@@ -7,6 +7,7 @@ mod drops;
 mod publish_jobs;
 mod releases;
 mod seeding;
+mod signing;
 mod sources;
 mod staging;
 mod torrents;
@@ -45,8 +46,12 @@ pub use releases::{
 pub use seeding::{
     ReleaseSeedingStatus, SeedingService, network_profile_name, parse_network_profile,
 };
+pub use signing::ReleaseSigner;
 pub use sources::{ResourceMediaFindings, SourceInfo, inspect_draft_media, source_info};
-pub use staging::{StagingReceipt, discard_abandoned_staging, discard_all_attempts, stage_draft};
+pub use staging::{
+    StagingReceipt, discard_abandoned_staging, discard_all_attempts, stage_draft,
+    stage_signed_draft,
+};
 use thiserror::Error;
 pub use torrent_metainfo::{HashProgress, PackageFile, TorrentError};
 pub use torrent_port::{

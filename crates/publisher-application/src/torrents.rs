@@ -7,6 +7,10 @@ use std::{
 
 use course_format::parse_and_validate;
 use course_publisher::{MANIFEST_FILE_NAME, PackagingCancellation};
+use course_signing::{
+    MAX_RELEASE_SIGNATURE_BYTES, RELEASE_SIGNATURE_FILE, VerifiedRelease, parse_release_signature,
+    verify_release,
+};
 use sha2::{Digest, Sha256};
 use torrent_metainfo::{
     HashProgress, PackageFile, TorrentError, TorrentOptions, build_torrent, verify_torrent,
@@ -190,6 +194,8 @@ pub(crate) struct StagedAttempt {
     pub(crate) files: Vec<PackageFile>,
     /// The validated `course.json`.
     pub(crate) manifest: course_format::CourseManifest,
+    /// The publisher signature, when the package carries one that verified.
+    pub(crate) signature: Option<VerifiedRelease>,
 }
 
 impl StagedAttempt {
@@ -234,17 +240,28 @@ impl StagedAttempt {
             path: MANIFEST_FILE_NAME.to_owned(),
             length: manifest_bytes.len() as u64,
         });
-        let expected: BTreeSet<&str> = files.iter().map(|file| file.path.as_str()).collect();
-        if staged_tree(&root)? != expected.iter().map(|path| (*path).to_owned()).collect() {
-            return Err(DraftServiceError::InvalidAttempt(
-                "the staged files differ from course.json",
-            ));
-        }
         let digest = Sha256::digest(&manifest_bytes);
         let mut manifest_sha256 = String::with_capacity(64);
         for byte in digest {
             use std::fmt::Write as _;
             let _ = write!(manifest_sha256, "{byte:02x}");
+        }
+        let tree = staged_tree(&root)?;
+        let signature = if tree.contains(RELEASE_SIGNATURE_FILE) {
+            let (verified, length) = verify_signature_file(&root, &manifest, &manifest_sha256)?;
+            files.push(PackageFile {
+                path: RELEASE_SIGNATURE_FILE.to_owned(),
+                length,
+            });
+            Some(verified)
+        } else {
+            None
+        };
+        let expected: BTreeSet<&str> = files.iter().map(|file| file.path.as_str()).collect();
+        if tree != expected.iter().map(|path| (*path).to_owned()).collect() {
+            return Err(DraftServiceError::InvalidAttempt(
+                "the staged files differ from course.json",
+            ));
         }
         Ok(Self {
             torrent_path,
@@ -255,12 +272,44 @@ impl StagedAttempt {
             manifest_sha256,
             files,
             manifest,
+            signature,
         })
     }
 
     pub(crate) fn torrent_path(&self) -> PathBuf {
         self.torrent_path.clone()
     }
+}
+
+/// Read and verify a package's `zeron-signature.json` against its manifest.
+/// A signature file that does not verify makes the whole package invalid.
+fn verify_signature_file(
+    root: &Path,
+    manifest: &course_format::CourseManifest,
+    manifest_sha256: &str,
+) -> Result<(VerifiedRelease, u64), DraftServiceError> {
+    let invalid = || DraftServiceError::InvalidAttempt("the package signature does not verify");
+    let bytes = read_bounded(
+        &root.join(RELEASE_SIGNATURE_FILE),
+        MAX_RELEASE_SIGNATURE_BYTES as u64,
+    )
+    .map_err(|_| invalid())?;
+    let signature = parse_release_signature(&bytes).map_err(|_| invalid())?;
+    let publisher_id = manifest
+        .publisher
+        .publisher_id
+        .as_deref()
+        .ok_or_else(invalid)?;
+    let verified = verify_release(
+        &signature,
+        &manifest.course_id,
+        &manifest.version,
+        manifest_sha256,
+        publisher_id,
+        &[],
+    )
+    .map_err(|_| invalid())?;
+    Ok((verified, bytes.len() as u64))
 }
 
 fn staged_tree(root: &Path) -> Result<BTreeSet<String>, DraftServiceError> {

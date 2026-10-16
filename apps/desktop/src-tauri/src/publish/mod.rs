@@ -4,6 +4,7 @@
 pub(crate) mod commands;
 pub(crate) mod configuration;
 pub(crate) mod drops;
+pub(crate) mod identity;
 pub(crate) mod tracker_lists;
 
 use std::{
@@ -32,6 +33,8 @@ pub(crate) struct PublishState {
     pub(crate) library_router: Option<Arc<Router>>,
     /// An imported configuration file waiting to be applied.
     pub(crate) pending_configuration: Mutex<configuration::PendingConfiguration>,
+    /// The OS credential store holding the signing key, opened on first use.
+    pub(crate) credentials: Arc<identity::Credentials>,
 }
 
 impl PublishState {
@@ -78,6 +81,7 @@ impl PublishState {
             drops: Arc::new(DropInbox::default()),
             library_router,
             pending_configuration: Mutex::default(),
+            credentials: Arc::default(),
         })
     }
 

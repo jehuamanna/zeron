@@ -69,6 +69,12 @@ export function ReleaseDetailsPanel({ id, release, currentVersion, seeding, onOp
         <dd className="text-slate-300">{seedingLabel(seeding)}{failure ? `: ${failure}` : ""}</dd>
         <dt className="text-slate-500">Size</dt>
         <dd className="text-slate-300">{formatBytes(release.totalBytes)} in {release.fileCount} files · {release.pieceCount} pieces of {formatBytes(release.pieceLength)}</dd>
+        <dt className="text-slate-500">Signature</dt>
+        <dd className="text-slate-300">
+          {!filesPresent ? "Files deleted" : details.isPending ? "Checking…" : details.data?.signature ? (
+            <>Signed · <code className="tracking-wider">{details.data.signature.fingerprint}</code></>
+          ) : details.isError ? "Unknown" : "Unsigned"}
+        </dd>
         <dt className="text-slate-500">Published</dt>
         <dd className="text-slate-300">{new Date(release.publishedAtUnixSeconds * 1000).toLocaleString()}</dd>
       </dl>

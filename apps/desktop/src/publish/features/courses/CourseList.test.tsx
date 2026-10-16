@@ -47,6 +47,7 @@ beforeEach(() => {
   vi.mocked(publisherApi.getReleaseDetails).mockImplementation(async (releaseId) => ({
     release: releases.find((item) => item.releaseId === releaseId)!,
     files: [{ path: "course.json", byteLength: 512 }, { path: "resources/res_1/lecture.mp4", byteLength: 1536 }],
+    signature: releaseId === "release_2" ? { publisherId: `ed25519-${"c".repeat(64)}`, fingerprint: "7F3A-91C2-0B44-E8D1", signingKey: `ed25519-${"c".repeat(64)}`, signedAtUnixSeconds: 1_760_000_000 } : null,
   }));
 });
 afterEach(() => {
@@ -93,6 +94,7 @@ describe("course management", () => {
     expect(files.textContent).toContain("resources/res_1/lecture.mp4");
     expect(files.textContent).toContain("1.5 KB");
     expect(publisherApi.getReleaseDetails).toHaveBeenCalledWith("release_2");
+    expect(rust.textContent).toContain("Signed · 7F3A-91C2-0B44-E8D1");
   });
 
   it("copies the magnet, and selects it for manual copy when the clipboard is refused", async () => {

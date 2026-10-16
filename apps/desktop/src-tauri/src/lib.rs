@@ -212,6 +212,12 @@ pub fn run() {
             publish::commands::make_release_current,
             publish::commands::get_distribution_activity,
             publish::configuration::export_publisher_configuration,
+            publish::identity::get_publisher_identity,
+            publish::identity::create_publisher_identity,
+            publish::identity::rotate_publisher_identity,
+            publish::identity::set_sign_releases,
+            publish::identity::export_identity_backup,
+            publish::identity::restore_identity_backup,
             publish::configuration::choose_publisher_configuration,
             publish::configuration::apply_publisher_configuration,
             publish::configuration::discard_publisher_configuration,
@@ -235,17 +241,22 @@ pub fn run() {
         .expect("failed to build Zeron");
     app.run(|app_handle, event| {
         if matches!(event, RunEvent::Exit) {
-            let state = app_handle.state::<AppState>();
-            state.media_gateway.shutdown();
-            // Close the router's ports before the engines stop listening.
-            if let Some(mapper) = state.torrents.port_mapper.clone() {
-                tauri::async_runtime::block_on(mapper.shutdown(Duration::from_secs(3)));
-            }
-            for engine in state.torrents.engines.clone() {
-                tauri::async_runtime::block_on(engine.shutdown());
-            }
+            shut_down(app_handle);
         }
     });
+}
+
+/// Stop the gateway, close the router's ports, then stop the engines.
+fn shut_down(app_handle: &tauri::AppHandle) {
+    let state = app_handle.state::<AppState>();
+    state.media_gateway.shutdown();
+    // Close the router's ports before the engines stop listening.
+    if let Some(mapper) = state.torrents.port_mapper.clone() {
+        tauri::async_runtime::block_on(mapper.shutdown(Duration::from_secs(3)));
+    }
+    for engine in state.torrents.engines.clone() {
+        tauri::async_runtime::block_on(engine.shutdown());
+    }
 }
 
 /// `WebKitGTK` refuses plain HTTP media on the secure `tauri://localhost`
