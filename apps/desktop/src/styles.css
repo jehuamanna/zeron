@@ -1,30 +1,196 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+ * Design tokens. The light theme is warm paper with a wine accent; the dark
+ * theme is ink with a rose accent. `data-theme` on <html> picks one.
+ */
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  --zr-bg: #f6f4f1;
+  --zr-surface: #ffffff;
+  --zr-sunken: #efebe6;
+  --zr-ink: #1c1917;
+  --zr-shade: #ffffff;
+  --zr-fg: #1c1917;
+  --zr-fg-soft: #3f3a36;
+  --zr-muted: #57534e;
+  --zr-subtle: #6f6862;
+  --zr-faint: #a8a29e;
+  --zr-line: rgb(28 25 23 / 0.1);
+  --zr-accent: #9f1239;
+  --zr-accent-hover: #be123c;
+  --zr-accent-text: #9f1239;
+  --zr-accent-strong: #881337;
+  --zr-on-accent: #ffffff;
+  --zr-warn: #d97706;
+  --zr-warn-bright: #f59e0b;
+  --zr-warn-text: #92400e;
+  --zr-warn-strong: #78350f;
+  --zr-danger: #dc2626;
+  --zr-danger-text: #b91c1c;
+  --zr-danger-strong: #991b1b;
+  --zr-danger-deep: #7f1d1d;
+  --zr-ok: #059669;
+  --zr-ok-text: #047857;
+  --zr-ok-strong: #065f46;
+  --zr-info: #6d28d9;
+  --zr-info-strong: #5b21b6;
+  --zr-sky: #0369a1;
+  --zr-video: #000000;
+  --zr-shadow: 0 1px 2px rgb(28 25 23 / 0.06), 0 8px 24px -12px rgb(28 25 23 / 0.18);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --zr-bg: #0e1013;
+  --zr-surface: #15181d;
+  --zr-sunken: #0a0c0f;
+  --zr-ink: #f5f5f4;
+  --zr-shade: #000000;
+  --zr-fg: #f1f1ef;
+  --zr-fg-soft: #d6d3d1;
+  --zr-muted: #a8a29e;
+  --zr-subtle: #8a847f;
+  --zr-faint: #57534e;
+  --zr-line: rgb(245 245 244 / 0.1);
+  --zr-accent: #fb7185;
+  --zr-accent-hover: #fda4af;
+  --zr-accent-text: #fecdd3;
+  --zr-accent-strong: #ffe4e6;
+  --zr-on-accent: #1c0a10;
+  --zr-warn: #fcd34d;
+  --zr-warn-bright: #fbbf24;
+  --zr-warn-text: #fde68a;
+  --zr-warn-strong: #fef3c7;
+  --zr-danger: #f87171;
+  --zr-danger-text: #fca5a5;
+  --zr-danger-strong: #fecaca;
+  --zr-danger-deep: #fee2e2;
+  --zr-ok: #6ee7b7;
+  --zr-ok-text: #6ee7b7;
+  --zr-ok-strong: #a7f3d0;
+  --zr-info: #c4b5fd;
+  --zr-info-strong: #ede9fe;
+  --zr-sky: #7dd3fc;
+  --zr-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px -16px rgb(0 0 0 / 0.7);
   color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: Inter, ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Charter, "Bitstream Charter", Georgia, serif;
+
+  /* Semantic colours for new components. */
+  --color-bg: var(--zr-bg);
+  --color-surface: var(--zr-surface);
+  --color-sunken: var(--zr-sunken);
+  --color-fg: var(--zr-fg);
+  --color-fg-soft: var(--zr-fg-soft);
+  --color-muted: var(--zr-muted);
+  --color-subtle: var(--zr-subtle);
+  --color-faint: var(--zr-faint);
+  --color-line: var(--zr-line);
+  --color-accent: var(--zr-accent);
+  --color-accent-hover: var(--zr-accent-hover);
+  --color-accent-text: var(--zr-accent-text);
+  --color-on-accent: var(--zr-on-accent);
+  --color-ok: var(--zr-ok-text);
+  --color-warn: var(--zr-warn-text);
+  --color-danger: var(--zr-danger-text);
+  --color-video: var(--zr-video);
+  --shadow-panel: var(--zr-shadow);
+
+  /*
+   * Theme-aware aliases for the palette the older screens were written in.
+   * "white" overlays become ink overlays, "black" wells become raised wells,
+   * and the cyan/amber/red/emerald tints follow the theme's readable shades.
+   */
+  --color-white: var(--zr-ink);
+  --color-black: var(--zr-shade);
+  --color-slate-50: var(--zr-fg);
+  --color-slate-100: var(--zr-fg);
+  --color-slate-200: var(--zr-fg);
+  --color-slate-300: var(--zr-fg-soft);
+  --color-slate-400: var(--zr-muted);
+  --color-slate-500: var(--zr-subtle);
+  --color-slate-600: var(--zr-faint);
+  --color-slate-950: var(--zr-on-accent);
+  --color-cyan-50: var(--zr-accent-strong);
+  --color-cyan-100: var(--zr-accent-strong);
+  --color-cyan-200: var(--zr-accent-text);
+  --color-cyan-300: var(--zr-accent);
+  --color-amber-100: var(--zr-warn-strong);
+  --color-amber-200: var(--zr-warn-text);
+  --color-amber-300: var(--zr-warn);
+  --color-amber-400: var(--zr-warn-bright);
+  --color-red-100: var(--zr-danger-deep);
+  --color-red-200: var(--zr-danger-strong);
+  --color-red-300: var(--zr-danger-text);
+  --color-red-400: var(--zr-danger);
+  --color-emerald-100: var(--zr-ok-strong);
+  --color-emerald-200: var(--zr-ok-strong);
+  --color-emerald-300: var(--zr-ok);
+  --color-violet-100: var(--zr-info-strong);
+  --color-violet-300: var(--zr-info);
+  --color-sky-300: var(--zr-sky);
+}
+
+:root {
+  font-family: var(--font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
+
+html, body, #root { height: 100%; }
 
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
+  background: var(--zr-bg);
+  color: var(--zr-fg);
 }
 
-button, input { font: inherit; }
+button, input, select, textarea { font: inherit; }
+
+::selection { background: color-mix(in oklab, var(--zr-accent) 28%, transparent); }
+
+/* Thin, theme-coloured scrollbars inside panels. */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--zr-ink) 22%, transparent) transparent; }
+
+:focus-visible { outline: 2px solid var(--zr-accent); outline-offset: 2px; }
 
 /* Lesson Markdown in the reader. */
-.reader h1 { margin: 0 0 1rem; font-size: 1.6rem; font-weight: 700; line-height: 1.25; color: #f8fafc; }
-.reader h2 { margin: 1.75rem 0 0.75rem; font-size: 1.3rem; font-weight: 650; color: #f1f5f9; }
-.reader h3, .reader h4 { margin: 1.5rem 0 0.5rem; font-size: 1.1rem; font-weight: 600; color: #e2e8f0; }
-.reader p { margin: 0.75rem 0; }
+.reader { font-family: var(--font-display); }
+.reader h1 { margin: 0 0 1rem; font-size: 2rem; font-weight: 700; line-height: 1.2; color: var(--zr-fg); }
+.reader h2 { margin: 2rem 0 0.75rem; font-size: 1.45rem; font-weight: 650; color: var(--zr-fg); }
+.reader h3, .reader h4 { margin: 1.5rem 0 0.5rem; font-size: 1.15rem; font-weight: 600; color: var(--zr-fg); }
+.reader p { margin: 0.85rem 0; }
 .reader ul { margin: 0.75rem 0; padding-left: 1.5rem; list-style: disc; }
 .reader ol { margin: 0.75rem 0; padding-left: 1.5rem; list-style: decimal; }
 .reader li { margin: 0.25rem 0; }
-.reader blockquote { margin: 1rem 0; border-left: 3px solid rgb(255 255 255 / 0.2); padding-left: 1rem; color: #94a3b8; }
-.reader hr { margin: 1.5rem 0; border-color: rgb(255 255 255 / 0.1); }
-.reader table { margin: 1rem 0; border-collapse: collapse; font-size: 0.9em; }
-.reader th, .reader td { border: 1px solid rgb(255 255 255 / 0.12); padding: 0.4rem 0.75rem; text-align: left; }
-.reader th { background: rgb(255 255 255 / 0.05); font-weight: 600; }
+.reader blockquote { margin: 1rem 0; border-left: 3px solid var(--zr-accent); padding-left: 1rem; color: var(--zr-muted); font-style: italic; }
+.reader hr { margin: 1.5rem 0; border-color: var(--zr-line); }
+.reader table { margin: 1rem 0; border-collapse: collapse; font-size: 0.9em; font-family: var(--font-sans); }
+.reader th, .reader td { border: 1px solid var(--zr-line); padding: 0.4rem 0.75rem; text-align: left; }
+.reader th { background: color-mix(in oklab, var(--zr-ink) 5%, transparent); font-weight: 600; }
+
+/* Notes written in the Tiptap editor. */
+.prose-note { font-family: var(--font-display); line-height: 1.6; }
+.prose-note p { margin: 0.25rem 0; }
+.prose-note h1 { font-size: 1.35rem; font-weight: 700; margin: 0.6rem 0 0.3rem; }
+.prose-note h2 { font-size: 1.15rem; font-weight: 650; margin: 0.5rem 0 0.25rem; }
+.prose-note h3 { font-size: 1rem; font-weight: 600; margin: 0.4rem 0 0.2rem; }
+.prose-note ul { list-style: disc; padding-left: 1.25rem; margin: 0.25rem 0; }
+.prose-note ol { list-style: decimal; padding-left: 1.25rem; margin: 0.25rem 0; }
+.prose-note blockquote { border-left: 3px solid var(--zr-accent); padding-left: 0.75rem; color: var(--zr-muted); font-style: italic; margin: 0.4rem 0; }
+.prose-note code { font-family: ui-monospace, monospace; font-size: 0.85em; background: color-mix(in oklab, var(--zr-ink) 8%, transparent); border-radius: 4px; padding: 0.05rem 0.3rem; }
+.prose-note pre { background: color-mix(in oklab, var(--zr-ink) 6%, transparent); border-radius: 8px; padding: 0.6rem 0.8rem; overflow-x: auto; margin: 0.4rem 0; }
+.prose-note pre code { background: none; padding: 0; }
+.prose-note hr { border-color: var(--zr-line); margin: 0.6rem 0; }
+.prose-note p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--zr-faint); float: left; height: 0; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}

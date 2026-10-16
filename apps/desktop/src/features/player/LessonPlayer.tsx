@@ -1,4 +1,4 @@
-import { AlertTriangle, Loader2, RotateCcw } from "lucide-react";
+import { AlertTriangle, Clock, Gauge, Loader2, RotateCcw, RotateCw } from "lucide-react";
 import { useEffect, useImperativeHandle, useReducer, useRef, useState, type Ref, type SyntheticEvent } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -8,7 +8,12 @@ import { describePlayback, initialPlayback, playbackReducer } from "./playbackSt
 export interface PlayerHandle {
   currentTime: () => number;
   seek: (seconds: number) => void;
+  /** Moves by `seconds` from the current position, clamped to the video. */
+  skip: (seconds: number) => void;
+  togglePlay: () => void;
 }
+
+const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
 
 interface LessonPlayerProps {
   /** Lets notes read the current time and jump to a timestamp. */
@@ -25,6 +30,8 @@ interface LessonPlayerProps {
   startAt?: number | null;
   /** Called while playing (at most every few seconds), on pause, at the end, and when closed. */
   onPosition?: (positionSeconds: number, durationSeconds: number) => void;
+  /** Starts a note at the current moment; shown as a toolbar button. */
+  onAddNote?: (seconds: number) => void;
 }
 
 /** Resume only from a meaningful point that is not right at the end. */
@@ -49,10 +56,12 @@ function bufferedAhead(video: HTMLVideoElement): number {
   return 0;
 }
 
-export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, startAt = null, onPosition, transfersPaused = false }: LessonPlayerProps) {
+export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, startAt = null, onPosition, onAddNote, transfersPaused = false }: LessonPlayerProps) {
   const [playback, dispatch] = useReducer(playbackReducer, initialPlayback);
   const [ahead, setAhead] = useState(0);
   const [resumedAt, setResumedAt] = useState<number | null>(null);
+  const [speed, setSpeed] = useState(1);
+  const [position, setPosition] = useState(0);
   const video = useRef<HTMLVideoElement>(null);
   const lastSaved = useRef(0);
   const latest = useRef<{ position: number; duration: number } | null>(null);
@@ -64,6 +73,13 @@ export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, s
       if (!video.current) return;
       video.current.currentTime = seconds;
       void video.current.play().catch(() => undefined);
+    },
+    skip: (seconds: number) => skip(seconds),
+    togglePlay: () => {
+      const element = video.current;
+      if (!element) return;
+      if (element.paused) void element.play().catch(() => undefined);
+      else element.pause();
     },
   }), []);
 
@@ -102,17 +118,29 @@ export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, s
   const failed = playback.state === "error";
   const stalled = playback.state === "stalled";
 
+  const skip = (seconds: number) => {
+    const element = video.current;
+    if (!element) return;
+    const end = Number.isFinite(element.duration) ? element.duration : Infinity;
+    element.currentTime = Math.min(end, Math.max(0, element.currentTime + seconds));
+  };
+  const toolButton = "inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted hover:bg-white/10 hover:text-fg";
+
   return (
-    <div>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl bg-video">
       <video
         ref={video}
-        className="aspect-video w-full rounded-2xl bg-black"
+        className="h-full w-full bg-video object-contain"
         src={url}
         controls
         autoPlay
         preload="metadata"
         onLoadStart={() => dispatch({ type: "loadstart", at: Date.now() })}
-        onLoadedMetadata={(event) => resume(event.currentTarget)}
+        onLoadedMetadata={(event) => {
+          event.currentTarget.playbackRate = speed;
+          resume(event.currentTarget);
+        }}
         onWaiting={() => dispatch({ type: "waiting", at: Date.now() })}
         onSeeking={() => dispatch({ type: "seeking", at: Date.now() })}
         onProgress={(event) => {
@@ -121,6 +149,7 @@ export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, s
         }}
         onTimeUpdate={(event) => {
           measure(event);
+          setPosition(event.currentTarget.currentTime);
           dispatch({ type: "timeupdate", position: event.currentTarget.currentTime, paused: event.currentTarget.paused, at: Date.now() });
           if (!event.currentTarget.paused) remember(event.currentTarget, false);
         }}
@@ -138,11 +167,11 @@ export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, s
         This system cannot play the selected video format.
       </video>
       {resumedAt !== null ? (
-        <p className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+        <p className="absolute left-3 top-3 flex flex-wrap items-center gap-3 rounded-lg bg-[#000]/70 px-3 py-1.5 text-xs text-[#f5f5f4] backdrop-blur">
           Resumed where you left off ({formatClock(resumedAt)}).
           <button
             type="button"
-            className="text-cyan-200 underline-offset-2 hover:underline"
+            className="font-medium text-[#fda4af] underline-offset-2 hover:underline"
             onClick={() => {
               if (video.current) video.current.currentTime = 0;
               setResumedAt(null);
@@ -150,28 +179,63 @@ export function LessonPlayer({ handle, url, torrent, verifiedPercent, onRetry, s
           >
             Start over
           </button>
+          <button type="button" aria-label="Dismiss" className="text-[#a8a29e] hover:text-[#f5f5f4]" onClick={() => setResumedAt(null)}>✕</button>
         </p>
       ) : null}
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 pt-2 text-sm">
+        <div className="flex items-center gap-0.5">
+          <button type="button" className={toolButton} aria-label="Back 10 seconds" title="Back 10 seconds (J)" onClick={() => skip(-10)}>
+            <RotateCcw size={14} /> 10
+          </button>
+          <button type="button" className={toolButton} aria-label="Forward 10 seconds" title="Forward 10 seconds (L)" onClick={() => skip(10)}>
+            <RotateCw size={14} /> 10
+          </button>
+          <label className={`${toolButton} cursor-pointer`} title="Playback speed">
+            <Gauge size={14} />
+            <span className="sr-only">Playback speed</span>
+            <select
+              value={speed}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                setSpeed(next);
+                if (video.current) video.current.playbackRate = next;
+              }}
+              className="cursor-pointer bg-transparent text-xs text-fg outline-none"
+            >
+              {SPEEDS.map((value) => <option key={value} value={value}>{value}×</option>)}
+            </select>
+          </label>
+          {onAddNote ? (
+            <button
+              type="button"
+              className={`${toolButton} text-accent-text`}
+              title="Add a note at this moment (N)"
+              onClick={() => onAddNote(Math.floor(video.current?.currentTime ?? position))}
+            >
+              <Clock size={14} /> Note at {formatClock(position)}
+            </button>
+          ) : null}
+        </div>
         <p
           role={failed ? "alert" : "status"}
           aria-label="Playback status"
           data-state={playback.state}
-          className={`flex items-center gap-2 ${failed ? "text-red-300" : stalled ? "text-amber-200" : "text-slate-300"}`}
+          className={`flex items-center gap-1.5 text-xs ${failed ? "text-red-300" : stalled ? "text-amber-200" : "text-muted"}`}
         >
-          {busy ? <Loader2 size={15} className="animate-spin" /> : null}
-          {failed || stalled ? <AlertTriangle size={15} /> : null}
+          {busy ? <Loader2 size={13} className="animate-spin" /> : null}
+          {failed || stalled ? <AlertTriangle size={13} /> : null}
           {describePlayback(playback, torrent, transfersPaused)}
         </p>
-        <p className="text-xs text-slate-400">
+        <p className="ml-auto text-xs text-subtle">
           <span title="Data the player has loaded ahead of the current position">Buffered: {formatClock(ahead)} ahead</span>
           {torrent && verifiedPercent !== null ? (
             <span title="Lesson data checked against the torrent and kept on this computer"> · Verified on this computer: {verifiedPercent}%</span>
           ) : null}
         </p>
         {failed ? (
-          <Button variant="ghost" onClick={onRetry}>
-            <RotateCcw size={16} /> Retry
+          <Button variant="ghost" size="sm" onClick={onRetry}>
+            <RotateCcw size={14} /> Retry
           </Button>
         ) : null}
       </div>

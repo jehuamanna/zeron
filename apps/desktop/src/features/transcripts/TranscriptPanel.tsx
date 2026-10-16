@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { asCommandError, libraryApi, type TranscriptCue } from "../../services/library";
 
@@ -32,11 +32,13 @@ function clock(seconds: number) {
 }
 
 /** The playing lesson's transcript, following the player; a line seeks to it. */
-export function TranscriptPanel({ courseId, mediaResourceId, currentTime, onSeek }: {
+export function TranscriptPanel({ courseId, mediaResourceId, currentTime, onSeek, missing = null }: {
   courseId: string;
   mediaResourceId: string;
   currentTime: () => number;
   onSeek: (seconds: number) => void;
+  /** Shown when the lesson has no transcript. */
+  missing?: ReactNode;
 }) {
   const transcript = useQuery({
     queryKey: ["transcript", courseId, mediaResourceId],
@@ -72,14 +74,15 @@ export function TranscriptPanel({ courseId, mediaResourceId, currentTime, onSeek
     }
   }, [active, follow, query]);
 
-  if (transcript.isPending || transcript.data === null) return null;
+  if (transcript.isPending) return null;
+  if (transcript.data === null) return <>{missing}</>;
   if (transcript.isError) {
-    return <p role="alert" className="mt-4 text-sm text-red-300">{asCommandError(transcript.error)?.message ?? "The transcript could not be read."}</p>;
+    return <p role="alert" className="p-4 text-sm text-red-300">{asCommandError(transcript.error)?.message ?? "The transcript could not be read."}</p>;
   }
   return (
-    <section aria-label="Transcript" className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="font-semibold">Transcript{transcript.data.language ? ` (${transcript.data.language})` : ""}</h3>
+    <section aria-label="Transcript" className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2">
+        <h3 className="text-sm font-semibold">Transcript{transcript.data.language ? ` (${transcript.data.language})` : ""}</h3>
         <div className="flex items-center gap-3 text-xs">
           <label className="flex items-center gap-1 text-slate-300">
             <input type="checkbox" checked={follow} onChange={(event) => setFollow(event.target.checked)} /> Follow video
@@ -90,21 +93,21 @@ export function TranscriptPanel({ courseId, mediaResourceId, currentTime, onSeek
             placeholder="Search transcript"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
-            className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-slate-100"
+            className="w-36 rounded-md border border-line bg-surface px-2 py-1 text-fg"
           />
         </div>
       </div>
-      {query && shown.length === 0 ? <p className="text-sm text-slate-400">No line mentions “{filter.trim()}”.</p> : null}
-      <ol ref={list} aria-label="Transcript lines" className="max-h-72 space-y-1 overflow-y-auto pr-2">
+      {query && shown.length === 0 ? <p className="px-3 pt-3 text-sm text-muted">No line mentions “{filter.trim()}”.</p> : null}
+      <ol ref={list} aria-label="Transcript lines" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
         {shown.map(({ cue, index }) => (
           <li key={index} data-cue={index}>
             <button
               type="button"
               aria-current={index === active ? "true" : undefined}
               onClick={() => onSeek(cue.start)}
-              className={`flex w-full gap-3 rounded-md px-2 py-1 text-left text-sm ${index === active ? "bg-cyan-300/15 text-cyan-50" : "text-slate-300 hover:bg-white/5"}`}
+              className={`flex w-full gap-3 rounded-md px-2 py-1 text-left text-sm ${index === active ? "bg-accent/12 text-fg" : "text-fg-soft hover:bg-white/5"}`}
             >
-              <span className="w-14 shrink-0 font-mono text-xs leading-5 text-slate-500">{clock(cue.start)}</span>
+              <span className="w-14 shrink-0 font-mono text-xs leading-5 text-subtle">{clock(cue.start)}</span>
               <span className="whitespace-pre-line">{cue.text}</span>
             </button>
           </li>

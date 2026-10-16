@@ -85,7 +85,7 @@ export function LibrarySearch({ onOpen }: { onOpen: (result: SearchResult) => vo
         />
       </label>
       {query ? (
-        <div role="region" aria-label="Search results" className="absolute right-0 z-20 mt-2 max-h-[60vh] w-full overflow-y-auto rounded-2xl border border-white/10 bg-[#0b131b] p-2 shadow-2xl">
+        <div role="region" aria-label="Search results" className="absolute right-0 z-20 mt-2 max-h-[60vh] w-full overflow-y-auto rounded-2xl border border-white/10 bg-surface p-2 shadow-panel">
           {results.isError ? (
             <p role="alert" className="p-3 text-sm text-red-300">{asCommandError(results.error)?.message ?? "Search failed."}</p>
           ) : results.isPending ? (

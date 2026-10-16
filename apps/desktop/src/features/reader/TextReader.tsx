@@ -7,7 +7,7 @@ import { CodeBlock } from "./CodeBlock";
 
 const components: Components = {
   // Lesson Markdown cannot reach the web or the disk: links and images show as text.
-  a: ({ children, href }) => <span className="text-cyan-200 underline decoration-dotted" title={href}>{children}</span>,
+  a: ({ children, href }) => <span className="text-accent-text underline decoration-dotted" title={href}>{children}</span>,
   img: ({ alt }) => <span className="text-slate-400">[image{alt ? `: ${alt}` : ""}]</span>,
   pre: ({ children }) => <>{children}</>,
   code: ({ className, children }) => {
@@ -28,18 +28,18 @@ export function TextReader({ courseId, resourceId, title }: { courseId: string; 
     queryFn: () => libraryApi.readText(courseId, resourceId),
     staleTime: Infinity,
   });
-  if (resource.isPending) return <p className="text-sm text-slate-400">Opening {title}…</p>;
+  if (resource.isPending) return <p className="p-6 text-sm text-muted">Opening {title}…</p>;
   if (resource.isError) {
-    return <p role="alert" className="text-sm text-red-300">{asCommandError(resource.error)?.message ?? "This resource could not be opened."}</p>;
+    return <p role="alert" className="p-6 text-sm text-red-300">{asCommandError(resource.error)?.message ?? "This resource could not be opened."}</p>;
   }
   return (
-    <article aria-label={`Reading ${title}`} className="reader max-h-[70vh] overflow-y-auto pr-2 text-[15px] leading-7 text-slate-200">
+    <article aria-label={`Reading ${title}`} className="reader mx-auto max-w-3xl px-6 py-8 text-[17px] leading-8 text-fg-soft">
       {resource.data.format === "markdown" ? (
         <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={components}>
           {resource.data.text}
         </ReactMarkdown>
       ) : (
-        <pre className="whitespace-pre-wrap font-sans">{resource.data.text}</pre>
+        <pre className="whitespace-pre-wrap font-sans text-[15px] leading-7">{resource.data.text}</pre>
       )}
     </article>
   );

@@ -16,7 +16,7 @@ export function CodeBlock({ code, language }: { code: string; language: string |
     };
   }, [code, language]);
   return (
-    <pre data-language={language ?? "text"} className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-[#0d1117] p-4 text-[13px] leading-5">
+    <pre data-language={language ?? "text"} className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-[#0d1117] p-4 text-[13px] text-[#e6edf3] leading-5">
       <code>
         {lines
           ? lines.map((line, index) => (

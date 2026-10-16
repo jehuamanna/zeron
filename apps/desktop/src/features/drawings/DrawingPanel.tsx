@@ -14,8 +14,21 @@ export const DRAWING_SAVE_DELAY_MS = 800;
 type Status = "idle" | "saving" | "saved" | "conflict" | "failed";
 
 /** A lesson's Excalidraw drawing, saved as the learner draws. */
-export function DrawingPanel({ courseId, lessonId, lessonTitle }: { courseId: string; lessonId: string; lessonTitle: string }) {
+export function DrawingPanel({ courseId, lessonId, lessonTitle, fill = false }: {
+  courseId: string;
+  lessonId: string;
+  lessonTitle: string;
+  /** Open at once and fill the parent, as in the workspace's Sketch tab. */
+  fill?: boolean;
+}) {
   const [open, setOpen] = useState(false);
+  if (fill) {
+    return (
+      <section aria-label={`Drawing for ${lessonTitle}`} className="flex h-full min-h-0 flex-col">
+        <DrawingEditor courseId={courseId} lessonId={lessonId} fill />
+      </section>
+    );
+  }
   return (
     <section aria-label={`Drawing for ${lessonTitle}`} className="mt-6 rounded-3xl border border-white/10 bg-white/[0.03] p-5">
       <div className="flex items-center justify-between gap-3">
@@ -29,7 +42,7 @@ export function DrawingPanel({ courseId, lessonId, lessonTitle }: { courseId: st
   );
 }
 
-function DrawingEditor({ courseId, lessonId }: { courseId: string; lessonId: string }) {
+function DrawingEditor({ courseId, lessonId, fill = false }: { courseId: string; lessonId: string; fill?: boolean }) {
   const queryClient = useQueryClient();
   const queryKey = ["drawing", courseId, lessonId];
   const drawing = useQuery({ queryKey, queryFn: () => libraryApi.drawing(courseId, lessonId), staleTime: Infinity, gcTime: 0 });
@@ -107,17 +120,17 @@ function DrawingEditor({ courseId, lessonId }: { courseId: string; lessonId: str
     timer.current = setTimeout(() => void flush(), DRAWING_SAVE_DELAY_MS);
   }
 
-  if (drawing.isPending) return <p className="mt-3 text-sm text-slate-400">Opening the drawing…</p>;
+  if (drawing.isPending) return <p className={`${fill ? "p-4" : "mt-3"} text-sm text-muted`}>Opening the drawing…</p>;
   if (drawing.isError) {
-    return <p role="alert" className="mt-3 text-sm text-red-300">{asCommandError(drawing.error)?.message ?? "This drawing could not be opened."}</p>;
+    return <p role="alert" className={`${fill ? "p-4" : "mt-3"} text-sm text-red-300`}>{asCommandError(drawing.error)?.message ?? "This drawing could not be opened."}</p>;
   }
   return (
-    <div className="mt-3">
-      <p aria-live="polite" className="mb-2 min-h-4 text-xs text-slate-400">
+    <div className={fill ? "relative flex min-h-0 flex-1 flex-col" : "mt-3"}>
+      <p aria-live="polite" className={fill ? "pointer-events-none absolute bottom-2 right-3 z-10 text-[11px] text-subtle" : "mb-2 min-h-4 text-xs text-slate-400"}>
         {status === "saving" ? "Saving…" : status === "saved" ? "Saved" : status === "failed" ? "The drawing could not be saved; it will be retried as you draw." : ""}
       </p>
       {status === "conflict" ? (
-        <p role="alert" className="mb-2 text-sm text-amber-200">
+        <p role="alert" className={`${fill ? "mx-3 mt-2" : ""} mb-2 text-sm text-amber-200`}>
           This drawing was changed in another window, so your latest strokes were not saved over it.{" "}
           <button
             type="button"
@@ -131,8 +144,9 @@ function DrawingEditor({ courseId, lessonId }: { courseId: string; lessonId: str
           </button>
         </p>
       ) : null}
-      <Suspense fallback={<p className="text-sm text-slate-400">Loading the drawing tools…</p>}>
+      <Suspense fallback={<p className="p-4 text-sm text-muted">Loading the drawing tools…</p>}>
         <DrawingCanvas
+          fill={fill}
           key={drawing.data?.revision ?? "new"}
           sceneJson={drawing.data?.sceneJson ?? null}
           files={drawing.data?.files ?? []}

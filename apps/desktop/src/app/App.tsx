@@ -1,9 +1,9 @@
-import { BookOpen, Boxes, Network } from "lucide-react";
+import { BookOpen, Boxes, Moon, Network, Sun } from "lucide-react";
+import { useEffect, useReducer } from "react";
 
-import { Button } from "../components/ui/button";
 import { NetworkSettings } from "../features/network/NetworkSettings";
 import { PublishArea } from "../publish/PublishArea";
-import { useShell, type Area } from "../stores/shell";
+import { applyTheme, resolveTheme, useShell, type Area } from "../stores/shell";
 import { Library } from "./Library";
 
 const areas: Array<{ value: Area; label: string; icon: typeof BookOpen }> = [
@@ -13,49 +13,87 @@ const areas: Array<{ value: Area; label: string; icon: typeof BookOpen }> = [
 
 /** One Zeron app: Library and Publish side by side, with one Network setting. */
 export function App() {
-  const { area, showArea, networkOpen, showNetwork } = useShell();
+  const { area, showArea, networkOpen, showNetwork, theme, setTheme } = useShell();
+  const [, systemChanged] = useReducer((count: number) => count + 1, 0);
+  const resolved = resolveTheme(theme);
+
+  useEffect(() => {
+    applyTheme(theme);
+    if (theme !== "system" || typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const follow = () => {
+      applyTheme("system");
+      systemChanged();
+    };
+    query.addEventListener("change", follow);
+    return () => query.removeEventListener("change", follow);
+  }, [theme]);
 
   return (
-    <main className="min-h-screen bg-[#071018] text-slate-100">
-      <div className="mx-auto max-w-7xl px-6 py-8">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-6">
-          <div className="flex items-center gap-3">
-            <div className="grid size-10 place-items-center rounded-xl bg-cyan-300 text-slate-950">
-              <BookOpen size={22} />
-            </div>
-            <div>
-              <p className="text-xl font-bold tracking-tight">Zeron</p>
-              <p className="text-sm text-slate-400">Learn and publish courses, available offline.</p>
-            </div>
+    <div className="flex h-full min-h-0 flex-col bg-bg text-fg">
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-surface px-3 sm:px-4">
+        <div className="flex items-center gap-2">
+          <div aria-hidden className="grid size-7 place-items-center rounded-lg bg-accent text-on-accent">
+            <BookOpen size={15} />
           </div>
-          <nav aria-label="Zeron" className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1">
-            {areas.map(({ value, label, icon: Icon }) => (
-              <button
-                key={value}
-                type="button"
-                aria-current={!networkOpen && area === value ? "page" : undefined}
-                onClick={() => showArea(value)}
-                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium ${!networkOpen && area === value ? "bg-white/10 text-white" : "text-slate-400 hover:text-white"}`}
-              >
-                <Icon size={16} /> {label}
-              </button>
-            ))}
-          </nav>
-          <Button variant="ghost" onClick={() => showNetwork(true)} aria-pressed={networkOpen}>
-            <Network size={17} /> Network
-          </Button>
-        </header>
-
-        <div className="pt-6">
-          {networkOpen ? (
-            <NetworkSettings onBack={() => showNetwork(false)} />
-          ) : area === "publish" ? (
-            <PublishArea onOpenNetwork={() => showNetwork(true)} />
-          ) : (
-            <Library />
-          )}
+          <p className="font-display text-lg font-semibold tracking-tight">Zeron</p>
         </div>
+        <nav aria-label="Zeron" className="ml-2 flex items-center gap-0.5 rounded-lg bg-sunken p-0.5">
+          {areas.map(({ value, label, icon: Icon }) => (
+            <button
+              key={value}
+              type="button"
+              aria-current={!networkOpen && area === value ? "page" : undefined}
+              onClick={() => showArea(value)}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium transition ${!networkOpen && area === value ? "bg-surface text-fg shadow-sm" : "text-muted hover:text-fg"}`}
+            >
+              <Icon size={15} /> {label}
+            </button>
+          ))}
+        </nav>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setTheme(resolved === "dark" ? "light" : "dark")}
+            aria-label={resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            title={resolved === "dark" ? "Light theme" : "Dark theme"}
+            className="grid size-8 place-items-center rounded-lg text-muted hover:bg-white/5 hover:text-fg"
+          >
+            {resolved === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+          <button
+            type="button"
+            onClick={() => showNetwork(true)}
+            aria-pressed={networkOpen}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium ${networkOpen ? "bg-white/10 text-fg" : "text-muted hover:bg-white/5 hover:text-fg"}`}
+          >
+            <Network size={15} /> Network
+          </button>
+        </div>
+      </header>
+
+      <div className="min-h-0 flex-1">
+        {networkOpen ? (
+          <Scrolling>
+            <NetworkSettings onBack={() => showNetwork(false)} />
+          </Scrolling>
+        ) : area === "publish" ? (
+          <Scrolling>
+            <PublishArea onOpenNetwork={() => showNetwork(true)} />
+          </Scrolling>
+        ) : (
+          <Library />
+        )}
       </div>
+    </div>
+  );
+}
+
+/** A full-height area whose page content scrolls inside it. */
+function Scrolling({ children }: { children: React.ReactNode }) {
+  return (
+    <main className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">{children}</div>
     </main>
   );
 }

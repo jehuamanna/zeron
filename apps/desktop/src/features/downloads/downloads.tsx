@@ -56,13 +56,15 @@ export function useCourseDownloads(courseId: string, enabled: boolean) {
 }
 
 /** A pressed-state toggle for keeping a course, module, or lesson offline. */
-export function KeepOfflineToggle({ label, kept, inherited = false, disabled, onToggle }: {
+export function KeepOfflineToggle({ label, kept, inherited = false, disabled, onToggle, compact = false }: {
   label: string;
   kept: boolean;
   /** Kept because a larger scope is; the toggle is then locked on. */
   inherited?: boolean;
   disabled: boolean;
   onToggle: (keep: boolean) => void;
+  /** Icon only, for dense lesson lists. */
+  compact?: boolean;
 }) {
   return (
     <button
@@ -72,10 +74,14 @@ export function KeepOfflineToggle({ label, kept, inherited = false, disabled, on
       title={inherited ? "Kept offline with the whole module or course" : kept ? "Stop keeping offline. What is downloaded stays on this computer." : "Download in full and keep offline"}
       disabled={disabled || inherited}
       onClick={() => onToggle(!kept)}
-      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs disabled:opacity-60 ${kept || inherited ? "bg-emerald-300/15 text-emerald-200" : "bg-white/5 text-slate-300 hover:bg-white/10"}`}
+      className={
+        compact
+          ? `grid size-6 place-items-center rounded-md disabled:opacity-60 ${kept || inherited ? "text-emerald-300" : "text-faint hover:bg-white/10 hover:text-fg"}`
+          : `inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs disabled:opacity-60 ${kept || inherited ? "bg-emerald-300/15 text-emerald-200" : "bg-white/5 text-fg-soft hover:bg-white/10"}`
+      }
     >
-      {kept || inherited ? <HardDriveDownload size={12} /> : <CloudDownload size={12} />}
-      {kept || inherited ? "Kept offline" : "Keep offline"}
+      {kept || inherited ? <HardDriveDownload size={compact ? 14 : 12} /> : <CloudDownload size={compact ? 14 : 12} />}
+      {compact ? null : kept || inherited ? "Kept offline" : "Keep offline"}
     </button>
   );
 }

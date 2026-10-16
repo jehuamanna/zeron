@@ -5,6 +5,7 @@ import { Excalidraw } from "@excalidraw/excalidraw";
 import type { BinaryFileData, BinaryFiles, ExcalidrawInitialDataState } from "@excalidraw/excalidraw/types";
 
 import type { DrawingFile } from "../../services/library";
+import { useResolvedTheme } from "../../stores/shell";
 
 export interface SceneChange {
   sceneJson: string;
@@ -12,17 +13,20 @@ export interface SceneChange {
 }
 
 /** The Excalidraw editor. Loaded on demand: it is most of a megabyte. */
-export default function DrawingCanvas({ sceneJson, files, onChange }: {
+export default function DrawingCanvas({ sceneJson, files, onChange, fill = false }: {
   sceneJson: string | null;
   files: DrawingFile[];
   onChange: (change: SceneChange) => void;
+  /** Fill the parent instead of a fixed-height box. */
+  fill?: boolean;
 }) {
   const initialData = initial(sceneJson, files);
+  const theme = useResolvedTheme();
   return (
-    <div className="h-[520px] overflow-hidden rounded-2xl border border-white/10">
+    <div className={fill ? "min-h-0 flex-1 overflow-hidden" : "h-[520px] overflow-hidden rounded-2xl border border-white/10"}>
       <Excalidraw
         initialData={initialData}
-        theme="dark"
+        theme={theme}
         // Embedded web pages would load remote content into the app.
         validateEmbeddable={() => false}
         UIOptions={{ canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false } }}

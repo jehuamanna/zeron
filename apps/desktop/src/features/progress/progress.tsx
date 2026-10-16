@@ -28,9 +28,9 @@ export function ProgressBar({ completed, total, label }: { completed: number; to
   return (
     <div>
       <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={total} aria-valuenow={completed} className="h-1.5 overflow-hidden rounded-full bg-white/10">
-        <div className="h-full rounded-full bg-emerald-300" style={{ width: `${percent}%` }} />
+        <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${percent}%` }} />
       </div>
-      <p className="mt-1 text-xs text-slate-400">
+      <p className="mt-1 text-xs text-muted">
         {completed} of {total} {total === 1 ? "lesson" : "lessons"} complete
       </p>
     </div>
@@ -45,7 +45,7 @@ const statusText: Record<LessonStatus, string> = {
 
 export function LessonStatusIcon({ status }: { status: LessonStatus }) {
   const icon =
-    status === "completed" ? <CheckCircle2 size={15} className="text-emerald-300" /> : status === "in_progress" ? <CircleDot size={15} className="text-cyan-200" /> : <Circle size={15} className="text-slate-600" />;
+    status === "completed" ? <CheckCircle2 size={15} className="text-emerald-300" /> : status === "in_progress" ? <CircleDot size={15} className="text-accent" /> : <Circle size={15} className="text-faint" />;
   return (
     <span data-lesson-status={status} title={statusText[status]} className="mt-0.5 shrink-0">
       {icon}
@@ -54,17 +54,32 @@ export function LessonStatusIcon({ status }: { status: LessonStatus }) {
   );
 }
 
-export function MarkCompleteButton({ lessonTitle, completed, disabled, onToggle }: { lessonTitle: string; completed: boolean; disabled: boolean; onToggle: (completed: boolean) => void }) {
+export function MarkCompleteButton({ lessonTitle, completed, disabled, onToggle, compact = false, label }: {
+  lessonTitle: string;
+  completed: boolean;
+  disabled: boolean;
+  onToggle: (completed: boolean) => void;
+  /** Icon only, for dense lesson lists. */
+  compact?: boolean;
+  /** Overrides the accessible name. */
+  label?: string;
+}) {
   return (
     <button
       type="button"
       aria-pressed={completed}
-      aria-label={`Mark ${lessonTitle} complete`}
+      aria-label={label ?? `Mark ${lessonTitle} complete`}
+      title={completed ? "Completed. Click to mark not done" : "Mark complete"}
       disabled={disabled}
       onClick={() => onToggle(!completed)}
-      className={`rounded-md px-2 py-1 text-[11px] disabled:opacity-60 ${completed ? "bg-emerald-300/15 text-emerald-200" : "bg-white/5 text-slate-300 hover:bg-white/10"}`}
+      className={
+        compact
+          ? `grid size-6 place-items-center rounded-md disabled:opacity-60 ${completed ? "text-emerald-300" : "text-faint hover:bg-white/10 hover:text-fg"}`
+          : `inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium disabled:opacity-60 ${completed ? "bg-emerald-300/15 text-emerald-200" : "bg-white/5 text-fg-soft hover:bg-white/10"}`
+      }
     >
-      {completed ? "Completed" : "Mark complete"}
+      <CheckCircle2 size={compact ? 14 : 13} />
+      {compact ? null : completed ? "Completed" : "Mark complete"}
     </button>
   );
 }

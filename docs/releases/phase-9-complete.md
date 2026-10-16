@@ -16,7 +16,7 @@ The real-keychain test creates, rotates, backs up, restores, and forgets signing
 | Platform | Credential store | Result |
 |---|---|---|
 | macOS 15 | Keychain (`apple-native-keyring-store`) | Passed in CI (run 38883930262, the "Real keychain" step with `ZERON_KEYCHAIN_TESTS=1`) |
-| Windows Server 2025 | Credential Manager (`windows-native-keyring-store`) | See below |
+| Windows Server 2025 | Credential Manager (`windows-native-keyring-store`) | Passed in CI (run 38891771033, the "Real keychain" step) |
 | Ubuntu 24.04 | Secret Service through GNOME Keyring | Passed in CI on every run since the slice landed |
 | Arch Linux (local) | GNOME Keyring | Passed locally |
 
